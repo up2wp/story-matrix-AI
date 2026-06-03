@@ -86,55 +86,6 @@ npm run dev
 | vLLM | `http://192.168.1.100:8000/v1` | 本地部署 |
 | Ollama | `http://localhost:11434/v1` | 本地部署 |
 
-## 目录结构
-
-```
-.
-├── src/                    # 前端源码
-│   ├── core/               # 核心逻辑（数据模型、状态管理）
-│   │   ├── api-client.ts   # API 客户端（替代 Dexie）
-│   │   ├── auth-store.ts   # 认证状态管理
-│   │   ├── store.ts        # 全局状态
-│   │   └── types.ts        # 类型定义
-│   ├── features/           # 功能模块
-│   │   ├── seed/           # 故事萌芽
-│   │   └── world/          # 世界构建
-│   ├── pages/              # 页面组件
-│   │   ├── admin/          # 管理后台
-│   │   ├── chapters/       # 章节编辑
-│   │   ├── constraints/    # 核心约束
-│   │   ├── login/          # 登录注册
-│   │   ├── outline/        # 大纲编辑
-│   │   ├── seed/           # 故事萌芽
-│   │   ├── works/          # 作品管理
-│   │   └── world/          # 世界构建
-│   ├── components/         # 通用组件
-│   │   ├── auth/           # 路由守卫
-│   │   ├── editor/         # 富文本编辑器
-│   │   └── layout/         # 布局组件
-│   ├── ai/                 # AI 辅助模块
-│   │   ├── prompts/        # 提示词模板
-│   │   ├── client.ts       # AI 客户端
-│   │   └── context.ts      # 上下文管理
-│   └── utils/              # 工具函数
-├── server/                 # 后端源码
-│   └── src/
-│       ├── routes/         # API 路由
-│       │   ├── auth.ts     # 认证接口
-│       │   ├── users.ts    # 用户接口
-│       │   ├── works.ts    # 作品接口
-│       │   └── system-config.ts # 系统配置
-│       ├── middleware/     # 中间件
-│       │   └── auth.ts     # 认证中间件
-│       ├── db.ts           # 数据库连接（SQLite）
-│       ├── seed.ts         # 种子数据
-│       └── index.ts        # 服务入口
-├── public/                 # 静态资源
-├── package.json            # 前端依赖配置
-├── vite.config.ts          # Vite 配置
-└── tsconfig.json           # TypeScript 配置
-```
-
 ## 技术栈
 
 | 层级 | 技术 |
