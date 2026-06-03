@@ -1,0 +1,158 @@
+import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router'
+import { Table, Button, Tag, Space, Switch, Popconfirm, Typography, message } from 'antd'
+import { PlusOutlined, EyeOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
+import type { ColumnsType } from 'antd/es/table'
+import { db } from '@/core/db'
+import { useAuthStore } from '@/core/auth-store'
+import { useStore } from '@/core/store'
+import type { Work } from '@/core/types'
+
+const { Title } = Typography
+
+interface WorkItem extends Work {
+  ownerName?: string
+}
+
+export default function WorksPage() {
+  const navigate = useNavigate()
+  const user = useAuthStore(s => s.user)
+  const setCurrentWork = useStore(s => s.setCurrentWork)
+  const setReadOnly = useStore(s => s.setReadOnly)
+  const [works, setWorks] = useState<WorkItem[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const loadWorks = useCallback(async () => {
+    if (!user) return
+    setLoading(true)
+    try {
+      const allWorks = await db.works.toArray()
+      let accessible: WorkItem[]
+
+      if (user.role === 'admin') {
+        // 管理员看到所有作品
+        const users = await db.users.toArray()
+        const userMap = new Map(users.map(u => [u.id, u.displayName]))
+        accessible = allWorks.map(w => ({ ...w, ownerName: userMap.get(w.ownerId) || '未知' }))
+      } else {
+        // 普通用户看到自己的作品 + 分享的作品
+        accessible = allWorks
+          .filter(w => w.ownerId === user.id || w.shared)
+          .map(w => ({ ...w }))
+      }
+
+      accessible.sort((a, b) => b.updatedAt - a.updatedAt)
+      setWorks(accessible)
+    } finally {
+      setLoading(false)
+    }
+  }, [user])
+
+  useEffect(() => { loadWorks() }, [loadWorks])
+
+  const handleOpen = (work: WorkItem, readOnly: boolean) => {
+    setCurrentWork(work)
+    setReadOnly(readOnly)
+    navigate('/seed')
+  }
+
+  const handleToggleShared = async (work: WorkItem, shared: boolean) => {
+    await db.works.update(work.id, { shared })
+    message.success(shared ? '已开启分享' : '已关闭分享')
+    loadWorks()
+  }
+
+  const handleDelete = async (work: WorkItem) => {
+    await db.works.delete(work.id)
+    message.success('已删除')
+    loadWorks()
+  }
+
+  const isOwner = (work: WorkItem) => user && work.ownerId === user.id
+
+  const columns: ColumnsType<WorkItem> = [
+    {
+      title: '作品名称',
+      dataIndex: 'title',
+      key: 'title',
+      width: 200,
+      ellipsis: true,
+    },
+    ...(user?.role === 'admin'
+      ? [{ title: '作者', dataIndex: 'ownerName', key: 'ownerName', width: 100 }]
+      : []),
+    {
+      title: '状态',
+      key: 'status',
+      width: 80,
+      render: (_: unknown, record: WorkItem) => {
+        if (isOwner(record)) return <Tag color="blue">可编辑</Tag>
+        return <Tag color="orange">只读</Tag>
+      },
+    },
+    {
+      title: '分享',
+      key: 'shared',
+      width: 80,
+      render: (_: unknown, record: WorkItem) => {
+        if (!isOwner(record)) return record.shared ? <Tag color="green">已分享</Tag> : null
+        return (
+          <Switch
+            size="small"
+            checked={record.shared}
+            onChange={(checked) => handleToggleShared(record, checked)}
+          />
+        )
+      },
+    },
+    {
+      title: '更新时间',
+      dataIndex: 'updatedAt',
+      key: 'updatedAt',
+      width: 170,
+      render: (ts: number) => new Date(ts).toLocaleString('zh-CN'),
+    },
+    {
+      title: '操作',
+      key: 'actions',
+      width: 160,
+      render: (_: unknown, record: WorkItem) => (
+        <Space>
+          {isOwner(record) ? (
+            <Button type="link" icon={<EditOutlined />} onClick={() => handleOpen(record, false)}>
+              编辑
+            </Button>
+          ) : (
+            <Button type="link" icon={<EyeOutlined />} onClick={() => handleOpen(record, true)}>
+              查看
+            </Button>
+          )}
+          {isOwner(record) && (
+            <Popconfirm title="确认删除此作品？" onConfirm={() => handleDelete(record)} okText="确认" cancelText="取消" okButtonProps={{ autoFocus: true }}>
+              <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
+            </Popconfirm>
+          )}
+        </Space>
+      ),
+    },
+  ]
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <Title level={4} style={{ margin: 0 }}>作品列表</Title>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => { setReadOnly(false); navigate('/seed') }}>
+          新建作品
+        </Button>
+      </div>
+      <Table
+        columns={columns}
+        dataSource={works}
+        rowKey="id"
+        loading={loading}
+        pagination={{ pageSize: 20 }}
+        scroll={{ x: 800 }}
+      />
+    </div>
+  )
+}
