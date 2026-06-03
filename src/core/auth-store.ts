@@ -5,6 +5,19 @@ import { generateId } from '@/utils/id'
 import type { User } from './types'
 
 // ============================================================
+// 密码哈希（SHA-256，与服务端一致）
+// ============================================================
+
+export async function hashPassword(password: string): Promise<string> {
+  const encoder = new TextEncoder()
+  const data = encoder.encode(password)
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+  return Array.from(new Uint8Array(hashBuffer))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+// ============================================================
 // 认证状态管理 — 使用服务端会话认证
 // ============================================================
 
@@ -72,13 +85,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       const existing = await db.users.where('username').equals(username).first()
       if (existing) return { success: false, error: '用户名已存在' }
 
-      // 生成密码哈希（与服务端一致的 SHA-256）
-      const encoder = new TextEncoder()
-      const data = encoder.encode(password)
-      const hashBuffer = await crypto.subtle.digest('SHA-256', data)
-      const passwordHash = Array.from(new Uint8Array(hashBuffer))
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('')
+      const passwordHash = await hashPassword(password)
 
       const newUser = {
         id: generateId(),
@@ -112,15 +119,8 @@ export const useAuthStore = create<AuthState>((set) => ({
     if (!user) return { success: false, error: '未登录' }
 
     try {
-      const encoder = new TextEncoder()
-      const hash = async (pwd: string) => {
-        const data = encoder.encode(pwd)
-        const buf = await crypto.subtle.digest('SHA-256', data)
-        return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('')
-      }
-
-      const oldHash = await hash(oldPassword)
-      const newHash = await hash(newPassword)
+      const oldHash = await hashPassword(oldPassword)
+      const newHash = await hashPassword(newPassword)
       await db.users.update(user.id, { passwordHash: newHash })
       return { success: true }
     } catch (err: any) {

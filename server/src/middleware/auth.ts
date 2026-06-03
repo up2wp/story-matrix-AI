@@ -13,7 +13,7 @@ interface Session {
   createdAt: number
 }
 
-const sessions = new Map<string, Session>()
+export const sessions = new Map<string, Session>()
 
 const SESSION_TTL = 24 * 60 * 60 * 1000 // 24 小时
 

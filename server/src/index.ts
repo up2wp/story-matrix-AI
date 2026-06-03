@@ -24,8 +24,8 @@ app.use('/api/auth', authRouter)
 app.use('/api/users', usersRouter)
 // 需要登录的路由
 app.use('/api/works', requireAuth, worksRouter)
-// 需要管理员权限的路由
-app.use('/api/system-config', requireAdmin, systemConfigRouter)
+// system-config 路由：GET 公开，POST/PATCH 需管理员
+app.use('/api/system-config', systemConfigRouter)
 
 // 生产模式：serve 前端静态文件
 const distPath = path.join(__dirname, '..', '..', 'dist')

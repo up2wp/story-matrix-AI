@@ -1,26 +1,35 @@
 import { Router } from 'express'
 import db from '../db.js'
+import { requireAdmin, sessions } from '../middleware/auth.js'
 
 const router = Router()
 
-// 行 → 对象
-function rowToConfig(row: any) {
+// 行 → 对象（AI 配置仅管理员可见）
+function rowToConfig(row: any, includeAI = false) {
   return {
     id: row.id,
     registrationEnabled: Boolean(row.registrationEnabled),
-    aiConfig: row.aiConfig ? JSON.parse(row.aiConfig) : undefined,
+    ...(includeAI && { aiConfig: row.aiConfig ? JSON.parse(row.aiConfig) : undefined }),
   }
 }
 
-// GET /api/system-config — 获取配置
-router.get('/', (_req, res) => {
+// GET /api/system-config — 获取配置（公开，不含 API Key；管理员带 token 可获取完整配置）
+router.get('/', (req, res) => {
   const row = db.prepare('SELECT * FROM systemConfig WHERE id = ?').get('singleton')
   if (!row) return res.status(404).json({ error: '配置不存在' })
-  res.json(rowToConfig(row))
+  // 管理员可获取完整配置（含 AI Key）
+  const authHeader = req.headers.authorization
+  let isAdmin = false
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.slice(7)
+    const session = sessions.get(token)
+    isAdmin = session?.role === 'admin'
+  }
+  res.json(rowToConfig(row, isAdmin))
 })
 
-// POST /api/system-config — 创建配置
-router.post('/', (req, res) => {
+// POST /api/system-config — 创建配置（需管理员）
+router.post('/', requireAdmin, (req, res) => {
   const { registrationEnabled, aiConfig } = req.body
   db.prepare(
     'INSERT INTO systemConfig (id, registrationEnabled, aiConfig) VALUES (?, ?, ?)'
@@ -28,8 +37,8 @@ router.post('/', (req, res) => {
   res.status(201).json(req.body)
 })
 
-// PATCH /api/system-config — 部分更新
-router.patch('/', (req, res) => {
+// PATCH /api/system-config — 部分更新（需管理员）
+router.patch('/', requireAdmin, (req, res) => {
   const fields = req.body
   const sets: string[] = []
   const values: any[] = []
