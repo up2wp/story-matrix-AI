@@ -1,10 +1,11 @@
-import { useRef, useEffect, useCallback } from 'react'
+import { useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 
 interface RichEditorProps {
   content?: string
   onChange?: (content: string) => void
   placeholder?: string
   editable?: boolean
+  height?: string | number
 }
 
 export default function RichEditor({
@@ -12,18 +13,17 @@ export default function RichEditor({
   onChange,
   placeholder,
   editable = true,
+  height = '100%',
 }: RichEditorProps) {
   const ref = useRef<HTMLTextAreaElement>(null)
   const ignoreChange = useRef(false)
 
   // 外部内容变更时同步
   useEffect(() => {
-    if (ref.current && ref.current.value !== content) {
-      ignoreChange.current = true
-      ref.current.value = content
-      // 自动滚动到底部（流式输出时）
-      ref.current.scrollTop = ref.current.scrollHeight
-    }
+    const el = ref.current
+    if (!el || el.value === content) return
+    el.value = content
+    el.scrollTop = el.scrollHeight
   }, [content])
 
   const handleChange = useCallback(() => {
@@ -34,25 +34,31 @@ export default function RichEditor({
     onChange?.(ref.current?.value ?? '')
   }, [onChange])
 
+  const isFlex = height === '100%'
+
   return (
     <textarea
       ref={ref}
-      defaultValue={content}
+      defaultValue=""
       onChange={handleChange}
       readOnly={!editable}
       placeholder={placeholder}
       style={{
         width: '100%',
-        minHeight: 400,
+        height: isFlex ? undefined : (typeof height === 'number' ? `${height}px` : height),
+        minHeight: isFlex ? 0 : 400,
         padding: 12,
         border: 'none',
         outline: 'none',
-        resize: 'vertical',
+        resize: 'none',
         fontFamily: 'inherit',
         fontSize: 14,
         lineHeight: 1.8,
         whiteSpace: 'pre-wrap',
         background: 'transparent',
+        boxSizing: 'border-box',
+        overflow: 'auto',
+        flex: isFlex ? 1 : undefined,
       }}
     />
   )

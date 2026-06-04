@@ -35,6 +35,7 @@ export default function AppLayout() {
 
   const showAIPanel = aiPanelOpen && !NO_AI_PANEL_PATHS.includes(location.pathname)
   const showHeader = currentWork && !NO_HEADER_PATHS.includes(location.pathname)
+  const isChaptersPage = location.pathname === '/chapters'
 
   const openTitleModal = () => {
     setTitleInput(currentWork?.title || '')
@@ -78,11 +79,18 @@ ${context}
 - 只输出 JSON，不要输出其他内容`
 
       const text = await generate(prompt, '你是一位资深的小说编辑，擅长为作品起标题。', aiConfig)
-      const jsonMatch = text.match(/\[[\s\S]*\]/)
+      // 解析 AI 返回的 JSON（兼容 markdown 代码块）
+      let jsonStr = text
+      const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
+      if (codeBlockMatch) {
+        jsonStr = codeBlockMatch[1]
+      }
+      const jsonMatch = jsonStr.match(/\[[\s\S]*\]/)
       if (jsonMatch) {
         const titles = JSON.parse(jsonMatch[0]) as string[]
         setAiTitles(titles.filter((t) => typeof t === 'string'))
       } else {
+        console.error('AI 返回内容：', text)
         message.error('AI 返回格式异常')
       }
     } catch (err: any) {
@@ -97,7 +105,12 @@ ${context}
       <TopBar />
       <Layout style={{ flex: 1, overflow: 'hidden' }}>
         <Sidebar />
-        <Content style={{ padding: 24, overflow: 'auto' }}>
+        <Content style={{
+          padding: 24,
+          overflow: isChaptersPage ? 'hidden' : 'auto',
+          display: isChaptersPage ? 'flex' : 'block',
+          flexDirection: isChaptersPage ? 'column' : undefined,
+        }}>
           {showHeader && (
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
               <Space>

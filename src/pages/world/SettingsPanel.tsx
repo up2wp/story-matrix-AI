@@ -73,9 +73,16 @@ export default function SettingsPanel({ wb }: Props) {
         setAIStream(true, chunk)
       })
 
-      // 解析 AI 返回的 JSON
-      const jsonMatch = text.match(/\[[\s\S]*\]/)
+      // 解析 AI 返回的 JSON（兼容 markdown 代码块）
+      let jsonStr = text
+      // 尝试提取 ```json ... ``` 中的内容
+      const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
+      if (codeBlockMatch) {
+        jsonStr = codeBlockMatch[1]
+      }
+      const jsonMatch = jsonStr.match(/\[[\s\S]*\]/)
       if (!jsonMatch) {
+        console.error('AI 返回内容：', text)
         message.error('AI 返回格式异常，请重试')
         setAIStream(false, '生成失败：返回格式异常')
         return

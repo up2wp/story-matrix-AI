@@ -69,3 +69,36 @@ ${existingCharacters}
 
 新人物要与已有角色形成差异化和关系张力。`
 }
+
+export function buildCharacterPolishPrompt(
+  character: Record<string, unknown>,
+  worldSettings: string,
+  existingCharacters: string,
+): string {
+  return `请根据以下已有的角色信息，进行润色和丰富。
+
+当前角色信息：
+${JSON.stringify(character, null, 2)}
+
+世界观背景：
+${worldSettings}
+
+已有角色（避免重复）：
+${existingCharacters}
+
+要求：
+- 保留已有的核心设定，在此基础上丰富细节
+- 补充经历背景的细节和转折
+- 丰富性格特质，使其更立体
+- 如有性格弧线，深化每个阶段的描述
+- 可以适当添加 1-2 个新的标签
+
+请严格输出 JSON，包含以下字段：
+- bio: 润色后的经历背景（300-400字）
+- personality.traits: 丰富的性格特质（4-6个）
+- personality.habits: 行为习惯（3-4个）
+- personality.arc: 性格弧线（3-4个阶段，每阶段含 stage/description/trigger）
+- tags: 标签（3-5个）
+
+只输出 JSON，不要输出其他内容。`
+}

@@ -5,7 +5,9 @@ import {
   Card,
   Tag,
   Empty,
+  Checkbox,
   message,
+  notification,
   Popconfirm,
   Tooltip,
   Progress,
@@ -13,8 +15,10 @@ import {
 } from 'antd'
 import {
   ExperimentOutlined,
+  CheckCircleOutlined,
+  LoadingOutlined,
 } from '@ant-design/icons'
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import type { Chapter } from '@/core/types'
 import { generateId } from '@/utils/id'
 import { useStore } from '@/core/store'
@@ -36,84 +40,163 @@ export default function ChaptersPage() {
   const [loading, setLoading] = useState(false)
   const [activeChapterId, setActiveChapterId] = useState<string | null>(null)
   const [streamingContent, setStreamingContent] = useState<string | null>(null)
+  const [autoContinue, setAutoContinue] = useState(false)
+  const [writingChapterId, setWritingChapterId] = useState<string | null>(null)
+  const [countdown, setCountdown] = useState(0)
+  const countdownRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const cancelAutoRef = useRef(false)
+
+  // 清理倒计时定时器
+  useEffect(() => {
+    return () => {
+      if (countdownRef.current) {
+        clearInterval(countdownRef.current)
+      }
+      notification.destroy('auto-continue')
+    }
+  }, [])
 
   const chapters = currentWork?.chapters ?? []
   const outline = currentWork?.outline ?? []
   const chapterOutlineNodes = outline.filter((n) => n.level === 'chapter')
   const activeChapter = chapters.find((c) => c.id === activeChapterId)
 
-  // 持久化
+  // 持久化（始终从 store 取最新 currentWork）
   const persistChapters = useCallback(
     async (newChapters: Chapter[]) => {
-      if (!currentWork) return
-      const updated = { ...currentWork, chapters: newChapters, updatedAt: Date.now() }
-      await db.works.update(currentWork.id, { chapters: newChapters })
+      const work = useStore.getState().currentWork
+      if (!work) return
+      const updated = { ...work, chapters: newChapters, updatedAt: Date.now() }
+      await db.works.update(work.id, { chapters: newChapters })
       setCurrentWork(updated)
     },
-    [currentWork, setCurrentWork],
+    [setCurrentWork],
   )
 
-  // 为所有大纲节点生成章节（只创建还没有章节的大纲节点）
-  const handleGenerateAll = async () => {
-    if (!currentWork) return
-    setLoading(true)
-    await new Promise((r) => setTimeout(r, 600))
+  // 确保章节存在（自动从大纲创建缺失的章节）
+  const ensureChapter = useCallback(
+    async (outlineId: string): Promise<Chapter> => {
+      const existing = chapters.find((c) => c.outlineId === outlineId)
+      if (existing) return existing
 
-    const existingOutlineIds = new Set(chapters.map((c) => c.outlineId))
-    const newNodes = chapterOutlineNodes.filter((node) => !existingOutlineIds.has(node.id))
+      const node = outline.find((n) => n.id === outlineId)
+      const newChapter: Chapter = {
+        id: generateId(),
+        outlineId,
+        title: node?.title || '未命名章节',
+        content: '',
+        wordCount: 0,
+        scenes: [],
+        versions: [],
+      }
+      const updated = [...chapters, newChapter]
+      await persistChapters(updated)
+      return newChapter
+    },
+    [chapters, outline, persistChapters],
+  )
 
-    const newChapters: Chapter[] = newNodes.map((node) => ({
-      id: generateId(),
-      outlineId: node.id,
-      title: node.title,
-      content: '',
-      wordCount: 0,
-      scenes: [],
-      versions: [],
-    }))
-
-    await persistChapters([...chapters, ...newChapters])
-    setLoading(false)
-    message.success(newChapters.length > 0
-      ? `已创建 ${newChapters.length} 个新章节`
-      : '所有大纲章节均已创建')
+  // 清空所有章节
+  const handleClearAll = async () => {
+    await persistChapters([])
+    setActiveChapterId(null)
+    message.success('已清空所有章节')
   }
 
-  // 清空并重新生成所有章节
-  const handleRegenerateAll = async () => {
-    if (!currentWork) return
-    setLoading(true)
-    await new Promise((r) => setTimeout(r, 600))
+  // 取消自动续写
+  const cancelAutoContinue = () => {
+    cancelAutoRef.current = true
+    if (countdownRef.current) {
+      clearInterval(countdownRef.current)
+      countdownRef.current = null
+    }
+    setCountdown(0)
+    setAutoContinue(false)
+    notification.destroy('auto-continue')
+  }
 
-    const newChapters: Chapter[] = chapterOutlineNodes.map((node) => ({
-      id: generateId(),
-      outlineId: node.id,
-      title: node.title,
-      content: '',
-      wordCount: 0,
-      scenes: [],
-      versions: [],
-    }))
+  // 显示完成通知（带倒计时）
+  const showCompletionNotification = (title: string, wordCount: number, hasNext: boolean): Promise<boolean> => {
+    return new Promise((resolve) => {
+      if (!hasNext || !autoContinue) {
+        notification.success({
+          title: '章节完成',
+          description: `「${title}」已生成 ${wordCount} 字`,
+          duration: 3,
+        })
+        resolve(false)
+        return
+      }
 
-    await persistChapters(newChapters)
-    setActiveChapterId(null)
-    setLoading(false)
-    message.success(`已重新生成 ${newChapters.length} 个章节`)
+      cancelAutoRef.current = false
+      let seconds = 10
+      setCountdown(seconds)
+
+      const tick = () => {
+        if (cancelAutoRef.current) {
+          resolve(false)
+          return
+        }
+        seconds--
+        setCountdown(seconds)
+
+        if (seconds <= 0) {
+          if (countdownRef.current) clearInterval(countdownRef.current)
+          notification.destroy('auto-continue')
+          resolve(true)
+          return
+        }
+
+        notification.open({
+          key: 'auto-continue',
+          title: '章节完成',
+          description: (
+            <div>
+              <div>「{title}」已生成 {wordCount} 字</div>
+              <div style={{ marginTop: 8 }}>
+                {seconds} 秒后自动开始下一章
+                <Button
+                  type="link"
+                  size="small"
+                  onClick={() => {
+                    cancelAutoContinue()
+                    resolve(false)
+                  }}
+                  style={{ marginLeft: 8 }}
+                >
+                  取消
+                </Button>
+              </div>
+            </div>
+          ),
+          icon: <CheckCircleOutlined style={{ color: '#52c41a' }} />,
+          duration: 0,
+          onClose: () => resolve(false),
+        })
+      }
+
+      tick()
+      countdownRef.current = setInterval(tick, 1000)
+    })
   }
 
   // AI 生成当前章节正文（流式输出）
   const handleAIWrite = async (chapter: Chapter) => {
-    if (!currentWork) return
+    // 每次调用时从 store 获取最新状态
+    const latestWork = useStore.getState().currentWork
+    if (!latestWork) return
     if (!aiConfig.apiKey) {
       message.warning('请先在系统管理中配置 AI API Key')
       return
     }
     const setAIStream = useStore.getState().setAIStream
     setLoading(true)
+    setWritingChapterId(chapter.id)
+    setActiveChapterId(chapter.id)
     setAIStream(true, '')
     try {
       // 自动匹配未绑定的局部约束
-      let work = currentWork
+      let work = latestWork
       const matchResult = autoMatchUnboundConstraints(work.constraints, work.outline)
       if (matchResult.constraints !== work.constraints) {
         work = {
@@ -129,9 +212,11 @@ export default function ChaptersPage() {
         setCurrentWork(work)
       }
 
-      const outlineNode = outline.find((n) => n.id === chapter.outlineId)
+      const currentChapters = work.chapters ?? []
+      const currentOutline = work.outline ?? []
+      const outlineNode = currentOutline.find((n) => n.id === chapter.outlineId)
       const chapterSummary = outlineNode?.summary || ''
-      const prevChapter = chapters[chapters.findIndex((c) => c.id === chapter.id) - 1]
+      const prevChapter = currentChapters[currentChapters.findIndex((c) => c.id === chapter.id) - 1]
       const prevSummary = prevChapter ? prevChapter.content.slice(-500) : ''
 
       const prompt = buildChapterPrompt(
@@ -148,19 +233,38 @@ export default function ChaptersPage() {
         setStreamingContent(chunk)
       })
 
-      // 更新章节内容
+      // 更新章节内容（使用最新数据）
       const wordCount = text.replace(/\s/g, '').length
-      const updated = chapters.map((c) =>
+      const latestChapters = useStore.getState().currentWork?.chapters ?? []
+      const updated = latestChapters.map((c) =>
         c.id === chapter.id ? { ...c, content: text, wordCount } : c,
       )
       await persistChapters(updated)
       setStreamingContent(null)
+      setWritingChapterId(null)
       setAIStream(false, text)
-      message.success(`已生成「${chapter.title}」正文，${wordCount} 字`)
+
+      // 显示完成通知，等待倒计时
+      const currentOutlineNodes = currentOutline.filter((n) => n.level === 'chapter')
+      const currentOutlineIndex = currentOutlineNodes.findIndex((n) => n.id === chapter.outlineId)
+      const nextOutlineNode = currentOutlineNodes[currentOutlineIndex + 1]
+      const shouldContinue = await showCompletionNotification(chapter.title, wordCount, !!nextOutlineNode)
+
+      // 自动开始下一章
+      if (shouldContinue && nextOutlineNode) {
+        const nextChapter = await ensureChapter(nextOutlineNode.id)
+        setActiveChapterId(nextChapter.id)
+        await handleAIWrite(nextChapter)
+      } else if (!nextOutlineNode && autoContinue) {
+        message.info('已是最后一章，自动完成')
+        setAutoContinue(false)
+      }
     } catch (err: any) {
       message.error(`生成失败：${err.message}`)
       setAIStream(false, `生成失败：${err.message}`)
       setStreamingContent(null)
+      setWritingChapterId(null)
+      setAutoContinue(false)
     } finally {
       setLoading(false)
     }
@@ -184,34 +288,21 @@ export default function ChaptersPage() {
 
   // 章节统计
   const stats = useMemo(() => {
-    const total = chapters.length
+    const total = chapterOutlineNodes.length
     const withContent = chapters.filter((c) => c.wordCount > 0).length
     const totalWords = chapters.reduce((sum, c) => sum + c.wordCount, 0)
     const estWords = total * 3000
     const percent = estWords > 0 ? Math.min(100, Math.round((totalWords / estWords) * 100)) : 0
     return { total, withContent, totalWords, estWords, percent }
-  }, [chapters])
+  }, [chapters, chapterOutlineNodes])
 
   return (
-    <div style={{ display: 'flex', gap: 16, height: 'calc(100vh - 160px)' }}>
+    <div style={{ display: 'flex', gap: 16, flex: 1, overflow: 'hidden' }}>
       {/* 左侧：章节列表 */}
       <div style={{ width: 280, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
-        {/* 固定头部：按钮 + 统计 */}
+        {/* 固定头部：统计 */}
         <div style={{ flexShrink: 0, marginBottom: 12 }}>
-          <div style={{ marginBottom: 8 }}>
-            {!readOnly && chapters.length === 0 && (
-              <Button
-                type="primary"
-                icon={<ExperimentOutlined />}
-                onClick={handleGenerateAll}
-                loading={loading}
-                size="small"
-              >
-                生成全部章节
-              </Button>
-            )}
-          </div>
-          {chapters.length > 0 && (
+          {chapterOutlineNodes.length > 0 && (
             <div>
               <Space style={{ marginBottom: 4 }}>
                 <Text type="secondary" style={{ fontSize: 12 }}>
@@ -228,15 +319,17 @@ export default function ChaptersPage() {
 
         {/* 可滚动章节列表 */}
         <div style={{ flex: 1, overflow: 'auto' }}>
-          {chapters.length === 0 && !loading ? (
+          {chapterOutlineNodes.length === 0 ? (
             <Empty description="先在大纲中创建章节" />
           ) : (
-            chapters.map((chapter) => {
-              const node = getOutlineNode(chapter.outlineId)
-              const isActive = chapter.id === activeChapterId
+            chapterOutlineNodes.map((node) => {
+              const chapter = chapters.find((c) => c.outlineId === node.id)
+              const isActive = chapter?.id === activeChapterId
+              const isWriting = chapter?.id === writingChapterId
+              const hasContent = chapter && chapter.wordCount > 0
               return (
                 <div
-                  key={chapter.id}
+                  key={node.id}
                   style={{
                     cursor: 'pointer',
                     background: isActive ? '#e6f4ff' : undefined,
@@ -244,22 +337,27 @@ export default function ChaptersPage() {
                     borderRadius: 6,
                     marginBottom: 4,
                   }}
-                  onClick={() => setActiveChapterId(chapter.id)}
+                  onClick={async () => {
+                    const ch = await ensureChapter(node.id)
+                    setActiveChapterId(ch.id)
+                  }}
                 >
                   <div style={{ width: '100%' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text strong style={{ fontSize: 13 }}>{chapter.title}</Text>
-                      {chapter.wordCount > 0 && (
-                        <Tag color="blue" style={{ fontSize: 11 }}>
-                          {chapter.wordCount}
+                      <Text strong style={{ fontSize: 13 }}>{node.title}</Text>
+                      {isWriting ? (
+                        <Tag color="processing" icon={<LoadingOutlined />} style={{ fontSize: 11 }}>
+                          写作中
                         </Tag>
-                      )}
+                      ) : hasContent ? (
+                        <Tag color="blue" style={{ fontSize: 11 }}>
+                          {chapter!.wordCount} 字
+                        </Tag>
+                      ) : null}
                     </div>
-                    {node && (
-                      <Text type="secondary" style={{ fontSize: 11 }} ellipsis>
-                        {node.summary}
-                      </Text>
-                    )}
+                    <Text type="secondary" style={{ fontSize: 11 }} ellipsis>
+                      {node.summary}
+                    </Text>
                   </div>
                 </div>
               )
@@ -272,7 +370,7 @@ export default function ChaptersPage() {
           <div style={{ flexShrink: 0, paddingTop: 8, borderTop: '1px solid #f0f0f0', textAlign: 'center' }}>
             <Popconfirm
               title="确定清空所有已写正文？此操作不可恢复"
-              onConfirm={handleRegenerateAll}
+              onConfirm={handleClearAll}
               okText="确认清空"
               cancelText="取消"
               okButtonProps={{ danger: true }}
@@ -286,23 +384,43 @@ export default function ChaptersPage() {
       </div>
 
       {/* 右侧：编辑区 */}
-      <div style={{ flex: 1, overflow: 'auto' }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {!activeChapter ? (
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
             <Empty description="选择左侧章节开始写作" />
           </div>
         ) : (
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <Title level={4} style={{ margin: 0 }}>{activeChapter.title}</Title>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexShrink: 0 }}>
+              <Space>
+                <Title level={4} style={{ margin: 0 }}>{activeChapter.title}</Title>
+                {writingChapterId === activeChapter.id && (
+                  <Tag color="processing" icon={<LoadingOutlined />}>写作中</Tag>
+                )}
+              </Space>
               {!readOnly && (
-                <Button
-                  icon={<ExperimentOutlined />}
-                  onClick={() => handleAIWrite(activeChapter)}
-                  loading={loading}
-                >
-                  AI 生成正文
-                </Button>
+                <Space>
+                  {countdown > 0 && (
+                    <Space>
+                      <Text type="secondary">{countdown} 秒后开始下一章</Text>
+                      <Button size="small" onClick={cancelAutoContinue}>取消</Button>
+                    </Space>
+                  )}
+                  <Checkbox
+                    checked={autoContinue}
+                    onChange={(e) => setAutoContinue(e.target.checked)}
+                    disabled={loading}
+                  >
+                    完成后自动开始下一章
+                  </Checkbox>
+                  <Button
+                    icon={<ExperimentOutlined />}
+                    onClick={() => handleAIWrite(activeChapter)}
+                    loading={loading}
+                  >
+                    AI 生成正文
+                  </Button>
+                </Space>
               )}
             </div>
 
@@ -371,11 +489,14 @@ export default function ChaptersPage() {
             })()}
 
             {/* 正文编辑器 */}
-            <Card styles={{ body: { padding: 0, minHeight: 400 } }}>
+            <Card styles={{ body: { padding: 0, flex: 1, display: 'flex', flexDirection: 'column' } }}
+              style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}
+            >
               <RichEditor
-                content={streamingContent ?? activeChapter.content}
+                content={writingChapterId === activeChapter.id ? (streamingContent ?? activeChapter.content) : activeChapter.content}
                 onChange={(content) => handleContentChange(activeChapter.id, content)}
-                editable={!readOnly && streamingContent === null}
+                editable={!readOnly && (writingChapterId !== activeChapter.id || streamingContent === null)}
+                height="100%"
               />
             </Card>
           </div>

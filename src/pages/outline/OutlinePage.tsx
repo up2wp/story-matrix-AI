@@ -96,8 +96,15 @@ export default function OutlinePage() {
         setAIStream(true, chunk)
       })
 
-      const jsonMatch = text.match(/\[[\s\S]*\]/)
+      // 解析 AI 返回的 JSON（兼容 markdown 代码块）
+      let jsonStr = text
+      const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
+      if (codeBlockMatch) {
+        jsonStr = codeBlockMatch[1]
+      }
+      const jsonMatch = jsonStr.match(/\[[\s\S]*\]/)
       if (!jsonMatch) {
+        console.error('AI 返回内容：', text)
         message.error('AI 返回格式异常，请重试')
         setAIStream(false, '生成失败')
         return
@@ -133,6 +140,14 @@ export default function OutlinePage() {
       // 自动匹配未绑定的局部约束到章节节点
       const matchResult = autoMatchUnboundConstraints(globalResult.constraints, globalResult.outline)
       await persistOutline(matchResult.outline)
+      // 清理孤儿章节（outlineId 不在新大纲中的章节）
+      const validOutlineIds = new Set(matchResult.outline.map((n) => n.id))
+      const orphanedChapters = currentWork.chapters.filter((c) => !validOutlineIds.has(c.outlineId))
+      if (orphanedChapters.length > 0) {
+        const keptChapters = currentWork.chapters.filter((c) => validOutlineIds.has(c.outlineId))
+        await db.works.update(currentWork.id, { chapters: keptChapters })
+        setCurrentWork({ ...currentWork, chapters: keptChapters })
+      }
       // 更新约束的 relatedOutlineIds
       if (matchResult.constraints !== currentWork.constraints) {
         await db.works.update(currentWork.id, { constraints: matchResult.constraints })
@@ -185,8 +200,15 @@ export default function OutlinePage() {
         setAIStream(true, chunk)
       })
 
-      const jsonMatch = text.match(/\{[\s\S]*\}/)
+      // 解析 AI 返回的 JSON（兼容 markdown 代码块）
+      let jsonStr2 = text
+      const codeBlockMatch2 = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
+      if (codeBlockMatch2) {
+        jsonStr2 = codeBlockMatch2[1]
+      }
+      const jsonMatch = jsonStr2.match(/\{[\s\S]*\}/)
       if (!jsonMatch) {
+        console.error('AI 返回内容：', text)
         message.error('AI 返回格式异常，请重试')
         setAIStream(false, '匹配失败：格式异常')
         setLoading(false)

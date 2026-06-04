@@ -15,11 +15,15 @@ export default function LoginPage() {
   const location = useLocation()
   const from = (location.state as { from?: Location })?.from?.pathname || '/works'
 
+  const loadConfig = useSystemConfigStore(s => s.loadConfig)
+
   const onFinish = async (values: { username: string; password: string }) => {
     setLoading(true)
     try {
       const success = await login(values.username, values.password)
       if (success) {
+        // 登录成功后重新加载配置（带 token 才能获取 AI 配置）
+        await loadConfig()
         navigate(from, { replace: true })
       } else {
         message.error('用户名或密码错误')
