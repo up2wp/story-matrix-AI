@@ -76,10 +76,14 @@ export default function ChaptersPage() {
   // 确保章节存在（自动从大纲创建缺失的章节）
   const ensureChapter = useCallback(
     async (outlineId: string): Promise<Chapter> => {
-      const existing = chapters.find((c) => c.outlineId === outlineId)
+      const work = useStore.getState().currentWork
+      if (!work) throw new Error('无当前作品')
+      const currentChapters = work.chapters ?? []
+      const currentOutline = work.outline ?? []
+      const existing = currentChapters.find((c) => c.outlineId === outlineId)
       if (existing) return existing
 
-      const node = outline.find((n) => n.id === outlineId)
+      const node = currentOutline.find((n) => n.id === outlineId)
       const newChapter: Chapter = {
         id: generateId(),
         outlineId,
@@ -89,11 +93,11 @@ export default function ChaptersPage() {
         scenes: [],
         versions: [],
       }
-      const updated = [...chapters, newChapter]
+      const updated = [...currentChapters, newChapter]
       await persistChapters(updated)
       return newChapter
     },
-    [chapters, outline, persistChapters],
+    [persistChapters],
   )
 
   // 清空所有章节
@@ -274,12 +278,13 @@ export default function ChaptersPage() {
   const handleContentChange = useCallback(
     async (chapterId: string, content: string) => {
       const wordCount = content.replace(/\s/g, '').length
-      const updated = chapters.map((c) =>
+      const currentChapters = useStore.getState().currentWork?.chapters ?? []
+      const updated = currentChapters.map((c) =>
         c.id === chapterId ? { ...c, content, wordCount } : c,
       )
       await persistChapters(updated)
     },
-    [chapters, persistChapters],
+    [persistChapters],
   )
 
   // 找到大纲节点
