@@ -1,3 +1,5 @@
+import { useEffect } from 'react'
+import { useNavigate } from 'react-router'
 import { Tabs, Typography } from 'antd'
 import { BookOutlined, UserOutlined, TeamOutlined } from '@ant-design/icons'
 import SettingsPanel from './SettingsPanel'
@@ -15,16 +17,13 @@ const tabItems = [
 
 export default function WorldPage() {
   const wb = useWorldBuilder()
+  const navigate = useNavigate()
 
-  if (!wb.currentWork) {
-    return (
-      <div style={{ textAlign: 'center', paddingTop: 80 }}>
-        <Title level={4} type="secondary">
-          请先在「故事萌芽」中创建作品
-        </Title>
-      </div>
-    )
-  }
+  useEffect(() => {
+    if (!wb.currentWork) navigate('/works', { replace: true })
+  }, [wb.currentWork, navigate])
+
+  if (!wb.currentWork) return null
 
   return (
     <div>

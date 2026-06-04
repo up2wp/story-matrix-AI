@@ -15,9 +15,9 @@ const { Content } = Layout
 const { Title } = Typography
 
 // 不需要 AI 面板的页面
-const NO_AI_PANEL_PATHS = ['/works', '/admin']
+const NO_AI_PANEL_PATHS = ['/works', '/admin', '/preview']
 // 不需要页面头部的页面
-const NO_HEADER_PATHS = ['/works', '/admin', '/login']
+const NO_HEADER_PATHS = ['/works', '/admin', '/login', '/preview']
 
 export default function AppLayout() {
   const aiPanelOpen = useStore((s) => s.aiPanelOpen)
@@ -142,6 +142,7 @@ ${context}
       <Modal
         title="编辑标题"
         open={titleModalOpen}
+        maskClosable={false}
         onCancel={() => setTitleModalOpen(false)}
         onOk={handleSaveTitle}
         okText="保存"

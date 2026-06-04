@@ -482,6 +482,7 @@ export default function OutlinePage() {
       <Modal
         title="AI 生成大纲设置"
         open={genModalOpen}
+        maskClosable={false}
         onOk={handleGenerate}
         onCancel={() => setGenModalOpen(false)}
         okText="开始生成"
@@ -501,6 +502,7 @@ export default function OutlinePage() {
       <Modal
         title={isNew ? (editing?.level === 'volume' ? '新增卷' : '新增章节') : '编辑'}
         open={editModalOpen}
+        maskClosable={false}
         onOk={isNew ? handleSaveNew : handleSave}
         onCancel={() => setEditModalOpen(false)}
         okText="保存"

@@ -14,16 +14,22 @@ import WorldPage from '@/pages/world/WorldPage'
 import OutlinePage from '@/pages/outline/OutlinePage'
 import ConstraintsPage from '@/pages/constraints/ConstraintsPage'
 import ChaptersPage from '@/pages/chapters/ChaptersPage'
+import PreviewPage from '@/pages/preview/PreviewPage'
 import { useAuthStore } from '@/core/auth-store'
+import { useStore } from '@/core/store'
 import { useSystemConfigStore } from '@/core/system-config-store'
 
 export default function App() {
   const initSession = useAuthStore(s => s.initSession)
   const loadConfig = useSystemConfigStore(s => s.loadConfig)
+  const loadLastWork = useStore(s => s.loadLastWork)
 
   useEffect(() => {
-    initSession().then(() => loadConfig())
-  }, [])
+    initSession().then(() => {
+      loadConfig()
+      loadLastWork()
+    })
+  }, [initSession, loadConfig, loadLastWork])
 
   return (
     <ConfigProvider locale={zhCN}>
@@ -38,6 +44,7 @@ export default function App() {
             <Route path="/outline" element={<OutlinePage />} />
             <Route path="/constraints" element={<ConstraintsPage />} />
             <Route path="/chapters" element={<ChaptersPage />} />
+            <Route path="/preview" element={<PreviewPage />} />
             <Route element={<AdminRoute><Outlet /></AdminRoute>}>
               <Route path="/admin" element={<AdminPage />} />
             </Route>

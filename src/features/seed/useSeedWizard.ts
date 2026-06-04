@@ -18,6 +18,7 @@ const defaultSeed: StorySeed = {
   coreConcept: '',
   tone: '',
   targetAudience: '',
+  pov: '',
 }
 
 export function useSeedWizard() {

@@ -26,8 +26,9 @@ import { generateId } from '@/utils/id'
 import { useStore } from '@/core/store'
 import { useSystemConfigStore } from '@/core/system-config-store'
 import { generateStream } from '@/ai/client'
-import { seedContext, charactersContext } from '@/ai/context'
+import { charactersContext, worldContext } from '@/ai/context'
 import { SUPPORTING_SYSTEM_PROMPT, buildSupportingCharsPrompt } from '@/ai/prompts/world'
+import { CHARACTER_SYSTEM_PROMPT, buildCharacterPolishPrompt } from '@/ai/prompts/seed'
 
 const { Text, Paragraph } = Typography
 const { TextArea } = Input
@@ -46,6 +47,7 @@ export default function SupportingPanel({ wb }: Props) {
   const [isNew, setIsNew] = useState(false)
   const [editRelations, setEditRelations] = useState<Relation[]>([])
   const [form] = Form.useForm()
+  const [polishing, setPolishing] = useState(false)
 
   const characters = wb.currentWork?.characters ?? []
   const supportingChars = characters.filter((c) => c.role !== 'major')
@@ -76,7 +78,7 @@ export default function SupportingPanel({ wb }: Props) {
       const majorChars = characters.filter((c) => c.role === 'major')
       const prompt = buildSupportingCharsPrompt(
         charactersContext(majorChars),
-        seedContext(work),
+        worldContext(work),
       )
       const text = await generateStream(prompt, SUPPORTING_SYSTEM_PROMPT, aiConfig, (chunk) => {
         setAIStream(true, chunk)
@@ -103,7 +105,7 @@ export default function SupportingPanel({ wb }: Props) {
         bio: item.bio || '',
         personality: {
           traits: item.personality?.traits || [],
-          habits: item.personality?.habits || [],
+          habits: (item.personality?.habits || []).map((h: string) => h.replace(/\s+/g, ' ').trim()).filter(Boolean),
           arc: item.personality?.arc || [],
         },
         relations: item.relations || [],
@@ -126,6 +128,79 @@ export default function SupportingPanel({ wb }: Props) {
     const majorOnly = characters.filter((c) => c.role === 'major')
     await wb.setCharacters(majorOnly)
     message.success('已清空所有非主要人物')
+  }
+
+  // AI 润色当前编辑的角色
+  const handleAIPolish = async () => {
+    if (!aiConfig.apiKey) {
+      message.warning('请先在系统管理中配置 AI API Key')
+      return
+    }
+    if (!editing) return
+
+    const values = form.getFieldsValue()
+    const currentChar = {
+      name: values.name || editing.name,
+      bio: values.bio || editing.bio,
+      personality: {
+        traits: values.traits ? values.traits.split(/[,，、]/).map((t: string) => t.trim()).filter(Boolean) : editing.personality.traits,
+        habits: editing.personality.habits,
+        arc: editing.personality.arc,
+      },
+      tags: values.tags ? values.tags.split(/[,，、]/).map((t: string) => t.trim()).filter(Boolean) : editing.tags,
+    }
+
+    const setAIStream = useStore.getState().setAIStream
+    setPolishing(true)
+    setAIStream(true, '')
+    try {
+      const work = wb.currentWork!
+      const prompt = buildCharacterPolishPrompt(
+        currentChar,
+        worldContext(work),
+        charactersContext(characters),
+      )
+      const text = await generateStream(prompt, CHARACTER_SYSTEM_PROMPT, aiConfig, (chunk) => {
+        setAIStream(true, chunk)
+      })
+
+      // 解析 AI 返回的 JSON（兼容 markdown 代码块）
+      let jsonStr = text
+      const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
+      if (codeBlockMatch) {
+        jsonStr = codeBlockMatch[1]
+      }
+      const jsonMatch = jsonStr.match(/\{[\s\S]*\}/)
+      if (!jsonMatch) {
+        console.error('AI 返回内容：', text)
+        message.error('AI 返回格式异常，请重试')
+        setAIStream(false, '润色失败')
+        return
+      }
+
+      const parsed = JSON.parse(jsonMatch[0])
+      form.setFieldsValue({
+        bio: parsed.bio || currentChar.bio,
+        traits: (parsed.personality?.traits || currentChar.personality.traits).join('、'),
+        tags: (parsed.tags || currentChar.tags).join('、'),
+      })
+      if (parsed.personality?.arc) {
+        setEditing({
+          ...editing,
+          personality: {
+            ...editing.personality,
+            arc: parsed.personality.arc,
+          },
+        })
+      }
+      setAIStream(false, text)
+      message.success('AI 润色完成')
+    } catch (err: any) {
+      message.error(`润色失败：${err.message}`)
+      setAIStream(false, `润色失败：${err.message}`)
+    } finally {
+      setPolishing(false)
+    }
   }
 
   // 手动新增
@@ -261,10 +336,27 @@ export default function SupportingPanel({ wb }: Props) {
       <Modal
         title={isNew ? '新增角色' : '编辑角色'}
         open={editModalOpen}
+        maskClosable={false}
         onOk={handleSave}
         onCancel={() => setEditModalOpen(false)}
         okText="保存"
         cancelText="取消"
+        footer={(_, { OkBtn, CancelBtn }) => (
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <Button
+              icon={<ExperimentOutlined />}
+              loading={polishing}
+              onClick={handleAIPolish}
+              disabled={readOnly}
+            >
+              AI 润色
+            </Button>
+            <Space>
+              <CancelBtn />
+              <OkBtn />
+            </Space>
+          </div>
+        )}
       >
         <Form form={form} layout="vertical">
           <Form.Item name="name" label="姓名" rules={[{ required: true, message: '请输入姓名' }]}>

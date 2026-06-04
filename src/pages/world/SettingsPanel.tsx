@@ -25,8 +25,8 @@ import { generateId } from '@/utils/id'
 import { useStore } from '@/core/store'
 import { useSystemConfigStore } from '@/core/system-config-store'
 import { generateStream } from '@/ai/client'
-import { seedContext } from '@/ai/context'
-import { WORLD_SYSTEM_PROMPT, buildWorldviewPrompt } from '@/ai/prompts/world'
+import { seedContext, worldContext } from '@/ai/context'
+import { WORLD_SYSTEM_PROMPT, buildWorldviewPrompt, SETTING_POLISH_SYSTEM_PROMPT, buildSettingPolishPrompt } from '@/ai/prompts/world'
 
 const { Text, Paragraph } = Typography
 const { TextArea } = Input
@@ -53,6 +53,7 @@ export default function SettingsPanel({ wb }: Props) {
   const [editModalOpen, setEditModalOpen] = useState(false)
   const [editing, setEditing] = useState<Setting | null>(null)
   const [form] = Form.useForm()
+  const [polishing, setPolishing] = useState(false)
 
   const settings = wb.currentWork?.settings ?? []
 
@@ -111,6 +112,68 @@ export default function SettingsPanel({ wb }: Props) {
       setAIStream(false, `生成失败：${err.message}`)
     } finally {
       wb.setLoading(false)
+    }
+  }
+
+  // AI 润色当前编辑的设定
+  const handleAIPolish = async () => {
+    if (!aiConfig.apiKey) {
+      message.warning('请先在系统管理中配置 AI API Key')
+      return
+    }
+    if (!editing) return
+
+    const values = form.getFieldsValue()
+    const currentSetting = {
+      category: values.category || editing.category,
+      title: values.title || editing.title,
+      content: values.content || editing.content,
+    }
+
+    if (!currentSetting.content.trim()) {
+      message.warning('请先填写设定内容再润色')
+      return
+    }
+
+    const setAIStream = useStore.getState().setAIStream
+    setPolishing(true)
+    setAIStream(true, '')
+    try {
+      const work = wb.currentWork!
+      const prompt = buildSettingPolishPrompt(
+        currentSetting,
+        worldContext(work),
+      )
+      const text = await generateStream(prompt, SETTING_POLISH_SYSTEM_PROMPT, aiConfig, (chunk) => {
+        setAIStream(true, chunk)
+      })
+
+      // 解析 AI 返回的 JSON（兼容 markdown 代码块）
+      let jsonStr = text
+      const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
+      if (codeBlockMatch) {
+        jsonStr = codeBlockMatch[1]
+      }
+      const jsonMatch = jsonStr.match(/\{[\s\S]*\}/)
+      if (!jsonMatch) {
+        console.error('AI 返回内容：', text)
+        message.error('AI 返回格式异常，请重试')
+        setAIStream(false, '润色失败')
+        return
+      }
+
+      const parsed = JSON.parse(jsonMatch[0])
+      form.setFieldsValue({
+        title: parsed.title || currentSetting.title,
+        content: parsed.content || currentSetting.content,
+      })
+      setAIStream(false, text)
+      message.success('AI 润色完成')
+    } catch (err: any) {
+      message.error(`润色失败：${err.message}`)
+      setAIStream(false, `润色失败：${err.message}`)
+    } finally {
+      setPolishing(false)
     }
   }
 
@@ -215,11 +278,28 @@ export default function SettingsPanel({ wb }: Props) {
       <Modal
         title={settings.find((s) => s.id === editing?.id) ? '编辑设定' : '新增设定'}
         open={editModalOpen}
+        maskClosable={false}
         onOk={settings.find((s) => s.id === editing?.id) ? handleSave : handleSaveNew}
         onCancel={() => setEditModalOpen(false)}
         okText="保存"
         cancelText="取消"
         width={600}
+        footer={(_, { OkBtn, CancelBtn }) => (
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <Button
+              icon={<ExperimentOutlined />}
+              loading={polishing}
+              onClick={handleAIPolish}
+              disabled={readOnly}
+            >
+              AI 润色
+            </Button>
+            <Space>
+              <CancelBtn />
+              <OkBtn />
+            </Space>
+          </div>
+        )}
       >
         <Form form={form} layout="vertical">
           <Form.Item name="category" label="分类">

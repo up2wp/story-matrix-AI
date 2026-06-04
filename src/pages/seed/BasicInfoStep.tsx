@@ -12,12 +12,177 @@ import {
   message,
   Tooltip,
 } from 'antd'
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
+import { PlusOutlined, ReloadOutlined, ExperimentOutlined } from '@ant-design/icons'
 import type { StorySeed } from '@/core/types'
-import { TIME_PERIODS, REGIONS, GENRES, TONES, AUDIENCES } from '@/features/seed/options'
+import { TIME_PERIODS, TIME_PERIOD_GROUPS, REGIONS, REGION_GROUPS, GENRES, TONES, POVS, AUDIENCES } from '@/features/seed/options'
+import { useSystemConfigStore } from '@/core/system-config-store'
+import { useStore } from '@/core/store'
+import { generateStream } from '@/ai/client'
+import { CORE_CONCEPT_SYSTEM_PROMPT, buildCoreConceptPolishPrompt, buildCoreConceptGeneratePrompt } from '@/ai/prompts/seed'
 
-const { Title, Paragraph } = Typography
+const { Title, Paragraph, Text } = Typography
 const { TextArea } = Input
+
+// 分组标签选择器（选中后自动折叠）
+function TagSelect({
+  value,
+  groups,
+  onChange,
+  multiple = false,
+  placeholder = '自定义',
+}: {
+  value: string | string[]
+  groups: { group: string; items: string[] }[]
+  onChange: (v: any) => void
+  multiple?: boolean
+  placeholder?: string
+}) {
+  const [expanded, setExpanded] = useState(true)
+  const [customMode, setCustomMode] = useState(false)
+  const [customValue, setCustomValue] = useState('')
+
+  const hasValue = multiple
+    ? Array.isArray(value) && value.length > 0
+    : !!value
+
+  const submitCustom = () => {
+    const trimmed = customValue.trim()
+    if (!trimmed) { setCustomMode(false); setCustomValue(''); return }
+    if (multiple) {
+      const arr = Array.isArray(value) ? value : []
+      onChange([...arr, trimmed])
+    } else {
+      onChange(trimmed)
+      setExpanded(false)
+    }
+    setCustomValue('')
+    setCustomMode(false)
+  }
+
+  // 折叠态：只显示已选
+  if (hasValue && !expanded && !customMode) {
+    const selected = multiple ? (value as string[]) : [value as string]
+    return (
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', padding: '8px 12px', background: '#fafafa', borderRadius: 6 }}>
+        {selected.map((v) => (
+          <Tag
+            key={v}
+            color="blue"
+            closable
+            onClose={() => {
+              if (multiple) {
+                onChange((value as string[]).filter((x) => x !== v))
+              } else {
+                onChange('')
+              }
+            }}
+            style={{ margin: 0 }}
+          >
+            {v}
+          </Tag>
+        ))}
+        <Tag
+          style={{ cursor: 'pointer', borderStyle: 'dashed', margin: 0 }}
+          onClick={() => setExpanded(true)}
+        >
+          修改
+        </Tag>
+      </div>
+    )
+  }
+
+  // 展开态：显示全部选项
+  const allPresets = new Set(groups.flatMap((g) => g.items))
+  const customValues = multiple
+    ? (value as string[]).filter((v) => !allPresets.has(v))
+    : (!allPresets.has(value as string) && value ? [value as string] : [])
+
+  return (
+    <div style={{ padding: '12px 12px 8px', background: '#fafafa', borderRadius: 6 }}>
+      {/* 自定义值（非预设） */}
+      {customValues.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+          {customValues.map((v) => (
+            <Tag
+              key={v}
+              color="blue"
+              closable
+              onClose={() => {
+                if (multiple) {
+                  onChange((value as string[]).filter((x) => x !== v))
+                } else {
+                  onChange('')
+                }
+              }}
+              style={{ margin: 0 }}
+            >
+              {v}
+            </Tag>
+          ))}
+        </div>
+      )}
+      {hasValue && (
+        <div style={{ marginBottom: 8 }}>
+          <a style={{ fontSize: 12 }} onClick={() => { setExpanded(false); setCustomMode(false) }}>
+            收起
+          </a>
+        </div>
+      )}
+      {groups.map((g) => (
+        <div key={g.group} style={{ marginBottom: 8 }}>
+          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>
+            {g.group}
+          </Text>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {g.items.map((item) => {
+              const selected = multiple
+                ? (value as string[]).includes(item)
+                : value === item
+              return (
+                <Tag
+                  key={item}
+                  color={selected ? 'blue' : undefined}
+                  style={{ cursor: 'pointer', margin: 0 }}
+                  onClick={() => {
+                    if (multiple) {
+                      const arr = Array.isArray(value) ? value : []
+                      onChange(selected ? arr.filter((x) => x !== item) : [...arr, item])
+                    } else {
+                      onChange(selected ? '' : item)
+                      if (!selected) setExpanded(false)
+                    }
+                  }}
+                >
+                  {item}
+                </Tag>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+      {/* 自定义输入 */}
+      {customMode ? (
+        <Input
+          size="small"
+          value={customValue}
+          onChange={(e) => setCustomValue(e.target.value)}
+          placeholder={`输入${placeholder}，回车确认`}
+          onPressEnter={submitCustom}
+          onBlur={submitCustom}
+          style={{ width: 200, marginTop: 4 }}
+          autoFocus
+        />
+      ) : (
+        <Tag
+          style={{ cursor: 'pointer', borderStyle: 'dashed', marginTop: 4 }}
+          onClick={() => setCustomMode(true)}
+        >
+          + 自定义
+        </Tag>
+      )}
+    </div>
+  )
+}
 
 // 通用：支持选择 + 自定义输入的 Select
 function CreatableSelect({
@@ -132,6 +297,50 @@ interface Props {
 
 export default function BasicInfoStep({ seed, onUpdate, workTitle, onTitleChange, onFinish, loading, setLoading }: Props) {
   const currentGenre = GENRES.find((g) => g.value === seed.genre)
+  const aiConfig = useSystemConfigStore((s) => s.aiConfig)
+
+  // AI 润色/生成核心概念
+  const handleAICoreConcept = async () => {
+    if (!aiConfig.apiKey) {
+      message.warning('请先在系统管理中配置 AI API Key')
+      return
+    }
+
+    const setAIStream = useStore.getState().setAIStream
+    setLoading(true)
+    setAIStream(true, '')
+    try {
+      // 构建种子信息（不含 coreConcept 本身）
+      const seedForAI = {
+        timePeriod: seed.timePeriod,
+        regions: seed.regions,
+        genre: seed.genre,
+        subGenre: seed.subGenre,
+        tone: seed.tone,
+        targetAudience: seed.targetAudience,
+      }
+
+      const hasConcept = seed.coreConcept.trim().length > 0
+      const prompt = hasConcept
+        ? buildCoreConceptPolishPrompt(seed.coreConcept, seedForAI)
+        : buildCoreConceptGeneratePrompt(seedForAI)
+
+      const text = await generateStream(prompt, CORE_CONCEPT_SYSTEM_PROMPT, aiConfig, (chunk) => {
+        setAIStream(true, chunk)
+      })
+
+      // 清理返回文本（去掉引号、多余换行等）
+      const cleaned = text.replace(/^["'"']|["'"']$/g, '').trim()
+      onUpdate({ coreConcept: cleaned })
+      setAIStream(false, text)
+      message.success(hasConcept ? '核心概念已润色' : '核心概念已生成')
+    } catch (err: any) {
+      message.error(`生成失败：${err.message}`)
+      setAIStream(false, `生成失败：${err.message}`)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   // 随机构建：全量随机
   const handleRandomAll = () => {
@@ -149,6 +358,7 @@ export default function BasicInfoStep({ seed, onUpdate, workTitle, onTitleChange
       subGenre: pick(genre.sub),
       tone: pick(TONES),
       targetAudience: pick(AUDIENCES),
+      pov: pick(POVS).value,
       coreConcept: '',
     })
     message.success('已随机生成，请检查并补充核心概念')
@@ -177,6 +387,7 @@ export default function BasicInfoStep({ seed, onUpdate, workTitle, onTitleChange
     if (!seed.subGenre) patch.subGenre = pick(genreObj.sub)
     if (!seed.tone) patch.tone = pick(TONES)
     if (!seed.targetAudience) patch.targetAudience = pick(AUDIENCES)
+    if (!seed.pov) patch.pov = pick(POVS).value
     if (!seed.coreConcept) {
       const time = seed.timePeriod || patch.timePeriod || '这个世界'
       const region = seed.regions[0] || patch.regions?.[0] || '某地'
@@ -233,22 +444,21 @@ export default function BasicInfoStep({ seed, onUpdate, workTitle, onTitleChange
           <Divider />
 
           <Form.Item label="时间背景" required>
-            <CreatableSelect
+            <TagSelect
               value={seed.timePeriod}
-              presets={TIME_PERIODS}
-              placeholder="选择或输入时间背景"
+              groups={TIME_PERIOD_GROUPS}
               onChange={(v) => onUpdate({ timePeriod: v })}
-              allowClear
+              placeholder="时间背景"
             />
           </Form.Item>
 
           <Form.Item label="地域范围" required>
-            <CreatableSelect
+            <TagSelect
               value={seed.regions}
-              presets={REGIONS}
-              placeholder="选择或输入地域"
+              groups={REGION_GROUPS}
               onChange={(v) => onUpdate({ regions: v })}
               multiple
+              placeholder="地域"
             />
           </Form.Item>
 
@@ -296,9 +506,46 @@ export default function BasicInfoStep({ seed, onUpdate, workTitle, onTitleChange
             />
           </Form.Item>
 
+          <Form.Item label="叙述视角">
+            <Space direction="vertical" size={4} style={{ width: '100%' }}>
+              {POVS.map((p) => (
+                <Tag
+                  key={p.value}
+                  color={seed.pov === p.value ? 'blue' : undefined}
+                  style={{ cursor: 'pointer', margin: 0 }}
+                  onClick={() => onUpdate({ pov: seed.pov === p.value ? '' : p.value })}
+                >
+                  {p.value}
+                </Tag>
+              ))}
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {POVS.find((p) => p.value === seed.pov)?.desc || ''}
+              </Text>
+            </Space>
+          </Form.Item>
+
           <Divider />
 
-          <Form.Item label="核心概念" required>
+          <Form.Item
+            label={
+              <span>
+                核心概念{' '}
+                <Tooltip title={seed.coreConcept.trim() ? 'AI 润色当前概念' : '根据其他信息 AI 生成概念'}>
+                  <Button
+                    type="link"
+                    size="small"
+                    icon={<ExperimentOutlined />}
+                    onClick={handleAICoreConcept}
+                    loading={loading}
+                    style={{ padding: 0, verticalAlign: 'baseline' }}
+                  >
+                    AI 润色
+                  </Button>
+                </Tooltip>
+              </span>
+            }
+            required
+          >
             <TextArea
               value={seed.coreConcept}
               onChange={(e) => onUpdate({ coreConcept: e.target.value })}

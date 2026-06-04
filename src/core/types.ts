@@ -14,6 +14,7 @@ export interface StorySeed {
   coreConcept: string          // 核心概念（一句话概括）
   tone: string                 // 基调风格
   targetAudience?: string      // 目标读者
+  pov?: string                 // 叙述视角
   launchMode?: LaunchMode      // 启动方式（已废弃，保留兼容旧数据）
 }
 

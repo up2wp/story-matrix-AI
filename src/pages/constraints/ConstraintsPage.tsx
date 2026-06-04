@@ -476,6 +476,7 @@ export default function ConstraintsPage() {
       <Modal
         title={isNew ? '新增约束' : '编辑约束'}
         open={editModalOpen}
+        maskClosable={false}
         onOk={isNew ? handleSaveNew : handleSave}
         onCancel={() => setEditModalOpen(false)}
         okText="保存"

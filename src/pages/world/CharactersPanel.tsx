@@ -25,7 +25,7 @@ import {
   ArrowRightOutlined,
 } from '@ant-design/icons'
 import { useState } from 'react'
-import type { Character, Relation } from '@/core/types'
+import type { Character, CharacterArc, Relation } from '@/core/types'
 import { generateId } from '@/utils/id'
 import { useStore } from '@/core/store'
 import { useSystemConfigStore } from '@/core/system-config-store'
@@ -59,6 +59,7 @@ export default function CharactersPanel({ wb }: Props) {
   const [editing, setEditing] = useState<Character | null>(null)
   const [isNew, setIsNew] = useState(false)
   const [editRelations, setEditRelations] = useState<Relation[]>([])
+  const [editArc, setEditArc] = useState<CharacterArc[]>([])
   const [form] = Form.useForm()
   const [polishing, setPolishing] = useState(false)
 
@@ -91,12 +92,13 @@ export default function CharactersPanel({ wb }: Props) {
     setEditing(char)
     setIsNew(true)
     setEditRelations([])
+    setEditArc([])
     form.setFieldsValue({
       name: char.name,
       bio: char.bio,
-      traits: '',
-      habits: '',
-      tags: '',
+      traits: [],
+      habits: [],
+      tags: [],
     })
     setEditModalOpen(true)
   }
@@ -112,7 +114,12 @@ export default function CharactersPanel({ wb }: Props) {
     setAIStream(true, '')
     try {
       const work = wb.currentWork!
-      const prompt = buildCharacterPrompt(seedContext(work), charactersContext(characters))
+      const settings = work.settings ?? []
+      const prompt = buildCharacterPrompt(
+        seedContext(work),
+        charactersContext(characters),
+        settings.length ? worldContext(work) : undefined,
+      )
       const text = await generateStream(prompt, CHARACTER_SYSTEM_PROMPT, aiConfig, (chunk) => {
         setAIStream(true, chunk)
       })
@@ -138,7 +145,7 @@ export default function CharactersPanel({ wb }: Props) {
         bio: parsed.bio || '',
         personality: {
           traits: parsed.personality?.traits || [],
-          habits: parsed.personality?.habits || [],
+          habits: (parsed.personality?.habits || []).map((h: string) => h.replace(/\s+/g, ' ').trim()).filter(Boolean),
           arc: parsed.personality?.arc || [],
         },
         relations: parsed.relations || [],
@@ -169,11 +176,11 @@ export default function CharactersPanel({ wb }: Props) {
       name: values.name || editing.name,
       bio: values.bio || editing.bio,
       personality: {
-        traits: values.traits ? values.traits.split(/[,，、]/).map((t: string) => t.trim()).filter(Boolean) : editing.personality.traits,
-        habits: values.habits ? values.habits.split(/[,，、]/).map((t: string) => t.trim()).filter(Boolean) : editing.personality.habits,
+        traits: values.traits?.length ? values.traits : editing.personality.traits,
+        habits: values.habits?.length ? values.habits : editing.personality.habits,
         arc: editing.personality.arc,
       },
-      tags: values.tags ? values.tags.split(/[,，、]/).map((t: string) => t.trim()).filter(Boolean) : editing.tags.filter((t) => t !== '主角'),
+      tags: values.tags?.length ? values.tags : editing.tags.filter((t) => t !== '主角'),
     }
 
     const setAIStream = useStore.getState().setAIStream
@@ -208,19 +215,13 @@ export default function CharactersPanel({ wb }: Props) {
       // 更新表单
       form.setFieldsValue({
         bio: parsed.bio || currentChar.bio,
-        traits: (parsed.personality?.traits || currentChar.personality.traits).join('、'),
-        habits: (parsed.personality?.habits || currentChar.personality.habits).join('、'),
-        tags: (parsed.tags || currentChar.tags).filter((t: string) => t !== '主角').join('、'),
+        traits: parsed.personality?.traits || currentChar.personality.traits,
+        habits: (parsed.personality?.habits || currentChar.personality.habits).map((h: string) => h.replace(/\s+/g, ' ').trim()).filter(Boolean),
+        tags: (parsed.tags || currentChar.tags).filter((t: string) => t !== '主角'),
       })
       // 更新编辑中的性格弧线
       if (parsed.personality?.arc) {
-        setEditing({
-          ...editing,
-          personality: {
-            ...editing.personality,
-            arc: parsed.personality.arc,
-          },
-        })
+        setEditArc(parsed.personality.arc)
       }
       setAIStream(false, text)
       message.success('AI 润色完成')
@@ -237,12 +238,13 @@ export default function CharactersPanel({ wb }: Props) {
     setEditing(char)
     setIsNew(false)
     setEditRelations(char.relations ? [...char.relations] : [])
+    setEditArc(char.personality.arc ? [...char.personality.arc] : [])
     form.setFieldsValue({
       name: char.name,
       bio: char.bio,
-      traits: char.personality.traits.join('、'),
-      habits: char.personality.habits.join('、'),
-      tags: char.tags.filter((t) => t !== '主角').join('、'),
+      traits: char.personality.traits,
+      habits: char.personality.habits,
+      tags: char.tags.filter((t) => t !== '主角'),
     })
     setEditModalOpen(true)
   }
@@ -252,14 +254,15 @@ export default function CharactersPanel({ wb }: Props) {
     if (!editing) return
     const values = form.getFieldsValue()
     const isProtagonist = editing.tags.includes('主角')
-    const userTags = values.tags.split(/[,，、]/).map((t: string) => t.trim()).filter(Boolean)
+    const userTags: string[] = values.tags || []
     const charData: Partial<Character> = {
       name: values.name,
       bio: values.bio,
       personality: {
         ...editing.personality,
-        traits: values.traits.split(/[,，、]/).map((t: string) => t.trim()).filter(Boolean),
-        habits: values.habits.split(/[,，、]/).map((t: string) => t.trim()).filter(Boolean),
+        traits: values.traits || [],
+        habits: values.habits || [],
+        arc: editArc,
       },
       relations: editRelations,
       tags: isProtagonist ? ['主角', ...userTags] : userTags,
@@ -387,64 +390,55 @@ export default function CharactersPanel({ wb }: Props) {
                     </div>
                   )}
 
-                  <Collapse
-                    ghost
-                    items={[
-                      {
-                        key: 'personality',
-                        label: '性格详情',
-                        children: (
-                          <div>
-                            {char.personality.traits.length > 0 && (
-                              <div style={{ marginBottom: 8 }}>
-                                <Text type="secondary">特质：</Text>
-                                <div>
-                                  {char.personality.traits.map((t) => (
-                                    <Tag key={t}>{t}</Tag>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                            {char.personality.habits.length > 0 && (
-                              <div style={{ marginBottom: 8 }}>
-                                <Text type="secondary">习惯：</Text>
-                                <div>
-                                  {char.personality.habits.map((h) => (
-                                    <Tag key={h} color="default">{h}</Tag>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        ),
-                      },
-                      ...(char.personality.arc.length > 0
-                        ? [
-                            {
-                              key: 'arc',
-                              label: '性格弧线',
-                              children: (
-                                <div>
-                                  {char.personality.arc.map((a, i) => (
-                                    <div key={i} style={{ marginBottom: 8 }}>
-                                      <Tag color="purple">{a.stage}</Tag>
-                                      <Text>{a.description}</Text>
-                                      {a.trigger && (
-                                        <div style={{ marginLeft: 24 }}>
-                                          <Text type="secondary">
-                                            <ArrowRightOutlined /> 触发：{a.trigger}
-                                          </Text>
-                                        </div>
-                                      )}
+                  {char.personality.traits.length > 0 && (
+                    <div style={{ marginBottom: 12 }}>
+                      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>性格特质</Text>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                        {char.personality.traits.map((t) => (
+                          <Tag key={t}>{t}</Tag>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {char.personality.habits.length > 0 && (
+                    <div style={{ marginBottom: 12 }}>
+                      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>行为习惯</Text>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                        {char.personality.habits.map((h) => (
+                          <Tag key={h} color="default">{h}</Tag>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {char.personality.arc.length > 0 && (
+                    <Collapse
+                      ghost
+                      defaultActiveKey={['arc']}
+                      items={[
+                        {
+                          key: 'arc',
+                          label: '性格弧线',
+                          children: (
+                            <div>
+                              {char.personality.arc.map((a, i) => (
+                                <div key={i} style={{ marginBottom: 8 }}>
+                                  <Tag color="purple">{a.stage}</Tag>
+                                  <Text>{a.description}</Text>
+                                  {a.trigger && (
+                                    <div style={{ marginLeft: 24 }}>
+                                      <Text type="secondary">
+                                        <ArrowRightOutlined /> 触发：{a.trigger}
+                                      </Text>
                                     </div>
-                                  ))}
+                                  )}
                                 </div>
-                              ),
-                            },
-                          ]
-                        : []),
-                    ]}
-                  />
+                              ))}
+                            </div>
+                          ),
+                        },
+                      ]}
+                    />
+                  )}
                 </Card>
               )
             })}
@@ -455,6 +449,7 @@ export default function CharactersPanel({ wb }: Props) {
       <Modal
         title={isNew ? '新增角色' : '编辑角色'}
         open={editModalOpen}
+        maskClosable={false}
         onOk={handleSave}
         onCancel={() => setEditModalOpen(false)}
         okText="保存"
@@ -485,13 +480,56 @@ export default function CharactersPanel({ wb }: Props) {
             <TextArea autoSize={{ minRows: 3, maxRows: 8 }} />
           </Form.Item>
           <Form.Item name="traits" label="性格特质">
-            <Input placeholder="用顿号分隔，如：坚韧、重情义、嫉恶如仇" />
+            <Select mode="tags" placeholder="输入后回车添加" tokenSeparators={['、', ',']} />
           </Form.Item>
           <Form.Item name="habits" label="行为习惯">
-            <Input placeholder="用顿号分隔" />
+            <Select mode="tags" placeholder="输入后回车添加" tokenSeparators={['、', ',']} />
           </Form.Item>
           <Form.Item name="tags" label="标签">
-            <Input placeholder="用顿号分隔" />
+            <Select mode="tags" placeholder="输入后回车添加" tokenSeparators={['、', ',']} />
+          </Form.Item>
+
+          {/* 性格弧线编辑 */}
+          <Form.Item label="性格弧线">
+            {editArc.map((a, i) => (
+              <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8, padding: '8px 12px', background: '#fafafa', borderRadius: 6 }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <Input
+                    placeholder="阶段名称"
+                    value={a.stage}
+                    onChange={(e) => {
+                      const updated = [...editArc]
+                      updated[i] = { ...updated[i], stage: e.target.value }
+                      setEditArc(updated)
+                    }}
+                    style={{ flex: 1 }}
+                  />
+                  <Button type="text" danger icon={<DeleteOutlined />} onClick={() => setEditArc(editArc.filter((_, j) => j !== i))} />
+                </div>
+                <Input.TextArea
+                  placeholder="该阶段的性格状态描述"
+                  value={a.description}
+                  onChange={(e) => {
+                    const updated = [...editArc]
+                    updated[i] = { ...updated[i], description: e.target.value }
+                    setEditArc(updated)
+                  }}
+                  autoSize={{ minRows: 1, maxRows: 3 }}
+                />
+                <Input
+                  placeholder="触发转变的事件（可选）"
+                  value={a.trigger || ''}
+                  onChange={(e) => {
+                    const updated = [...editArc]
+                    updated[i] = { ...updated[i], trigger: e.target.value || undefined }
+                    setEditArc(updated)
+                  }}
+                />
+              </div>
+            ))}
+            <Button type="dashed" icon={<PlusOutlined />} onClick={() => setEditArc([...editArc, { stage: '', description: '' }])} block>
+              添加阶段
+            </Button>
           </Form.Item>
 
           {/* 关系编辑 */}
