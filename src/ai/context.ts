@@ -60,21 +60,29 @@ export function eventLogContext(
 ): string {
   if (!eventLog.length) return '（暂无历史事件记录）'
 
-  // 按时间排序
-  let entries = [...eventLog].sort((a, b) => a.timestamp - b.timestamp)
+  // 按时间排序（不复制整个数组）
+  const sorted = eventLog
+    .map((e, i) => ({ e, i }))
+    .sort((a, b) => a.e.timestamp - b.e.timestamp)
 
   // 如果指定了章节，只返回该章节之前的事件
+  let startIdx = 0
+  let endIdx = sorted.length
   if (beforeChapterId) {
-    const idx = entries.findIndex((e) => e.chapterId === beforeChapterId)
-    if (idx > 0) entries = entries.slice(0, idx)
+    const idx = sorted.findIndex(({ e }) => e.chapterId === beforeChapterId)
+    if (idx > 0) endIdx = idx
   }
 
   // 限制条目数量
-  if (entries.length > maxEntries) {
-    entries = entries.slice(-maxEntries)
+  if (endIdx - startIdx > maxEntries) {
+    startIdx = endIdx - maxEntries
   }
 
-  return entries
-    .map((e) => `【${e.chapterTitle}】${e.characters.length ? `(${e.characters.join('、')})` : ''} ${e.description}`)
-    .join('\n')
+  const parts: string[] = []
+  for (let i = startIdx; i < endIdx; i++) {
+    const e = sorted[i].e
+    const chars = e.characters.length ? `(${e.characters.join('、')})` : ''
+    parts.push(`【${e.chapterTitle}】${chars} ${e.description}`)
+  }
+  return parts.join('\n')
 }

@@ -28,7 +28,7 @@ import { generateId } from '@/utils/id'
 import { useStore } from '@/core/store'
 import { useSystemConfigStore } from '@/core/system-config-store'
 import { db } from '@/core/db'
-import { generateStream } from '@/ai/client'
+import { generate, generateStream } from '@/ai/client'
 import { seedContext, worldContext, charactersContext, constraintsContext, eventLogContext } from '@/ai/context'
 import { CHAPTER_SYSTEM_PROMPT, buildChapterPrompt, buildExtractEventsPrompt } from '@/ai/prompts/chapters'
 import { DEFAULT_EVENT_LOG_CONFIG } from '@/features/seed/options'
@@ -292,7 +292,7 @@ export default function ChaptersPage() {
         charactersContext(work.characters),
         config.extractPrompt,
       )
-      const text = await generateStream(prompt, CHAPTER_SYSTEM_PROMPT, aiConfig, () => {})
+      const text = await generate(prompt, CHAPTER_SYSTEM_PROMPT, aiConfig)
 
       // 解析 JSON（兼容 AI 输出带多余内容的情况）
       let result: any[] = []
