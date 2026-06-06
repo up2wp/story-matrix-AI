@@ -325,8 +325,8 @@ export default function BasicInfoStep({ seed, onUpdate, workTitle, onTitleChange
         ? buildCoreConceptPolishPrompt(seed.coreConcept, seedForAI)
         : buildCoreConceptGeneratePrompt(seedForAI)
 
-      const text = await generateStream(prompt, CORE_CONCEPT_SYSTEM_PROMPT, aiConfig, (chunk) => {
-        setAIStream(true, chunk)
+      const text = await generateStream(prompt, CORE_CONCEPT_SYSTEM_PROMPT, aiConfig, (_chunk, fullText) => {
+        setAIStream(true, fullText)
       })
 
       // 清理返回文本（去掉引号、多余换行等）
@@ -507,7 +507,7 @@ export default function BasicInfoStep({ seed, onUpdate, workTitle, onTitleChange
           </Form.Item>
 
           <Form.Item label="叙述视角">
-            <Space direction="vertical" size={4} style={{ width: '100%' }}>
+            <Space orientation="vertical" size={4} style={{ width: '100%' }}>
               {POVS.map((p) => (
                 <Tag
                   key={p.value}

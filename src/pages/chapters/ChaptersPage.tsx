@@ -6,17 +6,21 @@ import {
   Tag,
   Empty,
   Checkbox,
+  Input,
   message,
   notification,
   Popconfirm,
-  Tooltip,
   Progress,
   Collapse,
+  Modal,
+  List,
 } from 'antd'
 import {
   ExperimentOutlined,
   CheckCircleOutlined,
   LoadingOutlined,
+  BookOutlined,
+  DeleteOutlined,
 } from '@ant-design/icons'
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import type { Chapter } from '@/core/types'
@@ -25,9 +29,10 @@ import { useStore } from '@/core/store'
 import { useSystemConfigStore } from '@/core/system-config-store'
 import { db } from '@/core/db'
 import { generateStream } from '@/ai/client'
-import { seedContext, worldContext, charactersContext, outlineContext, constraintsContext } from '@/ai/context'
-import { autoMatchUnboundConstraints, getScope } from '@/utils/constraints'
-import { CHAPTER_SYSTEM_PROMPT, buildChapterPrompt } from '@/ai/prompts/chapters'
+import { seedContext, worldContext, charactersContext, constraintsContext, eventLogContext } from '@/ai/context'
+import { CHAPTER_SYSTEM_PROMPT, buildChapterPrompt, buildExtractEventsPrompt } from '@/ai/prompts/chapters'
+import { DEFAULT_EVENT_LOG_CONFIG } from '@/features/seed/options'
+import type { EventLogEntry, EventLogConfig } from '@/core/types'
 import RichEditor from '@/components/editor/RichEditor'
 
 const { Title, Text } = Typography
@@ -43,6 +48,8 @@ export default function ChaptersPage() {
   const [autoContinue, setAutoContinue] = useState(false)
   const [writingChapterId, setWritingChapterId] = useState<string | null>(null)
   const [countdown, setCountdown] = useState(0)
+  const [eventLogOpen, setEventLogOpen] = useState(false)
+  const [editingPrompt, setEditingPrompt] = useState<string | null>(null)
   const countdownRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const cancelAutoRef = useRef(false)
 
@@ -100,10 +107,16 @@ export default function ChaptersPage() {
     [persistChapters],
   )
 
-  // 清空所有章节
+  // 清空所有章节（同时清空事件簿）
   const handleClearAll = async () => {
     await persistChapters([])
     setActiveChapterId(null)
+    // 清空事件簿
+    const work = useStore.getState().currentWork
+    if (work?.eventLog?.length) {
+      await db.works.update(work.id, { eventLog: [] })
+      setCurrentWork({ ...work, eventLog: [], updatedAt: Date.now() })
+    }
     message.success('已清空所有章节')
   }
 
@@ -199,29 +212,17 @@ export default function ChaptersPage() {
     setActiveChapterId(chapter.id)
     setAIStream(true, '')
     try {
-      // 自动匹配未绑定的局部约束
-      let work = latestWork
-      const matchResult = autoMatchUnboundConstraints(work.constraints, work.outline)
-      if (matchResult.constraints !== work.constraints) {
-        work = {
-          ...work,
-          constraints: matchResult.constraints,
-          outline: matchResult.outline,
-          updatedAt: Date.now(),
-        }
-        await db.works.update(work.id, {
-          constraints: matchResult.constraints,
-          outline: matchResult.outline,
-        })
-        setCurrentWork(work)
-      }
-
+      const work = latestWork
       const currentChapters = work.chapters ?? []
       const currentOutline = work.outline ?? []
       const outlineNode = currentOutline.find((n) => n.id === chapter.outlineId)
       const chapterSummary = outlineNode?.summary || ''
       const prevChapter = currentChapters[currentChapters.findIndex((c) => c.id === chapter.id) - 1]
       const prevSummary = prevChapter ? prevChapter.content.slice(-500) : ''
+
+      // 事件簿上下文
+      const eventLog = work.eventLog ?? []
+      const eventLogStr = eventLogContext(eventLog, chapter.id)
 
       const prompt = buildChapterPrompt(
         seedContext(work),
@@ -231,10 +232,11 @@ export default function ChaptersPage() {
         chapter.title,
         chapterSummary,
         prevSummary,
+        eventLogStr,
       )
-      const text = await generateStream(prompt, CHAPTER_SYSTEM_PROMPT, aiConfig, (chunk) => {
-        setAIStream(true, chunk)
-        setStreamingContent(chunk)
+      const text = await generateStream(prompt, CHAPTER_SYSTEM_PROMPT, aiConfig, (_chunk, fullText) => {
+        setAIStream(true, fullText)
+        setStreamingContent(fullText)
       })
 
       // 更新章节内容（使用最新数据）
@@ -247,6 +249,9 @@ export default function ChaptersPage() {
       setStreamingContent(null)
       setWritingChapterId(null)
       setAIStream(false, text)
+
+      // 提取事件到事件簿（需 await 避免并发流累积 fetch buffer）
+      await extractEvents(chapter, text, work)
 
       // 显示完成通知，等待倒计时
       const currentOutlineNodes = currentOutline.filter((n) => n.level === 'chapter')
@@ -274,6 +279,76 @@ export default function ChaptersPage() {
     }
   }
 
+  // 从章节内容提取事件
+  const extractEvents = async (chapter: Chapter, content: string, work: NonNullable<typeof currentWork>) => {
+    if (!work || !aiConfig.apiKey) return
+    const config = work.eventLogConfig ?? DEFAULT_EVENT_LOG_CONFIG
+    if (!config.enabled) return
+
+    try {
+      const prompt = buildExtractEventsPrompt(
+        chapter.title,
+        content,
+        charactersContext(work.characters),
+        config.extractPrompt,
+      )
+      const text = await generateStream(prompt, CHAPTER_SYSTEM_PROMPT, aiConfig, () => {})
+
+      // 解析 JSON（兼容 AI 输出带多余内容的情况）
+      let result: any[] = []
+      try {
+        const cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim()
+        // 找到第一个 [ 和最后一个 ]
+        const start = cleaned.indexOf('[')
+        const end = cleaned.lastIndexOf(']')
+        if (start !== -1 && end > start) {
+          let jsonStr = cleaned.slice(start, end + 1)
+          // 尝试解析，如果失败则逐步截断末尾的 }
+          for (let i = 0; i < 5; i++) {
+            try {
+              result = JSON.parse(jsonStr)
+              break
+            } catch {
+              // 找到最后一个完整对象的位置
+              const lastBrace = jsonStr.lastIndexOf('}')
+              if (lastBrace > 0) {
+                jsonStr = jsonStr.slice(0, lastBrace + 1) + ']'
+              } else {
+                break
+              }
+            }
+          }
+        }
+      } catch {}
+
+      if (!Array.isArray(result) || !result.length) return
+
+      // 构建事件条目
+      const newEntries: EventLogEntry[] = result
+        .filter((item) => item.description && item.type)
+        .map((item) => ({
+          id: generateId(),
+          chapterId: chapter.id,
+          chapterTitle: chapter.title,
+          type: item.type,
+          characters: Array.isArray(item.characters) ? item.characters : [],
+          description: item.description.slice(0, 100),
+          timestamp: Date.now(),
+        }))
+
+      if (!newEntries.length) return
+
+      // 保存事件簿
+      const latestWork = useStore.getState().currentWork
+      if (!latestWork) return
+      const updatedEventLog = [...(latestWork.eventLog ?? []), ...newEntries]
+      await db.works.update(latestWork.id, { eventLog: updatedEventLog })
+      setCurrentWork({ ...latestWork, eventLog: updatedEventLog, updatedAt: Date.now() })
+    } catch {
+      // 事件提取失败不影响主流程
+    }
+  }
+
   // 更新章节内容
   const handleContentChange = useCallback(
     async (chapterId: string, content: string) => {
@@ -291,15 +366,56 @@ export default function ChaptersPage() {
   const getOutlineNode = (outlineId: string) =>
     outline.find((n) => n.id === outlineId)
 
-  // 章节统计
+  // 章节统计（只统计有关联大纲节点的章节，排除孤儿）
   const stats = useMemo(() => {
+    const validIds = new Set(chapterOutlineNodes.map((n) => n.id))
+    const validChapters = chapters.filter((c) => validIds.has(c.outlineId))
     const total = chapterOutlineNodes.length
-    const withContent = chapters.filter((c) => c.wordCount > 0).length
-    const totalWords = chapters.reduce((sum, c) => sum + c.wordCount, 0)
+    const withContent = validChapters.filter((c) => c.wordCount > 0).length
+    const totalWords = validChapters.reduce((sum, c) => sum + c.wordCount, 0)
     const estWords = total * 3000
     const percent = estWords > 0 ? Math.min(100, Math.round((totalWords / estWords) * 100)) : 0
     return { total, withContent, totalWords, estWords, percent }
   }, [chapters, chapterOutlineNodes])
+
+  // 删除事件条目
+  const handleDeleteEvent = async (eventId: string) => {
+    const work = useStore.getState().currentWork
+    if (!work) return
+    const updatedEventLog = (work.eventLog ?? []).filter((e) => e.id !== eventId)
+    await db.works.update(work.id, { eventLog: updatedEventLog })
+    setCurrentWork({ ...work, eventLog: updatedEventLog, updatedAt: Date.now() })
+  }
+
+  // 按章节分组的事件簿
+  const groupedEvents = useMemo(() => {
+    const eventLog = currentWork?.eventLog ?? []
+    const groups: { chapterTitle: string; events: typeof eventLog }[] = []
+    const map = new Map<string, typeof eventLog>()
+    for (const e of eventLog) {
+      const key = e.chapterTitle
+      if (!map.has(key)) map.set(key, [])
+      map.get(key)!.push(e)
+    }
+    for (const [chapterTitle, events] of map) {
+      groups.push({ chapterTitle, events })
+    }
+    return groups
+  }, [currentWork?.eventLog])
+
+  // 事件类型标签颜色
+  const eventTypeColor: Record<string, string> = {
+    combat: 'red',
+    relationship: 'blue',
+    revelation: 'purple',
+    foreshadow: 'orange',
+    death: 'magenta',
+    item: 'green',
+    progress: 'volcano',
+    status: 'cyan',
+    location: 'gold',
+    other: 'default',
+  }
 
   return (
     <div style={{ display: 'flex', gap: 16, flex: 1, overflow: 'hidden' }}>
@@ -318,6 +434,14 @@ export default function ChaptersPage() {
                 </Text>
               </Space>
               <Progress percent={stats.percent} size="small" showInfo={false} />
+              <Button
+                size="small"
+                icon={<BookOutlined />}
+                onClick={() => setEventLogOpen(true)}
+                style={{ marginTop: 8, width: '100%' }}
+              >
+                📋 事件簿 ({(currentWork?.eventLog ?? []).length})
+              </Button>
             </div>
           )}
         </div>
@@ -445,10 +569,7 @@ export default function ChaptersPage() {
               const nodeCharacters = (node.characterIds || [])
                 .map((name) => currentWork?.characters.find((c) => c.name === name || c.id === name))
                 .filter(Boolean)
-              const nodeConstraints = (node.constraintIds || [])
-                .map((cid) => currentWork?.constraints.find((c) => c.id === cid))
-                .filter(Boolean)
-              if (!nodeCharacters.length && !nodeConstraints.length) return null
+              if (!nodeCharacters.length) return null
               return (
                 <Collapse
                   size="small"
@@ -459,31 +580,13 @@ export default function ChaptersPage() {
                     children: (
                       <div>
                         {nodeCharacters.length > 0 && (
-                          <div style={{ marginBottom: 12 }}>
+                          <div>
                             <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>涉及人物</Text>
                             <Space wrap size={[4, 4]}>
                               {nodeCharacters.map((c) => (
                                 <Tag key={c!.id} color="blue">{c!.name}</Tag>
                               ))}
                             </Space>
-                          </div>
-                        )}
-                        {nodeConstraints.length > 0 && (
-                          <div>
-                            <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>核心约束</Text>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                              {nodeConstraints.map((c) => {
-                                const scope = getScope(c!)
-                                return (
-                                  <div key={c!.id}>
-                                    <Tag color={scope === 'global' ? 'cyan' : 'geekblue'} style={{ fontSize: 11 }}>
-                                      {scope === 'global' ? '🌐' : '📌'} {c!.title}
-                                    </Tag>
-                                    <Text type="secondary" style={{ fontSize: 11 }}>{c!.description}</Text>
-                                  </div>
-                                )
-                              })}
-                            </div>
                           </div>
                         )}
                       </div>
@@ -507,6 +610,92 @@ export default function ChaptersPage() {
           </div>
         )}
       </div>
+
+      {/* 事件簿弹窗 */}
+      <Modal
+        title={`📋 事件簿 (${(currentWork?.eventLog ?? []).length} 条)`}
+        open={eventLogOpen}
+        onCancel={() => setEventLogOpen(false)}
+        footer={null}
+        width={600}
+        styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
+      >
+        {/* 事件提取配置 */}
+        <Card size="small" styles={{ body: { marginBottom: 16, background: '#fafafa', padding: 12 } }}>
+          <Text type="secondary" style={{ fontSize: 12, marginBottom: 8, display: 'block' }}>
+            ⚙️ 提取配置（修改后下次写作生效）：
+          </Text>
+          <Input.TextArea
+            rows={6}
+            value={editingPrompt ?? currentWork?.eventLogConfig?.extractPrompt ?? DEFAULT_EVENT_LOG_CONFIG.extractPrompt}
+            onChange={(e) => setEditingPrompt(e.target.value)}
+            onBlur={async () => {
+              if (!currentWork || editingPrompt === null) return
+              const newConfig = {
+                ...currentWork.eventLogConfig,
+                enabled: true,
+                extractPrompt: editingPrompt,
+              } as EventLogConfig
+              await db.works.update(currentWork.id, { eventLogConfig: newConfig })
+              setCurrentWork({ ...currentWork, eventLogConfig: newConfig })
+              setEditingPrompt(null)
+            }}
+            style={{ fontSize: 12, fontFamily: 'monospace' }}
+          />
+          <Button
+            size="small"
+            style={{ marginTop: 8 }}
+            onClick={async () => {
+              if (!currentWork) return
+              const newConfig = { ...DEFAULT_EVENT_LOG_CONFIG }
+              await db.works.update(currentWork.id, { eventLogConfig: newConfig })
+              setCurrentWork({ ...currentWork, eventLogConfig: newConfig })
+              setEditingPrompt(null)
+            }}
+          >
+            恢复默认
+          </Button>
+        </Card>
+
+        {groupedEvents.length === 0 ? (
+          <Empty description="暂无事件记录，AI 写作后会自动提取" />
+        ) : (
+          groupedEvents.map((group) => (
+            <div key={group.chapterTitle} style={{ marginBottom: 16 }}>
+              <Text strong style={{ fontSize: 13 }}>{group.chapterTitle}</Text>
+              <List
+                size="small"
+                dataSource={group.events}
+                renderItem={(event) => (
+                  <List.Item
+                    actions={[
+                      <Popconfirm key="del" title="确定删除？" onConfirm={() => handleDeleteEvent(event.id)}>
+                        <Button type="text" size="small" icon={<DeleteOutlined />} danger />
+                      </Popconfirm>,
+                    ]}
+                  >
+                    <List.Item.Meta
+                      title={
+                        <Space size={4}>
+                          <Tag color={eventTypeColor[event.type] || 'default'} style={{ margin: 0 }}>
+                            {event.type}
+                          </Tag>
+                          {event.characters.length > 0 && (
+                            <Text type="secondary" style={{ fontSize: 11 }}>
+                              ({event.characters.join('、')})
+                            </Text>
+                          )}
+                        </Space>
+                      }
+                      description={<Text style={{ fontSize: 12 }}>{event.description}</Text>}
+                    />
+                  </List.Item>
+                )}
+              />
+            </div>
+          ))
+        )}
+      </Modal>
     </div>
   )
 }

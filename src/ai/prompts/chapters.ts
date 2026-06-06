@@ -21,7 +21,10 @@ export function buildChapterPrompt(
   chapterTitle: string,
   chapterSummary: string,
   previousContent: string,
+  eventLog?: string,
 ): string {
+  const eventSection = eventLog ? `\n\n历史事件时间线（必须遵守，不能与历史事件矛盾）：\n${eventLog}` : ''
+
   return `根据以下信息，为「${chapterTitle}」撰写完整正文。
 
 故事种子：
@@ -40,6 +43,7 @@ ${constraints}
 ${chapterSummary}
 
 ${previousContent ? `前文末尾（用于衔接）：\n${previousContent}` : '这是全书第一章。'}
+${eventSection}
 
 要求：
 - 直接输出正文内容，不要输出标题、场景划分或元信息
@@ -47,5 +51,45 @@ ${previousContent ? `前文末尾（用于衔接）：\n${previousContent}` : '�
 - 风格符合故事基调
 - 对话体现角色性格
 - 结尾留悬念或情绪钩子，自然过渡到下一章
-- 严格遵守叙述视角（pov）：如果 pov 是"第一人称"，全文用"我"叙述主角的所见所感，其他角色用名字；如果是"第三人称限制视角"，紧跟主角但用"他/她"；如果是"第三人称全知视角"，可自由切换视角`
+- 严格遵守叙述视角（pov）：如果 pov 是"第一人称"，全文用"我"叙述主角的所见所感，其他角色用名字；如果是"第三人称限制视角"，紧跟主角但用"他/她"；如果是"第三人称全知视角"，可自由切换视角
+- 不能与历史事件时间线中的记录矛盾`
+}
+
+export const DEFAULT_EVENT_EXTRACT_PROMPT = `从本章内容中提取会影响后续剧情的关键事件。
+
+重点关注：
+- 人物关系变化（结仇、结盟、感情转变等）
+- 重要冲突和战斗
+- 秘密揭露、伏笔埋设
+- 角色死亡或重伤
+- 重要物品获取或失去
+- 其他会影响后续剧情走向的事件
+
+忽略日常细节，只记录对故事有实际影响的节点。
+如果没有值得记录的事件，返回空数组。`
+
+export function buildExtractEventsPrompt(
+  chapterTitle: string,
+  chapterContent: string,
+  characters: string,
+  customPrompt: string,
+): string {
+  return `从以下章节内容中提取关键事件。
+
+章节标题：${chapterTitle}
+
+章节正文：
+${chapterContent}
+
+主要人物：
+${characters}
+
+${customPrompt}
+
+严格输出 JSON 数组，每个元素包含：
+- type: 事件类型（简短分类，如"战斗"、"关系变化"、"剧情进度"等）
+- characters: 涉及的角色名称数组
+- description: 事件描述（30-50字）
+
+只输出 JSON，不要输出其他内容。`
 }

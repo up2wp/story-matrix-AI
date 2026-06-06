@@ -6,11 +6,21 @@ import type { AIConfig } from '@/core/types'
 // AI 服务层 - 封装 Vercel AI SDK
 // ============================================================
 
+// 缓存 provider 实例，避免重复创建
+let cachedProvider: ReturnType<typeof createOpenAI> | null = null
+let cachedConfigKey = ''
+
 function createProvider(config: AIConfig) {
-  return createOpenAI({
+  const configKey = `${config.apiKey}|${config.baseUrl || ''}`
+  if (cachedProvider && cachedConfigKey === configKey) {
+    return cachedProvider
+  }
+  cachedProvider = createOpenAI({
     apiKey: config.apiKey,
     baseURL: config.baseUrl || undefined,
   })
+  cachedConfigKey = configKey
+  return cachedProvider
 }
 
 /**
@@ -28,12 +38,13 @@ export async function generate(prompt: string, systemPrompt: string, config: AIC
 
 /**
  * 流式生成文本
+ * onChunk 接收增量 chunk，而不是完整文本
  */
 export async function generateStream(
   prompt: string,
   systemPrompt: string,
   config: AIConfig,
-  onChunk: (text: string) => void,
+  onChunk: (chunk: string, fullText: string) => void,
 ) {
   const provider = createProvider(config)
   const result = streamText({
@@ -45,7 +56,7 @@ export async function generateStream(
   let fullText = ''
   for await (const chunk of result.textStream) {
     fullText += chunk
-    onChunk(fullText)
+    onChunk(chunk, fullText)
   }
   return fullText
 }

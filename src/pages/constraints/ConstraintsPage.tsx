@@ -25,10 +25,9 @@ import {
   MinusCircleOutlined,
   ClockCircleOutlined,
 } from '@ant-design/icons'
-import { useState, useCallback, useMemo } from 'react'
-import type { Constraint, ConstraintType, ConstraintPriority, ConstraintStatus, ConstraintScope } from '@/core/types'
+import { useState, useMemo } from 'react'
+import type { Constraint, ConstraintType, ConstraintPriority, ConstraintStatus } from '@/core/types'
 import { generateId } from '@/utils/id'
-import { deriveScope, autoBindGlobalConstraints, bindConstraintToNodes } from '@/utils/constraints'
 import { useStore } from '@/core/store'
 import { useSystemConfigStore } from '@/core/system-config-store'
 import { db } from '@/core/db'
@@ -59,44 +58,6 @@ const STATUS_CONFIG: Record<ConstraintStatus, { label: string; color: string; ic
   waived: { label: '已放弃', color: 'default', icon: <MinusCircleOutlined /> },
 }
 
-const SCOPE_CONFIG: Record<ConstraintScope, { label: string; color: string }> = {
-  local: { label: '局部', color: 'geekblue' },
-  global: { label: '全局', color: 'cyan' },
-}
-
-/**
- * 根据绑定章节的写作进度自动计算约束状态
- * - 未绑定章节 → pending
- * - 局部约束：绑定的章节全部有内容 → fulfilled，否则 pending
- * - 全局约束：所有章节都有内容 → fulfilled，否则 pending
- */
-function getConstraintStatus(
-  constraint: Constraint,
-  outline: Array<{ id: string; level: string }>,
-  chapters: Array<{ outlineId: string; wordCount: number }>,
-): ConstraintStatus {
-  const scope = constraint.scope ?? deriveScope(constraint.type)
-  const chapterNodes = outline.filter((n) => n.level === 'chapter')
-  if (!chapterNodes.length) return 'pending'
-
-  if (scope === 'global') {
-    // 全局约束：所有章节都有内容才算满足
-    const allWritten = chapterNodes.every((node) => {
-      const chapter = chapters.find((c) => c.outlineId === node.id)
-      return chapter && chapter.wordCount > 0
-    })
-    return allWritten ? 'fulfilled' : 'pending'
-  }
-
-  // 局部约束
-  if (constraint.relatedOutlineIds.length === 0) return 'pending'
-  const allWritten = constraint.relatedOutlineIds.every((nodeId) => {
-    const chapter = chapters.find((c) => c.outlineId === nodeId)
-    return chapter && chapter.wordCount > 0
-  })
-  return allWritten ? 'fulfilled' : 'pending'
-}
-
 export default function ConstraintsPage() {
   const currentWork = useStore((s) => s.currentWork)
   const setCurrentWork = useStore((s) => s.setCurrentWork)
@@ -110,30 +71,15 @@ export default function ConstraintsPage() {
   const [form] = Form.useForm()
 
   const constraints = currentWork?.constraints ?? []
-  const chapters = currentWork?.chapters ?? []
-  const outline = currentWork?.outline ?? []
 
-  // 持久化（含全局约束自动绑定）
-  const persistConstraints = useCallback(
-    async (newConstraints: Constraint[]) => {
-      if (!currentWork) return
-      const result = autoBindGlobalConstraints(newConstraints, currentWork.outline)
-      const updated = {
-        ...currentWork,
-        constraints: result.constraints,
-        outline: result.outline,
-        updatedAt: Date.now(),
-      }
-      await db.works.update(currentWork.id, {
-        constraints: result.constraints,
-        outline: result.outline,
-      })
-      setCurrentWork(updated)
-    },
-    [currentWork, setCurrentWork],
-  )
+  // 持久化
+  const persistConstraints = async (newConstraints: Constraint[]) => {
+    if (!currentWork) return
+    await db.works.update(currentWork.id, { constraints: newConstraints })
+    setCurrentWork({ ...currentWork, constraints: newConstraints, updatedAt: Date.now() })
+  }
 
-  // AI 生成约束（流式输出）
+  // AI 生成约束
   const handleGenerate = async () => {
     if (!currentWork) return
     if (!aiConfig.apiKey) {
@@ -149,16 +95,13 @@ export default function ConstraintsPage() {
         worldContext(currentWork),
         charactersContext(currentWork.characters, 'major'),
       )
-      const text = await generateStream(prompt, CONSTRAINT_SYSTEM_PROMPT, aiConfig, (chunk) => {
-        setAIStream(true, chunk)
+      const text = await generateStream(prompt, CONSTRAINT_SYSTEM_PROMPT, aiConfig, (_chunk, fullText) => {
+        setAIStream(true, fullText)
       })
 
-      // 解析 AI 返回的 JSON（兼容 markdown 代码块）
       let jsonStr = text
       const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
-      if (codeBlockMatch) {
-        jsonStr = codeBlockMatch[1]
-      }
+      if (codeBlockMatch) jsonStr = codeBlockMatch[1]
       const jsonMatch = jsonStr.match(/\[[\s\S]*\]/)
       if (!jsonMatch) {
         console.error('AI 返回内容：', text)
@@ -168,20 +111,14 @@ export default function ConstraintsPage() {
       }
 
       const parsed = JSON.parse(jsonMatch[0]) as Array<any>
-      const generated: Constraint[] = parsed.map((item) => {
-        const type = item.type || 'event'
-        const scope = deriveScope(type)
-        return {
-          id: generateId(),
-          type,
-          scope,
-          title: item.title || '未命名',
-          description: item.description || '',
-          priority: item.priority || 'suggested',
-          relatedOutlineIds: [],
-          status: 'pending',
-        }
-      })
+      const generated: Constraint[] = parsed.map((item) => ({
+        id: generateId(),
+        type: item.type || 'event',
+        title: item.title || '未命名',
+        description: item.description || '',
+        priority: item.priority || 'suggested',
+        status: 'pending',
+      }))
 
       await persistConstraints([...constraints, ...generated])
       setAIStream(false, text)
@@ -194,13 +131,11 @@ export default function ConstraintsPage() {
     }
   }
 
-  // 清空约束
   const handleClear = async () => {
     await persistConstraints([])
     message.success('已清空核心约束')
   }
 
-  // 筛选后的约束
   const filteredConstraints = useMemo(() => {
     return constraints.filter((c) => {
       if (filterType !== 'all' && c.type !== filterType) return false
@@ -209,79 +144,40 @@ export default function ConstraintsPage() {
     })
   }, [constraints, filterType, filterPriority])
 
-  // 统计（基于自动计算的状态）
+  // 统计
   const stats = useMemo(() => {
     const total = constraints.length
-    const fulfilled = constraints.filter((c) => getConstraintStatus(c, outline, chapters) === 'fulfilled').length
-    const pending = total - fulfilled
-    const bound = constraints.filter((c) => {
-      const scope = c.scope ?? deriveScope(c.type)
-      return scope === 'global' || c.relatedOutlineIds.length > 0
-    }).length
-    return { total, fulfilled, pending, bound, percent: total > 0 ? Math.round((fulfilled / total) * 100) : 0 }
-  }, [constraints, outline, chapters])
+    const fulfilled = constraints.filter((c) => c.status === 'fulfilled').length
+    const waived = constraints.filter((c) => c.status === 'waived').length
+    const pending = total - fulfilled - waived
+    const percent = total > 0 ? Math.round((fulfilled / total) * 100) : 0
+    return { total, fulfilled, pending, waived, percent }
+  }, [constraints])
 
-  // 打开编辑
   const openEdit = (constraint: Constraint) => {
     setEditing(constraint)
+    form.setFieldsValue(constraint)
     setEditModalOpen(true)
-    // 延迟设置表单值，确保条件渲染的字段已挂载
-    setTimeout(() => {
-      form.setFieldsValue({
-        ...constraint,
-        scope: constraint.scope ?? deriveScope(constraint.type),
-        relatedOutlineIds: constraint.relatedOutlineIds ?? [],
-      })
-    }, 0)
   }
 
-  // 保存编辑
   const handleSave = async () => {
     if (!editing) return
     const values = form.getFieldsValue()
-    const updatedConstraint = { ...editing, ...values, scope: deriveScope(values.type || editing.type) }
-    let newConstraints = constraints.map((c) =>
-      c.id === editing.id ? updatedConstraint : c,
+    const updated = constraints.map((c) =>
+      c.id === editing.id ? { ...c, ...values } : c,
     )
-    // 如果是局部约束且 relatedOutlineIds 变化，同步大纲节点
-    if (updatedConstraint.scope === 'local' && currentWork) {
-      const result = bindConstraintToNodes(
-        editing.id,
-        values.relatedOutlineIds || [],
-        newConstraints,
-        currentWork.outline,
-      )
-      newConstraints = result.constraints
-      const updated = {
-        ...currentWork,
-        constraints: result.constraints,
-        outline: result.outline,
-        updatedAt: Date.now(),
-      }
-      await db.works.update(currentWork.id, {
-        constraints: result.constraints,
-        outline: result.outline,
-      })
-      setCurrentWork(updated)
-      setEditModalOpen(false)
-      setEditing(null)
-      return
-    }
-    await persistConstraints(newConstraints)
+    await persistConstraints(updated)
     setEditModalOpen(false)
     setEditing(null)
   }
 
-  // 新增
   const handleAdd = () => {
     const newConstraint: Constraint = {
       id: generateId(),
       type: 'event',
-      scope: 'local',
       title: '新约束',
       description: '',
       priority: 'suggested',
-      relatedOutlineIds: [],
       status: 'pending',
     }
     setEditing(newConstraint)
@@ -289,40 +185,16 @@ export default function ConstraintsPage() {
     setEditModalOpen(true)
   }
 
-  // 保存新增
   const handleSaveNew = async () => {
     if (!editing) return
     const values = form.getFieldsValue()
-    const newConstraint = {
-      ...editing,
-      ...values,
-      scope: deriveScope(values.type || editing.type),
-    }
-    await persistConstraints([...constraints, newConstraint])
+    await persistConstraints([...constraints, { ...editing, ...values }])
     setEditModalOpen(false)
     setEditing(null)
   }
 
-  // 删除
   const removeConstraint = async (id: string) => {
     await persistConstraints(constraints.filter((c) => c.id !== id))
-  }
-
-  // 局部约束绑定到大纲节点
-  const handleBindNodes = async (constraintId: string, nodeIds: string[]) => {
-    if (!currentWork) return
-    const result = bindConstraintToNodes(constraintId, nodeIds, constraints, currentWork.outline)
-    const updated = {
-      ...currentWork,
-      constraints: result.constraints,
-      outline: result.outline,
-      updatedAt: Date.now(),
-    }
-    await db.works.update(currentWork.id, {
-      constraints: result.constraints,
-      outline: result.outline,
-    })
-    setCurrentWork(updated)
   }
 
   const isNew = editing && !constraints.find((c) => c.id === editing.id)
@@ -355,16 +227,16 @@ export default function ConstraintsPage() {
               <div><Text strong style={{ fontSize: 20 }}>{stats.total}</Text></div>
             </div>
             <div>
-              <Text type="secondary">已绑定</Text>
-              <div><Text strong style={{ fontSize: 20, color: '#1677ff' }}>{stats.bound}</Text></div>
-            </div>
-            <div>
               <Text type="secondary">已满足</Text>
               <div><Text strong style={{ fontSize: 20, color: '#52c41a' }}>{stats.fulfilled}</Text></div>
             </div>
             <div>
               <Text type="secondary">待完成</Text>
               <div><Text strong style={{ fontSize: 20, color: '#faad14' }}>{stats.pending}</Text></div>
+            </div>
+            <div>
+              <Text type="secondary">已放弃</Text>
+              <div><Text strong style={{ fontSize: 20, color: '#999' }}>{stats.waived}</Text></div>
             </div>
             <div style={{ flex: 1 }}>
               <Text type="secondary">完成度</Text>
@@ -408,14 +280,13 @@ export default function ConstraintsPage() {
             {filteredConstraints.map((constraint) => {
               const typeInfo = TYPE_CONFIG[constraint.type]
               const priorityInfo = PRIORITY_CONFIG[constraint.priority]
-              const calcStatus = getConstraintStatus(constraint, outline, chapters)
-              const statusInfo = STATUS_CONFIG[calcStatus]
+              const statusInfo = STATUS_CONFIG[constraint.status]
               return (
                 <Card
                   key={constraint.id}
                   size="small"
                   style={{
-                    borderLeft: `3px solid ${calcStatus === 'fulfilled' ? '#52c41a' : '#1677ff'}`,
+                    borderLeft: `3px solid ${constraint.status === 'fulfilled' ? '#52c41a' : constraint.status === 'waived' ? '#999' : '#1677ff'}`,
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -423,38 +294,14 @@ export default function ConstraintsPage() {
                       <Space style={{ marginBottom: 4 }}>
                         {typeInfo.icon}
                         <Tag color={typeInfo.color}>{typeInfo.label}</Tag>
-                        <Tag color={SCOPE_CONFIG[constraint.scope ?? deriveScope(constraint.type)].color}>{SCOPE_CONFIG[constraint.scope ?? deriveScope(constraint.type)].label}</Tag>
                         <Tag color={priorityInfo.color}>{priorityInfo.label}</Tag>
                         <Tag color={statusInfo.color} icon={statusInfo.icon}>{statusInfo.label}</Tag>
-                        <Text strong>
-                          {constraint.title}
-                        </Text>
+                        <Text strong>{constraint.title}</Text>
                       </Space>
-                      <Paragraph style={{ margin: 0 }} type="secondary">
-                        {constraint.description}
-                      </Paragraph>
-                      {(constraint.scope ?? deriveScope(constraint.type)) === 'global' ? (
-                        <div style={{ marginTop: 4 }}>
-                          <Tag color="cyan">自动绑定全部章节</Tag>
-                        </div>
-                      ) : constraint.relatedOutlineIds.length > 0 ? (
-                        <div style={{ marginTop: 4 }}>
-                          <Text type="secondary" style={{ fontSize: 12 }}>绑定章节：</Text>
-                          {constraint.relatedOutlineIds.map((nodeId) => {
-                            const node = currentWork?.outline.find((n) => n.id === nodeId)
-                            const chapter = chapters.find((c) => c.outlineId === nodeId)
-                            const hasContent = chapter && chapter.wordCount > 0
-                            return node ? (
-                              <Tag key={nodeId} color={hasContent ? 'green' : 'blue'} style={{ fontSize: 12 }}>
-                                {node.title}{hasContent ? ' ✓' : ''}
-                              </Tag>
-                            ) : null
-                          })}
-                        </div>
-                      ) : (
-                        <div style={{ marginTop: 4 }}>
-                          <Text type="warning" style={{ fontSize: 12 }}>⚠ 未绑定章节</Text>
-                        </div>
+                      {constraint.description && (
+                        <Paragraph style={{ margin: 0 }} type="secondary">
+                          {constraint.description}
+                        </Paragraph>
                       )}
                     </div>
                     {!readOnly && (
@@ -476,7 +323,7 @@ export default function ConstraintsPage() {
       <Modal
         title={isNew ? '新增约束' : '编辑约束'}
         open={editModalOpen}
-        maskClosable={false}
+        mask={{ closable: false }}
         onOk={isNew ? handleSaveNew : handleSave}
         onCancel={() => setEditModalOpen(false)}
         okText="保存"
@@ -490,36 +337,7 @@ export default function ConstraintsPage() {
                 label: config.label,
                 value: key,
               }))}
-              onChange={(value: ConstraintType) => {
-                form.setFieldValue('scope', deriveScope(value))
-              }}
             />
-          </Form.Item>
-          <Form.Item name="scope" label="作用范围" tooltip="局部=绑定具体章节，全局=自动绑定全部章节">
-            <Select
-              disabled
-              options={[
-                { label: '局部（绑定具体章节）', value: 'local' },
-                { label: '全局（自动绑定全部章节）', value: 'global' },
-              ]}
-            />
-          </Form.Item>
-          <Form.Item noStyle shouldUpdate={(prev, cur) => prev.scope !== cur.scope}>
-            {({ getFieldValue }) => {
-              const scope = getFieldValue('scope')
-              if (scope === 'global') return null
-              return (
-                <Form.Item name="relatedOutlineIds" label="绑定章节">
-                  <Select
-                    mode="multiple"
-                    placeholder="选择要绑定的大纲节点"
-                    options={currentWork?.outline
-                      .filter((n) => n.level === 'chapter')
-                      .map((n) => ({ label: n.title, value: n.id })) ?? []}
-                  />
-                </Form.Item>
-              )
-            }}
           </Form.Item>
           <Form.Item name="title" label="标题">
             <Input />
@@ -533,6 +351,15 @@ export default function ConstraintsPage() {
                 { label: '必须', value: 'required' },
                 { label: '建议', value: 'suggested' },
                 { label: '可选', value: 'optional' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item name="status" label="状态">
+            <Select
+              options={[
+                { label: '待完成', value: 'pending' },
+                { label: '已满足', value: 'fulfilled' },
+                { label: '已放弃', value: 'waived' },
               ]}
             />
           </Form.Item>

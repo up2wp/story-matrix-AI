@@ -1,5 +1,4 @@
-import type { Work, Character, Constraint, OutlineNode } from '@/core/types'
-import { getScope } from '@/utils/constraints'
+import type { Work, Character, Constraint, OutlineNode, EventLogEntry } from '@/core/types'
 
 // ============================================================
 // AI 上下文组装
@@ -45,27 +44,37 @@ export function outlineContext(outline: OutlineNode[]): string {
     .join('\n\n')
 }
 
-/** 约束 → 文本摘要（区分全局/局部） */
+/** 约束 → 文本摘要 */
 export function constraintsContext(constraints: Constraint[]): string {
   if (!constraints.length) return '（暂无核心约束）'
-  const global = constraints.filter((c) => getScope(c) === 'global')
-  const local = constraints.filter((c) => getScope(c) === 'local')
-  const parts: string[] = []
-  if (global.length) {
-    parts.push('【全局约束 - 所有章节必须遵守】')
-    parts.push(
-      global
-        .map((c) => `[${c.priority}][${c.type}] ${c.title}\n${c.description}`)
-        .join('\n\n'),
-    )
+  return constraints
+    .map((c) => `[${c.priority}][${c.type}] ${c.title}\n${c.description}`)
+    .join('\n\n')
+}
+
+/** 事件簿 → 时间线文本 */
+export function eventLogContext(
+  eventLog: EventLogEntry[],
+  beforeChapterId?: string,
+  maxEntries: number = 50,
+): string {
+  if (!eventLog.length) return '（暂无历史事件记录）'
+
+  // 按时间排序
+  let entries = [...eventLog].sort((a, b) => a.timestamp - b.timestamp)
+
+  // 如果指定了章节，只返回该章节之前的事件
+  if (beforeChapterId) {
+    const idx = entries.findIndex((e) => e.chapterId === beforeChapterId)
+    if (idx > 0) entries = entries.slice(0, idx)
   }
-  if (local.length) {
-    parts.push('【局部约束 - 关联章节需覆盖】')
-    parts.push(
-      local
-        .map((c) => `[${c.priority}][${c.type}] ${c.title}\n${c.description}`)
-        .join('\n\n'),
-    )
+
+  // 限制条目数量
+  if (entries.length > maxEntries) {
+    entries = entries.slice(-maxEntries)
   }
-  return parts.join('\n\n')
+
+  return entries
+    .map((e) => `【${e.chapterTitle}】${e.characters.length ? `(${e.characters.join('、')})` : ''} ${e.description}`)
+    .join('\n')
 }

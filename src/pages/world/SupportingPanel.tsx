@@ -80,8 +80,8 @@ export default function SupportingPanel({ wb }: Props) {
         charactersContext(majorChars),
         worldContext(work),
       )
-      const text = await generateStream(prompt, SUPPORTING_SYSTEM_PROMPT, aiConfig, (chunk) => {
-        setAIStream(true, chunk)
+      const text = await generateStream(prompt, SUPPORTING_SYSTEM_PROMPT, aiConfig, (_chunk, fullText) => {
+        setAIStream(true, fullText)
       })
 
       // 解析 AI 返回的 JSON（兼容 markdown 代码块）
@@ -160,8 +160,8 @@ export default function SupportingPanel({ wb }: Props) {
         worldContext(work),
         charactersContext(characters),
       )
-      const text = await generateStream(prompt, CHARACTER_SYSTEM_PROMPT, aiConfig, (chunk) => {
-        setAIStream(true, chunk)
+      const text = await generateStream(prompt, CHARACTER_SYSTEM_PROMPT, aiConfig, (_chunk, fullText) => {
+        setAIStream(true, fullText)
       })
 
       // 解析 AI 返回的 JSON（兼容 markdown 代码块）
@@ -336,7 +336,7 @@ export default function SupportingPanel({ wb }: Props) {
       <Modal
         title={isNew ? '新增角色' : '编辑角色'}
         open={editModalOpen}
-        maskClosable={false}
+        mask={{ closable: false }}
         onOk={handleSave}
         onCancel={() => setEditModalOpen(false)}
         okText="保存"

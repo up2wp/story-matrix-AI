@@ -63,18 +63,15 @@ export interface Setting {
 // --- 核心约束 ---
 
 export type ConstraintType = 'event' | 'fate' | 'foreshadow' | 'rule' | 'rhythm'
-export type ConstraintScope = 'local' | 'global'
 export type ConstraintPriority = 'required' | 'suggested' | 'optional'
 export type ConstraintStatus = 'pending' | 'fulfilled' | 'waived'
 
 export interface Constraint {
   id: string
   type: ConstraintType
-  scope: ConstraintScope           // local=绑定具体章节, global=自动绑定全部章节
   title: string
   description: string
   priority: ConstraintPriority
-  relatedOutlineIds: string[]      // 关联的大纲节点（局部约束手动绑定，全局约束自动绑定）
   status: ConstraintStatus
 }
 
@@ -91,7 +88,6 @@ export interface OutlineNode {
   level: OutlineLevel
   characterIds: string[]       // 涉及角色
   storylineIds: string[]       // 关联故事线
-  constraintIds: string[]      // 需覆盖的约束
 }
 
 // --- 章节 ---
@@ -138,6 +134,23 @@ export interface Storyline {
   chapterLinks: ChapterLink[]
 }
 
+// --- 事件簿 ---
+
+export interface EventLogEntry {
+  id: string
+  chapterId: string          // 来源章节 ID
+  chapterTitle: string       // 章节标题
+  type: string               // 事件类型
+  characters: string[]       // 涉及的角色名称
+  description: string        // 事件描述（50字以内）
+  timestamp: number          // 记录时间
+}
+
+export interface EventLogConfig {
+  enabled: boolean
+  extractPrompt: string
+}
+
 // --- 作品 ---
 
 export interface Work {
@@ -154,6 +167,8 @@ export interface Work {
   storylines: Storyline[]
   outline: OutlineNode[]
   chapters: Chapter[]
+  eventLog?: EventLogEntry[]
+  eventLogConfig?: EventLogConfig
 }
 
 // --- AI 相关 ---

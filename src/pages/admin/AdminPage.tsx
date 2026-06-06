@@ -125,7 +125,7 @@ function UserManagement() {
         </Button>
       </div>
       <Table columns={columns} dataSource={users} rowKey="id" loading={loading} pagination={false} scroll={{ x: 600 }} />
-      <Modal title="添加用户" open={modalOpen} maskClosable={false} onCancel={() => { setModalOpen(false); form.resetFields() }} onOk={() => form.submit()} okText="创建" cancelText="取消">
+      <Modal title="添加用户" open={modalOpen} mask={{ closable: false }} onCancel={() => { setModalOpen(false); form.resetFields() }} onOk={() => form.submit()} okText="创建" cancelText="取消">
         <Form form={form} onFinish={handleAdd} layout="vertical">
           <Form.Item name="username" label="用户名" rules={[{ required: true, message: '请输入用户名' }]}>
             <Input />
@@ -153,7 +153,7 @@ function SystemSettings() {
 
   return (
     <div>
-      <Space direction="vertical" size="large" style={{ width: '100%' }}>
+      <Space orientation="vertical" size="large" style={{ width: '100%' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 16, background: '#fafafa', borderRadius: 8 }}>
           <div>
             <Text strong>允许用户注册</Text>

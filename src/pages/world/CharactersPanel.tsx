@@ -29,6 +29,7 @@ import type { Character, CharacterArc, Relation } from '@/core/types'
 import { generateId } from '@/utils/id'
 import { useStore } from '@/core/store'
 import { useSystemConfigStore } from '@/core/system-config-store'
+import { db } from '@/core/db'
 import { generateStream } from '@/ai/client'
 import { seedContext, charactersContext, worldContext } from '@/ai/context'
 import { CHARACTER_SYSTEM_PROMPT, buildCharacterPrompt, buildCharacterPolishPrompt } from '@/ai/prompts/seed'
@@ -120,8 +121,8 @@ export default function CharactersPanel({ wb }: Props) {
         charactersContext(characters),
         settings.length ? worldContext(work) : undefined,
       )
-      const text = await generateStream(prompt, CHARACTER_SYSTEM_PROMPT, aiConfig, (chunk) => {
-        setAIStream(true, chunk)
+      const text = await generateStream(prompt, CHARACTER_SYSTEM_PROMPT, aiConfig, (_chunk, fullText) => {
+        setAIStream(true, fullText)
       })
 
       // 解析 AI 返回的 JSON（兼容 markdown 代码块）
@@ -138,6 +139,17 @@ export default function CharactersPanel({ wb }: Props) {
         return
       }
       const parsed = JSON.parse(jsonMatch[0])
+      // 解析关系：AI 返回的 targetId 可能是角色名，需要解析为 ID
+      const rawRelations = parsed.relations || []
+      const resolvedRelations = rawRelations.map((r: any) => {
+        if (r.targetId && !characters.find((c) => c.id === r.targetId)) {
+          // targetId 不是 ID，尝试按名字匹配
+          const match = characters.find((c) => c.name === r.targetId)
+          return { ...r, targetId: match?.id || '' }
+        }
+        return r
+      }).filter((r: any) => r.targetId) // 过滤掉匹配不到的
+
       const newChar: Character = {
         id: generateId(),
         name: parsed.name || '未命名',
@@ -148,7 +160,7 @@ export default function CharactersPanel({ wb }: Props) {
           habits: (parsed.personality?.habits || []).map((h: string) => h.replace(/\s+/g, ' ').trim()).filter(Boolean),
           arc: parsed.personality?.arc || [],
         },
-        relations: parsed.relations || [],
+        relations: resolvedRelations,
         tags: parsed.tags || [],
       }
       await wb.addCharacter(newChar)
@@ -193,8 +205,8 @@ export default function CharactersPanel({ wb }: Props) {
         worldContext(work),
         charactersContext(characters),
       )
-      const text = await generateStream(prompt, CHARACTER_SYSTEM_PROMPT, aiConfig, (chunk) => {
-        setAIStream(true, chunk)
+      const text = await generateStream(prompt, CHARACTER_SYSTEM_PROMPT, aiConfig, (_chunk, fullText) => {
+        setAIStream(true, fullText)
       })
 
       // 解析 AI 返回的 JSON（兼容 markdown 代码块）
@@ -250,13 +262,23 @@ export default function CharactersPanel({ wb }: Props) {
   }
 
   // 保存（新增或编辑）
+  // 批量替换文本中的旧角色名
+  const batchReplaceName = (text: string, oldName: string, newName: string): string => {
+    if (!oldName || oldName === newName || !text) return text
+    return text.replaceAll(oldName, newName)
+  }
+
   const handleSave = async () => {
     if (!editing) return
     const values = form.getFieldsValue()
     const isProtagonist = editing.tags.includes('主角')
     const userTags: string[] = values.tags || []
+    const oldName = editing.name
+    const newName = values.name
+    const nameChanged = !isNew && oldName && newName && oldName !== newName
+
     const charData: Partial<Character> = {
-      name: values.name,
+      name: newName,
       bio: values.bio,
       personality: {
         ...editing.personality,
@@ -270,9 +292,117 @@ export default function CharactersPanel({ wb }: Props) {
 
     if (isNew) {
       await wb.addCharacter({ ...editing, ...charData } as Character)
-      message.success(`已添加 ${values.name}`)
+      message.success(`已添加 ${newName}`)
     } else {
       await wb.updateCharacter(editing.id, charData)
+
+      // 批量替换角色名
+      if (nameChanged) {
+        const work = wb.currentWork
+        if (work) {
+          let replacedCount = 0
+          const replace = (text: string) => {
+            const result = batchReplaceName(text, oldName, newName)
+            if (result !== text) replacedCount++
+            return result
+          }
+
+          // 替换所有角色的 bio、arc、relations 描述
+          const updatedCharacters = work.characters.map((c) => {
+            const newBio = replace(c.bio)
+            const newArc = c.personality.arc.map((a) => ({
+              ...a,
+              description: replace(a.description),
+              trigger: a.trigger ? replace(a.trigger) : a.trigger,
+            }))
+            const newRelations = c.relations.map((r) => ({
+              ...r,
+              description: replace(r.description),
+            }))
+            return { ...c, bio: newBio, personality: { ...c.personality, arc: newArc }, relations: newRelations }
+          })
+
+          // 替换章节正文、标题、场景、历史版本
+          const updatedChapters = work.chapters.map((ch) => ({
+            ...ch,
+            title: replace(ch.title),
+            content: replace(ch.content),
+            scenes: ch.scenes.map((s) => ({
+              ...s,
+              title: replace(s.title),
+              summary: replace(s.summary),
+              content: replace(s.content),
+            })),
+            versions: ch.versions.map((v) => ({
+              ...v,
+              content: replace(v.content),
+              note: v.note ? replace(v.note) : v.note,
+            })),
+          }))
+
+          // 替换故事种子核心概念
+          const updatedSeed = {
+            ...work.seed,
+            coreConcept: replace(work.seed.coreConcept),
+          }
+
+          // 替换大纲节点标题和简述
+          const updatedOutline = work.outline.map((n) => ({
+            ...n,
+            title: replace(n.title),
+            summary: replace(n.summary),
+          }))
+
+          // 替换设定内容
+          const updatedSettings = work.settings.map((s) => ({
+            ...s,
+            title: replace(s.title),
+            content: replace(s.content),
+          }))
+
+          // 替换约束描述
+          const updatedConstraints = work.constraints.map((c) => ({
+            ...c,
+            title: replace(c.title),
+            description: replace(c.description),
+          }))
+
+          // 替换故事线描述
+          const updatedStorylines = work.storylines.map((s) => ({
+            ...s,
+            name: replace(s.name),
+            description: replace(s.description),
+            chapterLinks: s.chapterLinks.map((cl) => ({
+              ...cl,
+              description: replace(cl.description),
+            })),
+          }))
+
+          if (replacedCount > 0) {
+            await db.works.update(work.id, {
+              seed: updatedSeed,
+              characters: updatedCharacters,
+              chapters: updatedChapters,
+              outline: updatedOutline,
+              settings: updatedSettings,
+              constraints: updatedConstraints,
+              storylines: updatedStorylines,
+            })
+            useStore.getState().setCurrentWork({
+              ...work,
+              seed: updatedSeed,
+              characters: updatedCharacters,
+              chapters: updatedChapters,
+              outline: updatedOutline,
+              settings: updatedSettings,
+              constraints: updatedConstraints,
+              storylines: updatedStorylines,
+              updatedAt: Date.now(),
+            })
+            message.success(`已将「${oldName}」批量替换为「${newName}」，涉及 ${replacedCount} 处`)
+          }
+        }
+      }
     }
     setEditModalOpen(false)
     setEditing(null)
@@ -449,7 +579,7 @@ export default function CharactersPanel({ wb }: Props) {
       <Modal
         title={isNew ? '新增角色' : '编辑角色'}
         open={editModalOpen}
-        maskClosable={false}
+        mask={{ closable: false }}
         onOk={handleSave}
         onCancel={() => setEditModalOpen(false)}
         okText="保存"

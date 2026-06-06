@@ -15,12 +15,14 @@ export function usePreview() {
 
   const totalWordCount = useMemo(() => {
     if (!currentWork) return 0
-    return currentWork.chapters.reduce((sum, ch) => sum + ch.wordCount, 0)
+    const validIds = new Set(currentWork.outline.filter((n) => n.level === 'chapter').map((n) => n.id))
+    return currentWork.chapters.filter((ch) => validIds.has(ch.outlineId)).reduce((sum, ch) => sum + ch.wordCount, 0)
   }, [currentWork])
 
   const chapterCount = useMemo(() => {
     if (!currentWork) return 0
-    return currentWork.chapters.filter((ch) => ch.content).length
+    const validIds = new Set(currentWork.outline.filter((n) => n.level === 'chapter').map((n) => n.id))
+    return currentWork.chapters.filter((ch) => validIds.has(ch.outlineId) && ch.content).length
   }, [currentWork])
 
   const totalChapterCount = useMemo(() => {

@@ -62,14 +62,16 @@ ${existingCharacters}
 ${worldSettings ? `\n世界观设定：\n${worldSettings}\n` : ''}
 请严格输出 JSON，包含以下字段：
 - name: 姓名
-- bio: 经历背景（200-300字）
-- personality.traits: 性格特质（3-5个）
-- personality.habits: 行为习惯（2-3个，每条必须是完整的一句话，不要换行拆句）
-- personality.arc: 性格弧线（3-4个阶段，每阶段含 stage/description/trigger）
-- tags: 标签（3-5个）
+- bio: 经历背景（100-200字）
+- personality.traits: 性格特质（2-3个字符串数组）
+- personality.habits: 行为习惯（1-2个字符串数组，每条必须是完整的一句话，不要换行拆句）
+- personality.arc: 性格弧线（2-3个阶段数组，每阶段含 stage/description/trigger 字段）
+- relations: 与已有角色的关系数组（每项含 targetId/description，targetId 填已有角色的 name）
+- tags: 标签（2-3个字符串数组）
 
 新人物要与已有角色形成差异化和关系张力。
-${worldSettings ? '人物的背景和能力要与世界观设定相契合。' : ''}`
+${worldSettings ? '人物的背景和能力要与世界观设定相契合。' : ''}
+只输出 JSON，不要输出其他内容。`
 }
 
 // --- 核心概念润色/生成 ---
@@ -132,11 +134,11 @@ ${existingCharacters}
 - 可以适当添加 1-2 个新的标签
 
 请严格输出 JSON，包含以下字段：
-- bio: 润色后的经历背景（300-400字）
-- personality.traits: 丰富的性格特质（4-6个）
-- personality.habits: 行为习惯（3-4个，每条必须是完整的一句话，不要换行拆句）
-- personality.arc: 性格弧线（3-4个阶段，每阶段含 stage/description/trigger）
-- tags: 标签（3-5个）
+- bio: 润色后的经历背景（150-250字）
+- personality.traits: 性格特质（3-4个）
+- personality.habits: 行为习惯（2-3个，每条必须是完整的一句话，不要换行拆句）
+- personality.arc: 性格弧线（2-3个阶段，每阶段含 stage/description/trigger）
+- tags: 标签（2-4个）
 
 只输出 JSON，不要输出其他内容。`
 }

@@ -70,8 +70,8 @@ export default function SettingsPanel({ wb }: Props) {
     try {
       const work = wb.currentWork!
       const prompt = buildWorldviewPrompt(seedContext(work))
-      const text = await generateStream(prompt, WORLD_SYSTEM_PROMPT, aiConfig, (chunk) => {
-        setAIStream(true, chunk)
+      const text = await generateStream(prompt, WORLD_SYSTEM_PROMPT, aiConfig, (_chunk, fullText) => {
+        setAIStream(true, fullText)
       })
 
       // 解析 AI 返回的 JSON（兼容 markdown 代码块）
@@ -144,8 +144,8 @@ export default function SettingsPanel({ wb }: Props) {
         currentSetting,
         worldContext(work),
       )
-      const text = await generateStream(prompt, SETTING_POLISH_SYSTEM_PROMPT, aiConfig, (chunk) => {
-        setAIStream(true, chunk)
+      const text = await generateStream(prompt, SETTING_POLISH_SYSTEM_PROMPT, aiConfig, (_chunk, fullText) => {
+        setAIStream(true, fullText)
       })
 
       // 解析 AI 返回的 JSON（兼容 markdown 代码块）
@@ -278,7 +278,7 @@ export default function SettingsPanel({ wb }: Props) {
       <Modal
         title={settings.find((s) => s.id === editing?.id) ? '编辑设定' : '新增设定'}
         open={editModalOpen}
-        maskClosable={false}
+        mask={{ closable: false }}
         onOk={settings.find((s) => s.id === editing?.id) ? handleSave : handleSaveNew}
         onCancel={() => setEditModalOpen(false)}
         okText="保存"

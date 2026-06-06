@@ -98,7 +98,7 @@ export default function TopBar() {
       <Modal
         title="修改密码"
         open={pwdModalOpen}
-        maskClosable={false}
+        mask={{ closable: false }}
         onCancel={() => { setPwdModalOpen(false); pwdForm.resetFields() }}
         onOk={() => pwdForm.submit()}
         confirmLoading={pwdLoading}

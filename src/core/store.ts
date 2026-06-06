@@ -2,6 +2,41 @@ import { create } from 'zustand'
 import type { Work, AIConfig } from './types'
 import { db } from './db'
 
+/** 清理旧版本遗留字段，补充新字段默认值 */
+function migrateWork(work: Work): Work {
+  let changed = false
+  // 清理约束的 scope 和 relatedOutlineIds
+  const constraints = work.constraints.map((c: any) => {
+    if ('scope' in c || 'relatedOutlineIds' in c) {
+      changed = true
+      const { scope, relatedOutlineIds, ...rest } = c
+      return rest
+    }
+    return c
+  })
+  // 清理大纲节点的 constraintIds
+  const outline = work.outline.map((n: any) => {
+    if ('constraintIds' in n) {
+      changed = true
+      const { constraintIds, ...rest } = n
+      return rest
+    }
+    return n
+  })
+  // 补充事件簿默认值
+  if (!work.eventLog) {
+    work = { ...work, eventLog: [] }
+    changed = true
+  }
+  if (changed) {
+    const migrated = { ...work, constraints, outline }
+    // 异步持久化迁移结果
+    db.works.update(work.id, { constraints, outline }).catch(() => {})
+    return migrated
+  }
+  return work
+}
+
 // ============================================================
 // 最近作品记忆
 // ============================================================
@@ -66,14 +101,14 @@ export const useStore = create<AppState>((set) => ({
   currentWork: null,
   setCurrentWork: (work) => {
     saveLastWorkId(work?.id ?? null)
-    set({ currentWork: work })
+    set({ currentWork: work ? migrateWork(work) : null })
   },
   loadLastWork: async () => {
     const id = getLastWorkId()
     if (!id) return
     try {
       const work = await db.works.get(id)
-      if (work) set({ currentWork: work })
+      if (work) set({ currentWork: migrateWork(work) })
       else saveLastWorkId(null)
     } catch {
       saveLastWorkId(null)

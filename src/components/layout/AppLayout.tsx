@@ -136,20 +136,20 @@ ${context}
           )}
           <Outlet />
         </Content>
-        {showAIPanel && <AIPanel />}
       </Layout>
+      {showAIPanel && <AIPanel />}
 
       <Modal
         title="编辑标题"
         open={titleModalOpen}
-        maskClosable={false}
+        mask={{ closable: false }}
         onCancel={() => setTitleModalOpen(false)}
         onOk={handleSaveTitle}
         okText="保存"
         cancelText="取消"
         width={500}
       >
-        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+        <Space orientation="vertical" style={{ width: '100%' }} size="middle">
           <Input
             value={titleInput}
             onChange={(e) => setTitleInput(e.target.value)}

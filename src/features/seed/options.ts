@@ -101,3 +101,15 @@ export const AUDIENCES = [
   '严肃文学爱好者',
   '轻小说爱好者',
 ]
+
+// --- 事件簿配置 ---
+
+import type { EventLogConfig } from '@/core/types'
+import { DEFAULT_EVENT_EXTRACT_PROMPT } from '@/ai/prompts/chapters'
+
+export { DEFAULT_EVENT_EXTRACT_PROMPT }
+
+export const DEFAULT_EVENT_LOG_CONFIG: EventLogConfig = {
+  enabled: true,
+  extractPrompt: DEFAULT_EVENT_EXTRACT_PROMPT,
+}
