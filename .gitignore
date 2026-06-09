@@ -37,3 +37,8 @@ server/data/
 
 # Claude
 .claude/
+
+.codegraph
+.omo
+
+scripts
