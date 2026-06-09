@@ -1,0 +1,13 @@
+.git
+.github
+.codegraph
+.omo
+node_modules
+server/node_modules
+dist
+server/dist
+server/data
+*.log
+npm-debug.log*
+.env
+.env.*
