@@ -19,7 +19,6 @@ import {
   ExperimentOutlined,
   EditOutlined,
   DeleteOutlined,
-  UserOutlined,
   StarOutlined,
   StarFilled,
   ArrowRightOutlined,
@@ -462,7 +461,6 @@ export default function CharactersPanel({ wb }: Props) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {majorChars.map((char) => {
               const isProtagonist = char.tags.includes('主角')
-              const otherChars = characters.filter((c) => c.id !== char.id)
               return (
                 <Card
                   key={char.id}

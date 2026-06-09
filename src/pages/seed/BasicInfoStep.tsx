@@ -364,47 +364,6 @@ export default function BasicInfoStep({ seed, onUpdate, workTitle, onTitleChange
     message.success('已随机生成，请检查并补充核心概念')
   }
 
-  // 灵感补全：基于已填内容智能补全空字段
-  const handleInspiredFill = async () => {
-    const hasAny = seed.timePeriod || seed.genre || seed.tone || seed.regions.length > 0
-    if (!hasAny) {
-      message.info('请先选择至少一个要素，系统会根据你的选择补全其余内容')
-      return
-    }
-
-    setLoading(true)
-    // TODO: 接入 AI 生成，当前用本地规则兜底
-    await new Promise((r) => setTimeout(r, 600))
-
-    const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)]
-    const genre = seed.genre || pick(GENRES).value
-    const genreObj = GENRES.find((g) => g.value === genre)!
-
-    const patch: Partial<StorySeed> = {}
-    if (!seed.timePeriod) patch.timePeriod = pick(TIME_PERIODS)
-    if (!seed.regions.length) patch.regions = [pick(REGIONS)]
-    if (!seed.genre) patch.genre = genre
-    if (!seed.subGenre) patch.subGenre = pick(genreObj.sub)
-    if (!seed.tone) patch.tone = pick(TONES)
-    if (!seed.targetAudience) patch.targetAudience = pick(AUDIENCES)
-    if (!seed.pov) patch.pov = pick(POVS).value
-    if (!seed.coreConcept) {
-      const time = seed.timePeriod || patch.timePeriod || '这个世界'
-      const region = seed.regions[0] || patch.regions?.[0] || '某地'
-      const g = genre
-      const tone = seed.tone || patch.tone || ''
-      patch.coreConcept = pick([
-        `${time}，${region}的${g}世界里，一段${tone}的冒险即将展开`,
-        `在${region}，一个关于${g}的${tone}故事`,
-        `当${tone}遇上${time}的${g}世界`,
-      ])
-    }
-
-    onUpdate(patch)
-    setLoading(false)
-    message.success('已根据你的选择补全信息')
-  }
-
   const canProceed = seed.timePeriod && seed.genre && seed.tone
 
   return (

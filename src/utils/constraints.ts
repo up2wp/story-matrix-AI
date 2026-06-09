@@ -1,4 +1,4 @@
-import type { Constraint, ConstraintType } from '@/core/types'
+import type { ConstraintType } from '@/core/types'
 
 // ============================================================
 // 核心约束工具函数

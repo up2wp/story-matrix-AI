@@ -1,4 +1,4 @@
-import { useRef, useEffect, useLayoutEffect, useCallback } from 'react'
+import { useRef, useEffect, useCallback } from 'react'
 
 interface RichEditorProps {
   content?: string

@@ -30,7 +30,7 @@ export function useSeedWizard() {
   const [seed, setSeed] = useState<StorySeed>(currentWork?.seed ? { ...currentWork.seed } : { ...defaultSeed })
   const [workTitle, setWorkTitle] = useState(currentWork?.title || '')
   const [loading, setLoading] = useState(false)
-  const [workId, setWorkId] = useState<string | null>(currentWork?.id || null)
+  const [workId] = useState<string | null>(currentWork?.id || null)
 
   // 更新种子信息
   const updateSeed = useCallback((patch: Partial<StorySeed>) => {
