@@ -214,7 +214,7 @@ function ModelSettings() {
   const handleSave = async (values: AIConfig) => {
     setSaving(true)
     try {
-      await saveAIConfig({ ...values, model: Array.isArray(values.model) ? values.model[0] : values.model })
+      await saveAIConfig(values)
       message.success('模型配置已保存')
     } finally {
       setSaving(false)
@@ -222,8 +222,7 @@ function ModelSettings() {
   }
 
   const handleTest = async () => {
-    const rawValues = form.getFieldsValue() as AIConfig
-    const values = { ...rawValues, model: Array.isArray(rawValues.model) ? rawValues.model[0] : rawValues.model }
+    const values = form.getFieldsValue() as AIConfig
     if (!values.apiKey && values.provider === 'openai') {
       message.warning('请先填写 API Key')
       return
@@ -309,9 +308,8 @@ function ModelSettings() {
             <Select
               showSearch
               allowClear
-              mode="tags"
-              maxCount={1}
               loading={loadingModels}
+              onSearch={(value) => form.setFieldValue('model', value)}
               onDropdownVisibleChange={(open) => { if (open) loadModels() }}
               options={modelOptions.map(m => ({ label: m, value: m }))}
               placeholder="选择或输入模型名称"

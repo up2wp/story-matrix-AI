@@ -16,10 +16,16 @@ assert.doesNotMatch(
   'AI generation should not expose provider baseUrl/API key through browser requests',
 )
 
-assert.match(
+assert.doesNotMatch(
   adminPage,
   /mode="tags"/,
-  'OpenAI model selector should allow entering a custom model id',
+  'OpenAI model selector should stay single-value instead of using tag-style multi-select UX',
+)
+
+assert.match(
+  adminPage,
+  /onSearch=\{\(value\) => form\.setFieldValue\('model', value\)\}/,
+  'OpenAI model selector should allow typing a custom model id into the single-value field',
 )
 
 assert.match(
