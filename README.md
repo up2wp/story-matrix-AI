@@ -67,13 +67,13 @@ npm run dev
 
 ### 4. Docker 部署
 
-也可以使用 Docker 一键构建并部署：
+也可以直接拉取已构建镜像并运行：
 
 ```bash
-docker compose up -d --build
+docker run -d --name story-matrix-ai -p 3001:3001 -v story-matrix-data:/app/server/data ghcr.io/up2wp/story-matrix-ai:v0.1.0
 ```
 
-Docker 部署默认访问 `http://localhost:3001`，详细说明见 [Docker 部署手册](docs/docker-deploy.md)。
+Docker 部署默认访问 `http://localhost:3001`。源码本地构建镜像部署的方法见 [Docker 部署手册](docs/docker-deploy.md)。
 
 ### 5. 默认账号
 
