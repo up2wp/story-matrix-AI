@@ -1,8 +1,16 @@
 import type { AIConfig } from '@/core/types'
+import { getToken } from '@/core/api-client'
 
 // ============================================================
 // AI 服务层 - 原生 fetch + SSE，完整控制 ReadableStream 生命周期
 // ============================================================
+
+function requestHeaders() {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  const token = getToken()
+  if (token) headers.Authorization = `Bearer ${token}`
+  return headers
+}
 
 /**
  * 一次性生成文本（非流式）
@@ -12,14 +20,11 @@ export async function generate(prompt: string, systemPrompt: string, config: AIC
   const timeoutId = setTimeout(() => controller.abort(), 300000)
 
   try {
-    const response = await fetch(`${config.baseUrl}/chat/completions`, {
+    const response = await fetch(`/api/ai/chat-completions`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.apiKey}`,
-      },
+      headers: requestHeaders(),
       body: JSON.stringify({
-        model: config.model,
+        config,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: prompt },
@@ -59,14 +64,11 @@ export async function generateStream(
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
 
   try {
-    const response = await fetch(`${config.baseUrl}/chat/completions`, {
+    const response = await fetch(`/api/ai/chat-completions`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.apiKey}`,
-      },
+      headers: requestHeaders(),
       body: JSON.stringify({
-        model: config.model,
+        config,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: prompt },
@@ -120,8 +122,7 @@ export async function generateStream(
   } finally {
     clearTimeout(timeoutId)
     if (reader) {
-      try { reader.cancel() } catch {}
-      reader = null
+      await reader.cancel().catch(() => undefined)
     }
   }
 }

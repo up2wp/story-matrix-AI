@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Table, Button, Modal, Form, Input, Select, Popconfirm, Space, Switch, Typography, Tag, message, Tabs, Card } from 'antd'
 import { PlusOutlined, DeleteOutlined, UserOutlined, SettingOutlined, RobotOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
+import { getToken } from '@/core/api-client'
 import { db } from '@/core/db'
 import { useAuthStore, hashPassword } from '@/core/auth-store'
 import { useSystemConfigStore } from '@/core/system-config-store'
@@ -193,10 +194,12 @@ function ModelSettings() {
   const [form] = Form.useForm()
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
+  const [loadingModels, setLoadingModels] = useState(false)
+  const [modelOptions, setModelOptions] = useState(PROVIDER_PRESETS.openai.models)
 
   useEffect(() => {
     form.setFieldsValue(aiConfig)
-  }, [aiConfig])
+  }, [aiConfig, form])
 
   const handleProviderChange = (provider: string) => {
     const preset = PROVIDER_PRESETS[provider]
@@ -241,6 +244,30 @@ function ModelSettings() {
     }
   }
 
+  const loadModels = async () => {
+    const values = form.getFieldsValue() as AIConfig
+    if (!values.baseUrl) return
+    setLoadingModels(true)
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      const token = getToken()
+      if (token) headers.Authorization = `Bearer ${token}`
+      const response = await fetch(`/api/ai/models`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ config: values }),
+      })
+      if (!response.ok) throw new Error(await response.text())
+      const data = await response.json() as { models?: string[] }
+      if (data.models?.length) setModelOptions(data.models)
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : '未知错误'
+      message.error(`模型列表获取失败: ${errMsg}`)
+    } finally {
+      setLoadingModels(false)
+    }
+  }
+
   const provider = Form.useWatch('provider', form) || 'openai'
 
   return (
@@ -281,10 +308,11 @@ function ModelSettings() {
             <Select
               showSearch
               allowClear
-              options={PROVIDER_PRESETS.openai.models.map(m => ({ label: m, value: m }))}
+              loading={loadingModels}
+              onSearch={(value) => form.setFieldValue('model', value)}
+              onDropdownVisibleChange={(open) => { if (open) loadModels() }}
+              options={modelOptions.map(m => ({ label: m, value: m }))}
               placeholder="选择或输入模型名称"
-              dropdownRender={(menu) => menu}
-              mode={undefined}
             />
           ) : (
             <Input placeholder="例如: llama-3-8b, qwen2-7b" />
