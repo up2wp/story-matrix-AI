@@ -27,7 +27,7 @@ interface AuthState {
   isLoading: boolean
   login: (username: string, password: string) => Promise<boolean>
   register: (username: string, password: string, displayName: string) => Promise<{ success: boolean; error?: string }>
-  changePassword: (oldPassword: string, newPassword: string) => Promise<{ success: boolean; error?: string }>
+  changePassword: (_oldPassword: string, newPassword: string) => Promise<{ success: boolean; error?: string }>
   logout: () => void
   initSession: () => Promise<void>
 }
@@ -114,12 +114,11 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
   },
 
-  changePassword: async (oldPassword, newPassword) => {
+  changePassword: async (_oldPassword, newPassword) => {
     const { user } = useAuthStore.getState()
     if (!user) return { success: false, error: '未登录' }
 
     try {
-      const oldHash = await hashPassword(oldPassword)
       const newHash = await hashPassword(newPassword)
       await db.users.update(user.id, { passwordHash: newHash })
       return { success: true }

@@ -65,7 +65,17 @@ npm run dev
 
 打开浏览器访问 `http://localhost:5173`
 
-### 4. 默认账号
+### 4. Docker 部署
+
+也可以直接拉取已构建镜像并运行：
+
+```bash
+docker run -itd --name story-matrix-ai --restart always -p 3001:3001 -v story-matrix-data:/app/server/data ghcr.io/up2wp/story-matrix-ai:latest
+```
+
+Docker 部署默认访问 `http://localhost:3001`。源码本地构建镜像部署的方法见 [Docker 部署手册](docs/docker-deploy.md)。
+
+### 5. 默认账号
 
 系统首次启动会自动创建管理员账号：
 
@@ -76,7 +86,7 @@ npm run dev
 
 > ⚠️ **安全提示**：首次登录后请立即修改默认密码。
 
-### 5. 配置 AI 服务
+### 6. 配置 AI 服务
 
 登录后进入 **管理后台**，配置 AI 服务提供商：
 

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react'
-import { Typography, Button, Space, Empty, Spin } from 'antd'
+import { Typography, Button, Empty, Spin } from 'antd'
 import { LoadingOutlined, CloseOutlined } from '@ant-design/icons'
 import { useStore } from '@/core/store'
 

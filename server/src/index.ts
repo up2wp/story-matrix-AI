@@ -7,7 +7,7 @@ import authRouter from './routes/auth.js'
 import usersRouter from './routes/users.js'
 import worksRouter from './routes/works.js'
 import systemConfigRouter from './routes/system-config.js'
-import { requireAuth, requireAdmin } from './middleware/auth.js'
+import { requireAuth } from './middleware/auth.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = parseInt(process.env.PORT || '3001', 10)
@@ -16,6 +16,10 @@ const app = express()
 
 app.use(cors())
 app.use(express.json({ limit: '10mb' }))
+
+app.get('/api/health', (_req, res) => {
+  res.json({ status: 'ok' })
+})
 
 // 公开路由（无需登录）
 app.use('/api/auth', authRouter)
