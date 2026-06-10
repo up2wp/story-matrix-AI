@@ -1,7 +1,6 @@
 import { create } from 'zustand'
 import { db } from './db'
 import { getToken, setToken } from './api-client'
-import { generateId } from '@/utils/id'
 import type { User } from './types'
 
 // ============================================================
@@ -81,33 +80,18 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   register: async (username, password, displayName) => {
     try {
-      // 先检查用户名是否已存在
-      const existing = await db.users.where('username').equals(username).first()
-      if (existing) return { success: false, error: '用户名已存在' }
-
-      const passwordHash = await hashPassword(password)
-
-      const newUser = {
-        id: generateId(),
-        username,
-        passwordHash,
-        displayName,
-        role: 'user' as const,
-        createdAt: Date.now(),
-      }
-      await db.users.add(newUser)
-
-      // 注册成功后自动登录
-      const loginRes = await fetch('/api/auth/login', {
+      const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password, displayName }),
       })
-      if (loginRes.ok) {
-        const { token, user } = await loginRes.json()
-        setToken(token)
-        set({ user, isAuthenticated: true })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: '注册失败' }))
+        return { success: false, error: err.error || '注册失败' }
       }
+      const { token, user } = await res.json()
+      setToken(token)
+      set({ user, isAuthenticated: true })
       return { success: true }
     } catch (err: any) {
       return { success: false, error: err.message || '注册失败' }
