@@ -7,6 +7,7 @@ import authRouter from './routes/auth.js'
 import usersRouter from './routes/users.js'
 import worksRouter from './routes/works.js'
 import systemConfigRouter from './routes/system-config.js'
+import aiRouter from './routes/ai.js'
 import { requireAuth } from './middleware/auth.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -28,6 +29,7 @@ app.use('/api/auth', authRouter)
 app.use('/api/users', usersRouter)
 // 需要登录的路由
 app.use('/api/works', requireAuth, worksRouter)
+app.use('/api/ai', requireAuth, aiRouter)
 // system-config 路由：GET 公开，POST/PATCH 需管理员
 app.use('/api/system-config', systemConfigRouter)
 
