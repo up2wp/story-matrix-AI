@@ -64,7 +64,7 @@ export default function AIPanel() {
           top: 0,
           right: 0,
           bottom: 0,
-          width: 380,
+          width: 'min(380px, 100vw)',
           zIndex: 1000,
           background: '#fff',
           boxShadow: '-2px 0 12px rgba(0,0,0,0.1)',

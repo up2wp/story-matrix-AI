@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Layout, Space, Button, Typography, Tag, Modal, Input, List, Spin, message } from 'antd'
 import { RobotOutlined, EditOutlined } from '@ant-design/icons'
 import { Outlet, useLocation } from 'react-router'
@@ -22,6 +22,7 @@ const NO_HEADER_PATHS = ['/works', '/admin', '/login', '/preview']
 export default function AppLayout() {
   const aiPanelOpen = useStore((s) => s.aiPanelOpen)
   const toggleAIPanel = useStore((s) => s.toggleAIPanel)
+  const setSidebarCollapsed = useStore((s) => s.setSidebarCollapsed)
   const currentWork = useStore((s) => s.currentWork)
   const setCurrentWork = useStore((s) => s.setCurrentWork)
   const readOnly = useStore((s) => s.readOnly)
@@ -36,6 +37,14 @@ export default function AppLayout() {
   const showAIPanel = aiPanelOpen && !NO_AI_PANEL_PATHS.includes(location.pathname)
   const showHeader = currentWork && !NO_HEADER_PATHS.includes(location.pathname)
   const isChaptersPage = location.pathname === '/chapters'
+
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 768px)')
+    const syncSidebar = () => setSidebarCollapsed(media.matches)
+    syncSidebar()
+    media.addEventListener('change', syncSidebar)
+    return () => media.removeEventListener('change', syncSidebar)
+  }, [setSidebarCollapsed])
 
   const openTitleModal = () => {
     setTitleInput(currentWork?.title || '')
@@ -101,13 +110,14 @@ ${context}
   }
 
   return (
-    <Layout style={{ height: '100vh', overflow: 'hidden' }}>
+    <Layout style={{ height: '100dvh', minHeight: '100vh', overflow: 'hidden' }}>
       <TopBar />
       <Layout style={{ flex: 1, overflow: 'hidden' }}>
         <Sidebar />
         <Content style={{
           padding: 24,
           overflow: isChaptersPage ? 'hidden' : 'auto',
+          WebkitOverflowScrolling: 'touch',
           display: isChaptersPage ? 'flex' : 'block',
           flexDirection: isChaptersPage ? 'column' : undefined,
         }}>

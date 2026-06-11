@@ -160,7 +160,33 @@ function UserManagement() {
           添加用户
         </Button>
       </div>
-      <Table columns={columns} dataSource={users} rowKey="id" loading={loading} pagination={false} scroll={{ x: 600 }} />
+      <div className="desktop-user-table">
+        <Table columns={columns} dataSource={users} rowKey="id" loading={loading} pagination={false} scroll={{ x: 600 }} />
+      </div>
+      <div className="mobile-user-cards">
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          {users.map(user => (
+            <Card key={user.id} size="small" title={user.displayName} extra={renderRole(user.role)}>
+              <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                <Text type="secondary">用户名：{user.username}</Text>
+                <Text type="secondary">创建时间：{new Date(user.createdAt).toLocaleString('zh-CN')}</Text>
+                {user.id === currentUser?.id ? (
+                  <Text type="secondary">当前用户</Text>
+                ) : canManage(user) ? (
+                  <Space wrap>
+                    <Button icon={<EditOutlined />} onClick={() => openEdit(user)}>编辑</Button>
+                    <Popconfirm title="确认停用此用户？" description="停用后该用户将无法登录，已有作品数据会保留。" onConfirm={() => handleDelete(user)} okText="停用" cancelText="取消" okButtonProps={{ autoFocus: true }}>
+                      <Button danger icon={<DeleteOutlined />}>停用</Button>
+                    </Popconfirm>
+                  </Space>
+                ) : (
+                  <Text type="secondary">无权操作</Text>
+                )}
+              </Space>
+            </Card>
+          ))}
+        </Space>
+      </div>
       <Modal title={editingUser ? '编辑用户' : '添加用户'} open={modalOpen} mask={{ closable: false }} onCancel={closeModal} onOk={() => form.submit()} confirmLoading={savingUser} okText={editingUser ? '保存' : '创建'} cancelText="取消">
         <Form form={form} onFinish={handleSaveUser} layout="vertical">
           <Form.Item name="username" label="用户名" rules={[{ required: !editingUser, message: '请输入用户名' }]}>

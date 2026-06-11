@@ -6,11 +6,45 @@
 
 html, body, #root {
   height: 100%;
-  overflow: hidden;
+  min-height: 100%;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+body {
+  overflow: hidden;
 }
 
 /* 修复 Ant Design Sider 内部 margin hack 导致的亚像素溢出滚动条 */
 .ant-layout-sider .ant-layout-sider-children {
   overflow: hidden;
+}
+
+@media (max-width: 768px) {
+  body {
+    overflow: auto;
+  }
+
+  .ant-modal {
+    max-width: calc(100vw - 24px);
+    margin: 12px auto;
+  }
+
+  .ant-modal .ant-modal-body {
+    max-height: calc(100dvh - 180px);
+    overflow-y: auto;
+  }
+
+  .mobile-user-cards {
+    display: block;
+  }
+
+  .desktop-user-table {
+    display: none;
+  }
+}
+
+@media (min-width: 769px) {
+  .mobile-user-cards {
+    display: none;
+  }
 }
