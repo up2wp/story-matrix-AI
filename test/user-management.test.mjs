@@ -6,6 +6,8 @@ const seedSource = await readFile(new URL('../server/src/seed.ts', import.meta.u
 const authRouteSource = await readFile(new URL('../server/src/routes/auth.ts', import.meta.url), 'utf8')
 const usersRouteSource = await readFile(new URL('../server/src/routes/users.ts', import.meta.url), 'utf8')
 const authStoreSource = await readFile(new URL('../src/core/auth-store.ts', import.meta.url), 'utf8')
+const adminPageSource = await readFile(new URL('../src/pages/admin/AdminPage.tsx', import.meta.url), 'utf8')
+const topBarSource = await readFile(new URL('../src/components/layout/TopBar.tsx', import.meta.url), 'utf8')
 
 assert.match(
   dbSource,
@@ -77,6 +79,30 @@ assert.match(
   authStoreSource,
   /\/api\/auth\/profile/,
   'frontend profile updates should call the server endpoint',
+)
+
+assert.match(
+  adminPageSource,
+  /title=\{editingUser \? '编辑用户' : '添加用户'\}/,
+  'user management should reuse the modal for both creating and editing users',
+)
+
+assert.match(
+  adminPageSource,
+  /留空则不修改密码/,
+  'editing a user should allow password reset without requiring a password change',
+)
+
+assert.match(
+  adminPageSource,
+  /确认停用此用户/,
+  'user deletion UI should present soft-delete language',
+)
+
+assert.match(
+  topBarSource,
+  /label: '个人资料'/,
+  'avatar dropdown should expose profile editing',
 )
 
 console.log('user-management behavior assertions passed')

@@ -1,12 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Table, Button, Modal, Form, Input, Select, Popconfirm, Space, Switch, Typography, Tag, message, Tabs, Card } from 'antd'
-import { PlusOutlined, DeleteOutlined, UserOutlined, SettingOutlined, RobotOutlined } from '@ant-design/icons'
+import { PlusOutlined, DeleteOutlined, EditOutlined, UserOutlined, SettingOutlined, RobotOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { getToken } from '@/core/api-client'
 import { db } from '@/core/db'
-import { useAuthStore, hashPassword } from '@/core/auth-store'
+import { useAuthStore } from '@/core/auth-store'
 import { useSystemConfigStore } from '@/core/system-config-store'
-import { generateId } from '@/utils/id'
 import type { User, AIConfig } from '@/core/types'
 
 const { Title, Text } = Typography
@@ -32,7 +31,21 @@ function UserManagement() {
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
   const [modalOpen, setModalOpen] = useState(false)
+  const [editingUser, setEditingUser] = useState<User | null>(null)
+  const [savingUser, setSavingUser] = useState(false)
   const [form] = Form.useForm()
+  const currentUser = useAuthStore(s => s.user)
+
+  const roleOptions = currentUser?.role === 'owner'
+    ? [{ value: 'admin', label: '管理员' }, { value: 'user', label: '普通用户' }]
+    : [{ value: 'user', label: '普通用户' }]
+
+  const canManage = useCallback((target: User) => {
+    if (!currentUser || target.id === currentUser.id || target.role === 'owner') return false
+    if (currentUser.role === 'owner') return target.role === 'admin' || target.role === 'user'
+    if (currentUser.role === 'admin') return target.role === 'user'
+    return false
+  }, [currentUser])
 
   const loadUsers = useCallback(async () => {
     setLoading(true)
@@ -46,43 +59,62 @@ function UserManagement() {
 
   useEffect(() => { loadUsers() }, [loadUsers])
 
-  const handleAdd = async (values: { username: string; password: string; displayName: string; role: 'admin' | 'user' }) => {
-    const existing = await db.users.where('username').equals(values.username).first()
-    if (existing) {
-      message.error('用户名已存在')
-      return
-    }
-    const newUser: User = {
-      id: generateId(),
-      username: values.username,
-      passwordHash: await hashPassword(values.password),
-      displayName: values.displayName,
-      role: values.role,
-      createdAt: Date.now(),
-    }
-    await db.users.add(newUser)
-    message.success('用户创建成功')
-    setModalOpen(false)
+  const openCreate = () => {
+    setEditingUser(null)
     form.resetFields()
-    loadUsers()
+    form.setFieldsValue({ role: 'user' })
+    setModalOpen(true)
+  }
+
+  const openEdit = (user: User) => {
+    setEditingUser(user)
+    form.setFieldsValue({ username: user.username, displayName: user.displayName, role: user.role, password: '' })
+    setModalOpen(true)
+  }
+
+  const closeModal = () => {
+    setModalOpen(false)
+    setEditingUser(null)
+    form.resetFields()
+  }
+
+  const handleSaveUser = async (values: { username: string; password?: string; displayName: string; role: User['role'] }) => {
+    setSavingUser(true)
+    try {
+      if (editingUser) {
+        const changes: Partial<User> & { password?: string } = {
+          displayName: values.displayName,
+          role: values.role,
+        }
+        if (values.password) changes.password = values.password
+        await db.users.update(editingUser.id, changes)
+        message.success('用户已更新')
+      } else {
+        const existing = await db.users.where('username').equals(values.username).first()
+        if (existing) {
+          message.error('用户名已存在')
+          return
+        }
+        await db.users.add({ username: values.username, password: values.password, displayName: values.displayName, role: values.role })
+        message.success('用户创建成功')
+      }
+      closeModal()
+      loadUsers()
+    } finally {
+      setSavingUser(false)
+    }
   }
 
   const handleDelete = async (user: User) => {
-    if (user.role === 'admin') {
-      const adminCount = users.filter(u => u.role === 'admin').length
-      if (adminCount <= 1) {
-        message.error('不能删除最后一个管理员')
-        return
-      }
-    }
-    const workCount = await db.works.where('ownerId').equals(user.id).count()
-    if (workCount > 0) {
-      message.error(`该用户还有 ${workCount} 个作品，请先删除或转移作品`)
-      return
-    }
     await db.users.delete(user.id)
-    message.success('用户已删除')
+    message.success('用户已停用')
     loadUsers()
+  }
+
+  const renderRole = (role: User['role']) => {
+    if (role === 'owner') return <Tag color="gold">拥有者</Tag>
+    if (role === 'admin') return <Tag color="red">管理员</Tag>
+    return <Tag color="blue">普通用户</Tag>
   }
 
   const columns: ColumnsType<User> = [
@@ -93,7 +125,7 @@ function UserManagement() {
       dataIndex: 'role',
       key: 'role',
       width: 100,
-      render: (role: string) => role === 'admin' ? <Tag color="red">管理员</Tag> : <Tag color="blue">普通用户</Tag>,
+      render: renderRole,
     },
     {
       title: '创建时间',
@@ -105,14 +137,17 @@ function UserManagement() {
     {
       title: '操作',
       key: 'actions',
-      width: 120,
+      width: 180,
       render: (_: unknown, record: User) => {
-        const currentUserId = useAuthStore.getState().user?.id
-        if (record.id === currentUserId) return <Text type="secondary">当前用户</Text>
+        if (record.id === currentUser?.id) return <Text type="secondary">当前用户</Text>
+        if (!canManage(record)) return <Text type="secondary">无权操作</Text>
         return (
-          <Popconfirm title="确认删除此用户？" onConfirm={() => handleDelete(record)} okText="确认" cancelText="取消" okButtonProps={{ autoFocus: true }}>
-            <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
-          </Popconfirm>
+          <Space size="small">
+            <Button type="link" icon={<EditOutlined />} onClick={() => openEdit(record)}>编辑</Button>
+            <Popconfirm title="确认停用此用户？" description="停用后该用户将无法登录，已有作品数据会保留。" onConfirm={() => handleDelete(record)} okText="停用" cancelText="取消" okButtonProps={{ autoFocus: true }}>
+              <Button type="link" danger icon={<DeleteOutlined />}>停用</Button>
+            </Popconfirm>
+          </Space>
         )
       },
     },
@@ -121,24 +156,24 @@ function UserManagement() {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate} disabled={!currentUser || !['owner', 'admin'].includes(currentUser.role)}>
           添加用户
         </Button>
       </div>
       <Table columns={columns} dataSource={users} rowKey="id" loading={loading} pagination={false} scroll={{ x: 600 }} />
-      <Modal title="添加用户" open={modalOpen} mask={{ closable: false }} onCancel={() => { setModalOpen(false); form.resetFields() }} onOk={() => form.submit()} okText="创建" cancelText="取消">
-        <Form form={form} onFinish={handleAdd} layout="vertical">
-          <Form.Item name="username" label="用户名" rules={[{ required: true, message: '请输入用户名' }]}>
-            <Input />
+      <Modal title={editingUser ? '编辑用户' : '添加用户'} open={modalOpen} mask={{ closable: false }} onCancel={closeModal} onOk={() => form.submit()} confirmLoading={savingUser} okText={editingUser ? '保存' : '创建'} cancelText="取消">
+        <Form form={form} onFinish={handleSaveUser} layout="vertical">
+          <Form.Item name="username" label="用户名" rules={[{ required: !editingUser, message: '请输入用户名' }]}>
+            <Input disabled={!!editingUser} />
           </Form.Item>
-          <Form.Item name="password" label="密码" rules={[{ required: true, message: '请输入密码' }]}>
+          <Form.Item name="password" label={editingUser ? '重置密码' : '密码'} rules={editingUser ? [] : [{ required: true, message: '请输入密码' }, { min: 4, message: '密码至少4位' }]} extra={editingUser ? '留空则不修改密码' : undefined}>
             <Input.Password />
           </Form.Item>
           <Form.Item name="displayName" label="显示名称" rules={[{ required: true, message: '请输入显示名称' }]}>
             <Input />
           </Form.Item>
           <Form.Item name="role" label="角色" rules={[{ required: true, message: '请选择角色' }]}>
-            <Select options={[{ value: 'admin', label: '管理员' }, { value: 'user', label: '普通用户' }]} />
+            <Select options={roleOptions} />
           </Form.Item>
         </Form>
       </Modal>
