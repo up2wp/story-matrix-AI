@@ -5,6 +5,7 @@ const dbSource = await readFile(new URL('../server/src/db.ts', import.meta.url),
 const seedSource = await readFile(new URL('../server/src/seed.ts', import.meta.url), 'utf8')
 const authRouteSource = await readFile(new URL('../server/src/routes/auth.ts', import.meta.url), 'utf8')
 const usersRouteSource = await readFile(new URL('../server/src/routes/users.ts', import.meta.url), 'utf8')
+const worksRouteSource = await readFile(new URL('../server/src/routes/works.ts', import.meta.url), 'utf8')
 const authStoreSource = await readFile(new URL('../src/core/auth-store.ts', import.meta.url), 'utf8')
 const adminPageSource = await readFile(new URL('../src/pages/admin/AdminPage.tsx', import.meta.url), 'utf8')
 const topBarSource = await readFile(new URL('../src/components/layout/TopBar.tsx', import.meta.url), 'utf8')
@@ -69,6 +70,36 @@ assert.match(
   usersRouteSource,
   /function canViewUser/,
   'single-user lookup endpoints should enforce role-scoped visibility',
+)
+
+assert.match(
+  worksRouteSource,
+  /function canAccessWork/,
+  'work detail and mutation routes should enforce owner/shared access rules',
+)
+
+assert.match(
+  worksRouteSource,
+  /for \(const key of \['shared', 'title', 'createdAt', 'updatedAt'\]\)/,
+  'work patch route should not allow ownerId transfer through scalar updates',
+)
+
+assert.match(
+  worksRouteSource,
+  /WHERE ownerId = \? OR shared = 1/,
+  'work list should only expose own works plus shared works',
+)
+
+assert.match(
+  worksRouteSource,
+  /function rowToWorkSummary/,
+  'shared non-owned works should be summarized without serialized content',
+)
+
+assert.match(
+  worksRouteSource,
+  /user\.role === 'admin'/,
+  'admins should be handled explicitly so they cannot inspect other users work content',
 )
 
 assert.doesNotMatch(

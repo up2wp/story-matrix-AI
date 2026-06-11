@@ -50,8 +50,13 @@ export default function WorksPage() {
 
   useEffect(() => { loadWorks() }, [loadWorks])
 
-  const handleOpen = (work: WorkItem, readOnly: boolean) => {
-    setCurrentWork(work)
+  const handleOpen = async (work: WorkItem, readOnly: boolean) => {
+    const detail = readOnly ? await db.works.get(work.id) : work
+    if (!detail) {
+      message.error('无权查看该作品')
+      return
+    }
+    setCurrentWork(detail)
     setReadOnly(readOnly)
     navigate('/seed')
   }
@@ -87,6 +92,7 @@ export default function WorksPage() {
       width: 80,
       render: (_: unknown, record: WorkItem) => {
         if (isOwner(record)) return <Tag color="blue">可编辑</Tag>
+        if (user?.role === 'owner' || user?.role === 'admin') return <Tag color="default">仅标题</Tag>
         return <Tag color="orange">只读</Tag>
       },
     },
@@ -122,10 +128,12 @@ export default function WorksPage() {
             <Button type="link" icon={<EditOutlined />} onClick={() => handleOpen(record, false)}>
               编辑
             </Button>
-          ) : (
+          ) : user?.role === 'user' ? (
             <Button type="link" icon={<EyeOutlined />} onClick={() => handleOpen(record, true)}>
               查看
             </Button>
+          ) : (
+            <Tag>仅标题</Tag>
           )}
           {isOwner(record) && (
             <Popconfirm title="确认删除此作品？" onConfirm={() => handleDelete(record)} okText="确认" cancelText="取消" okButtonProps={{ autoFocus: true }}>
