@@ -57,7 +57,10 @@ function UserManagement() {
     }
   }, [])
 
-  useEffect(() => { loadUsers() }, [loadUsers])
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void loadUsers() }, 0)
+    return () => window.clearTimeout(timer)
+  }, [loadUsers])
 
   const openCreate = () => {
     setEditingUser(null)

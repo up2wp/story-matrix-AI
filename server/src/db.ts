@@ -46,7 +46,9 @@ db.exec(`
 `)
 
 function columnExists(database: DatabaseInstance, table: string, column: string): boolean {
-  return database.prepare(`PRAGMA table_info(${table})`).all().some((row: any) => row.name === column)
+  return database.prepare(`PRAGMA table_info(${table})`).all().some((row) => {
+    return typeof row === 'object' && row !== null && 'name' in row && row.name === column
+  })
 }
 
 export function migrateDatabase(database: DatabaseInstance = db) {

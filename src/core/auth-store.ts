@@ -31,6 +31,10 @@ interface AuthState {
   initSession: () => Promise<void>
 }
 
+function errorMessage(err: unknown, fallback: string) {
+  return err instanceof Error ? err.message : fallback
+}
+
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   isAuthenticated: false,
@@ -93,8 +97,8 @@ export const useAuthStore = create<AuthState>((set) => ({
       setToken(token)
       set({ user, isAuthenticated: true })
       return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err.message || '注册失败' }
+    } catch (err: unknown) {
+      return { success: false, error: errorMessage(err, '注册失败') }
     }
   },
 
@@ -110,8 +114,8 @@ export const useAuthStore = create<AuthState>((set) => ({
         return { success: false, error: err.error || '修改密码失败' }
       }
       return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err.message || '修改密码失败' }
+    } catch (err: unknown) {
+      return { success: false, error: errorMessage(err, '修改密码失败') }
     }
   },
 
@@ -129,8 +133,8 @@ export const useAuthStore = create<AuthState>((set) => ({
       const user = await res.json()
       set({ user })
       return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err.message || '修改资料失败' }
+    } catch (err: unknown) {
+      return { success: false, error: errorMessage(err, '修改资料失败') }
     }
   },
 

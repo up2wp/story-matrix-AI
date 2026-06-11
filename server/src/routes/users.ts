@@ -21,6 +21,10 @@ function normalizeRole(role: unknown): CurrentUser['role'] {
   return role === 'owner' || role === 'admin' || role === 'user' ? role : 'user'
 }
 
+function isSqliteUniqueError(err: unknown) {
+  return typeof err === 'object' && err !== null && 'code' in err && err.code === 'SQLITE_CONSTRAINT_UNIQUE'
+}
+
 function getUser(id: string): CurrentUser | undefined {
   return db.prepare(`SELECT ${SAFE_FIELDS} FROM users WHERE id = ?`).get(id) as CurrentUser | undefined
 }
@@ -114,8 +118,8 @@ router.post('/', requireAdmin, (req, res) => {
     ).run(id, username, hash, displayName, role, createdAt)
     const user = db.prepare(`SELECT ${SAFE_FIELDS} FROM users WHERE id = ?`).get(id)
     res.status(201).json(user)
-  } catch (err: any) {
-    if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+  } catch (err: unknown) {
+    if (isSqliteUniqueError(err)) {
       return res.status(409).json({ error: '用户名已存在' })
     }
     throw err
