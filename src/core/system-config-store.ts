@@ -21,6 +21,7 @@ const defaultAIConfig: AIConfig = {
   apiKey: '',
   baseUrl: '',
   model: 'gpt-4o-mini',
+  maxTokens: 8192,
 }
 
 export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({

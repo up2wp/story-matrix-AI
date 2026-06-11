@@ -97,16 +97,23 @@ export const SUPPORTING_SYSTEM_PROMPT = `你是一位资深的小说配角设计
 export function buildSupportingCharsPrompt(
   majorCharacters: string,
   worldSettings: string,
+  count: number = 3,
+  hints?: string,
 ): string {
-  return `根据以下主要人物和世界观，生成 3 个非主要人物（配角、路人、势力代表等）。
+  const hintsSection = hints?.trim()
+    ? `\n\n用户指定的角色名单/提示（必须优先遵循，根据提示补充完善角色信息）：\n${hints.trim()}`
+    : ''
+
+  return `根据以下主要人物和世界观，生成 ${count} 个非主要人物（配角、路人、势力代表等）。
 
 主要人物：
 ${majorCharacters}
 
 世界观：
 ${worldSettings}
+${hintsSection}
 
-请严格输出 JSON 数组，每个元素包含：
+请严格输出 JSON 数组（长度必须为 ${count}），每个元素包含：
 - name: 姓名
 - role: 'supporting' 或 'minor'
 - bio: 简要背景（50-100字）

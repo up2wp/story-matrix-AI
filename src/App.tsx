@@ -25,9 +25,11 @@ export default function App() {
   const loadLastWork = useStore(s => s.loadLastWork)
 
   useEffect(() => {
-    initSession().then(() => {
-      loadConfig()
-      loadLastWork()
+    initSession().then((authed) => {
+      if (authed) {
+        loadConfig()
+        loadLastWork()
+      }
     })
   }, [initSession, loadConfig, loadLastWork])
 

@@ -17,16 +17,21 @@ export default function RichEditor({
 }: RichEditorProps) {
   const ref = useRef<HTMLTextAreaElement>(null)
   const ignoreChange = useRef(false)
+  const composing = useRef(false)
 
-  // 外部内容变更时同步
+  // 外部内容变更时同步（IME 组合期间跳过，避免打断输入）
   useEffect(() => {
+    if (composing.current) return
     const el = ref.current
-    if (!el || el.value === content) return
+    if (!el) return
+    if (document.activeElement === el && el.value === content) return
+    if (el.value === content) return
     el.value = content
     el.scrollTop = el.scrollHeight
   }, [content])
 
-  const handleChange = useCallback(() => {
+  const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    if (composing.current) return
     if (ignoreChange.current) {
       ignoreChange.current = false
       return
@@ -41,6 +46,11 @@ export default function RichEditor({
       ref={ref}
       defaultValue=""
       onChange={handleChange}
+      onCompositionStart={() => { composing.current = true }}
+      onCompositionEnd={(e) => {
+        composing.current = false
+        onChange?.(ref.current?.value ?? '')
+      }}
       readOnly={!editable}
       placeholder={placeholder}
       style={{

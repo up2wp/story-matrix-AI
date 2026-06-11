@@ -94,3 +94,9 @@ body {
     display: none;
   }
 }
+
+/* Popconfirm 禁用动画，立即显示 */
+.ant-popover {
+  animation-duration: 0s !important;
+  transition-duration: 0s !important;
+}

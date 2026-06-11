@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Table, Button, Modal, Form, Input, Select, Popconfirm, Space, Switch, Typography, Tag, message, Tabs, Card } from 'antd'
+import { Table, Button, Modal, Form, Input, InputNumber, Select, Popconfirm, Space, Switch, Typography, Tag, message, Tabs, Card } from 'antd'
 import { PlusOutlined, DeleteOutlined, EditOutlined, UserOutlined, SettingOutlined, RobotOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { getToken } from '@/core/api-client'
@@ -190,7 +190,7 @@ function UserManagement() {
           ))}
         </Space>
       </div>
-      <Modal title={editingUser ? '编辑用户' : '添加用户'} open={modalOpen} mask={{ closable: false }} onCancel={closeModal} onOk={() => form.submit()} confirmLoading={savingUser} okText={editingUser ? '保存' : '创建'} cancelText="取消">
+      <Modal title={editingUser ? '编辑用户' : '添加用户'} open={modalOpen} forceRender mask={{ closable: false }} onCancel={closeModal} onOk={() => form.submit()} confirmLoading={savingUser} okText={editingUser ? '保存' : '创建'} cancelText="取消">
         <Form form={form} onFinish={handleSaveUser} layout="vertical">
           <Form.Item name="username" label="用户名" rules={[{ required: !editingUser, message: '请输入用户名' }]}>
             <Input disabled={!!editingUser} />
@@ -381,6 +381,10 @@ function ModelSettings() {
           ) : (
             <Input placeholder="例如: llama-3-8b, qwen2-7b" />
           )}
+        </Form.Item>
+
+        <Form.Item name="maxTokens" label="最大输出 Token 数" extra="控制 AI 单次最大输出长度，8192 约 4000-6000 中文字。设为 0 则使用模型默认值。">
+          <InputNumber min={0} max={128000} step={1024} style={{ width: '100%' }} placeholder="8192" />
         </Form.Item>
       </Card>
 

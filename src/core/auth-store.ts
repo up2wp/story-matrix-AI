@@ -28,7 +28,7 @@ interface AuthState {
   changePassword: (_oldPassword: string, newPassword: string) => Promise<{ success: boolean; error?: string }>
   updateProfile: (displayName: string) => Promise<{ success: boolean; error?: string }>
   logout: () => void
-  initSession: () => Promise<void>
+  initSession: () => Promise<boolean>
 }
 
 function errorMessage(err: unknown, fallback: string) {
@@ -44,7 +44,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     const token = getToken()
     if (!token) {
       set({ isLoading: false })
-      return
+      return false
     }
     try {
       // 通过 token 获取当前用户信息
@@ -54,14 +54,17 @@ export const useAuthStore = create<AuthState>((set) => ({
       if (res.ok) {
         const user = await res.json()
         set({ user, isAuthenticated: true, isLoading: false })
+        return true
       } else {
         // token 无效，清除
         setToken(null)
         set({ isLoading: false })
+        return false
       }
     } catch {
       setToken(null)
       set({ isLoading: false })
+      return false
     }
   },
 

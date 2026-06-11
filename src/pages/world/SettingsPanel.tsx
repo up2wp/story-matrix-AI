@@ -232,7 +232,9 @@ export default function SettingsPanel({ wb }: Props) {
               AI 随机生成
             </Button>
             {settings.length > 0 && (
-              <Popconfirm title="确定清空所有世界观设定？" onConfirm={() => wb.setSettings([])} okText="确认" cancelText="取消" okButtonProps={{ autoFocus: true }}>
+              <Popconfirm title="确定清空所有世界观设定？" onConfirm={() => wb.setSettings([])} okText="确认" cancelText="取消" okButtonProps={{ autoFocus: true }}
+                onOpenChange={(open) => { if (open) setTimeout(() => { (document.querySelector('.ant-popconfirm .ant-btn-primary') as HTMLElement | null)?.focus() }, 100) }}
+              >
                 <Button danger>清空世界观</Button>
               </Popconfirm>
             )}
@@ -262,7 +264,9 @@ export default function SettingsPanel({ wb }: Props) {
                     {!readOnly && (
                       <Space>
                         <Button type="text" icon={<EditOutlined />} onClick={() => openEdit(setting)} />
-                        <Popconfirm title="确定删除？" onConfirm={() => wb.removeSetting(setting.id)} okButtonProps={{ autoFocus: true }}>
+                        <Popconfirm title="确定删除？" onConfirm={() => wb.removeSetting(setting.id)} okButtonProps={{ autoFocus: true }}
+                          onOpenChange={(open) => { if (open) setTimeout(() => { (document.querySelector('.ant-popconfirm .ant-btn-primary') as HTMLElement | null)?.focus() }, 100) }}
+                        >
                           <Button type="text" danger icon={<DeleteOutlined />} />
                         </Popconfirm>
                       </Space>
@@ -278,6 +282,7 @@ export default function SettingsPanel({ wb }: Props) {
       <Modal
         title={settings.find((s) => s.id === editing?.id) ? '编辑设定' : '新增设定'}
         open={editModalOpen}
+        forceRender
         mask={{ closable: false }}
         onOk={settings.find((s) => s.id === editing?.id) ? handleSave : handleSaveNew}
         onCancel={() => setEditModalOpen(false)}

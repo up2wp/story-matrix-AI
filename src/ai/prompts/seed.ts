@@ -60,14 +60,14 @@ ${seed}
 已有角色：
 ${existingCharacters}
 ${worldSettings ? `\n世界观设定：\n${worldSettings}\n` : ''}
-请严格输出 JSON，包含以下字段：
+请严格输出 JSON，所有字段必须填写，不能留空数组：
 - name: 姓名
-- bio: 经历背景（100-200字）
-- personality.traits: 性格特质（2-3个字符串数组）
-- personality.habits: 行为习惯（1-2个字符串数组，每条必须是完整的一句话，不要换行拆句）
-- personality.arc: 性格弧线（2-3个阶段数组，每阶段含 stage/description/trigger 字段）
-- relations: 与已有角色的关系数组（每项含 targetId/description，targetId 填已有角色的 name）
-- tags: 标签（2-3个字符串数组）
+- bio: 经历背景（80-150字）
+- personality.traits: 性格特质（2-3个，如"坚韧"、"多疑"）
+- personality.habits: 行为习惯（1-2个，简短描述，如"紧张时转戒指"、"说话前习惯沉默三秒"）
+- personality.arc: 性格弧线（2-3个阶段，每阶段含 stage/description/trigger）
+- relations: 与已有角色的关系数组（每项含 targetId/description。注意：如果已有角色列表为空或不相关，返回空数组 []）
+- tags: 标签（2-3个，如"复仇者"、"医者"）
 
 新人物要与已有角色形成差异化和关系张力。
 ${worldSettings ? '人物的背景和能力要与世界观设定相契合。' : ''}
@@ -127,16 +127,16 @@ ${worldSettings}
 ${existingCharacters}
 
 要求：
-- 保留已有的核心设定，在此基础上丰富细节
+- 保留已有的核心设定，在此基础上补充细节
 - 补充经历背景的细节和转折
 - 丰富性格特质，使其更立体
 - 如有性格弧线，深化每个阶段的描述
 - 可以适当添加 1-2 个新的标签
 
-请严格输出 JSON，包含以下字段：
-- bio: 润色后的经历背景（150-250字）
+请严格输出 JSON，所有字段必须填写：
+- bio: 润色后的经历背景（100-200字）
 - personality.traits: 性格特质（3-4个）
-- personality.habits: 行为习惯（2-3个，每条必须是完整的一句话，不要换行拆句）
+- personality.habits: 行为习惯（2-3个，简短描述）
 - personality.arc: 性格弧线（2-3个阶段，每阶段含 stage/description/trigger）
 - tags: 标签（2-4个）
 

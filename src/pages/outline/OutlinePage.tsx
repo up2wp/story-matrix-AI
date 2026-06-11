@@ -13,6 +13,8 @@ import {
   Card,
   Tag,
   Tooltip,
+  Radio,
+  Checkbox,
 } from 'antd'
 import {
   PlusOutlined,
@@ -30,7 +32,7 @@ import { useSystemConfigStore } from '@/core/system-config-store'
 import { db } from '@/core/db'
 import { generateStream } from '@/ai/client'
 import { seedContext, worldContext, charactersContext, constraintsContext } from '@/ai/context'
-import { OUTLINE_SYSTEM_PROMPT, buildOutlinePrompt, buildOutlineNodePolishPrompt, buildAddChaptersPrompt, buildStorylineRecommendPrompt, buildStorylinePolishPrompt, buildFixStorylineBindingPrompt } from '@/ai/prompts/outline'
+import { OUTLINE_SYSTEM_PROMPT, buildOutlinePrompt, buildOutlineNodePolishPrompt, buildAddChaptersPrompt, buildMultiVolumeChaptersPrompt, buildStorylineRecommendPrompt, buildStorylinePolishPrompt, buildFixStorylineBindingPrompt, buildOutlineCheckPrompt } from '@/ai/prompts/outline'
 
 const { Title, Text, Paragraph } = Typography
 const { TextArea } = Input
@@ -53,6 +55,7 @@ export default function OutlinePage() {
   const [form] = Form.useForm()
   const [genForm] = Form.useForm()
   const [addChaptersForm] = Form.useForm()
+  const storylineIds = Form.useWatch('storylineIds', form) || []
 
   // --- 故事线 ---
   const [slModalOpen, setSlModalOpen] = useState(false)
@@ -62,6 +65,10 @@ export default function OutlinePage() {
   const [slRecommending, setSlRecommending] = useState(false)
   const [slPolishing, setSlPolishing] = useState(false)
   const [slFixing, setSlFixing] = useState(false)
+  const [checking, setChecking] = useState(false)
+  const [multiGenModalOpen, setMultiGenModalOpen] = useState(false)
+  const [multiGenForm] = Form.useForm()
+  const [multiGenerating, setMultiGenerating] = useState(false)
 
   const storylines = currentWork?.storylines ?? []
   const outline = currentWork?.outline ?? []
@@ -81,12 +88,77 @@ export default function OutlinePage() {
   const persistOutline = useCallback(
     async (newOutline: OutlineNode[]) => {
       if (!currentWork) return
-      const updated = { ...currentWork, outline: newOutline, updatedAt: Date.now() }
-      await db.works.update(currentWork.id, { outline: newOutline })
+      // 按卷>章层级重编号 order，确保连续
+      const volumes = newOutline.filter((n) => n.level === 'volume').sort((a, b) => a.order - b.order)
+      const orphans = newOutline.filter((n) => n.level === 'chapter' && !volumes.some((v) => v.id === n.parentId))
+      let idx = 0
+      const reindexed: OutlineNode[] = []
+      for (const vol of volumes) {
+        reindexed.push({ ...vol, order: idx++ })
+        const chapters = newOutline.filter((n) => n.level === 'chapter' && n.parentId === vol.id).sort((a, b) => a.order - b.order)
+        for (const ch of chapters) {
+          reindexed.push({ ...ch, order: idx++ })
+        }
+      }
+      for (const ch of orphans) {
+        reindexed.push({ ...ch, order: idx++ })
+      }
+      const updated = { ...currentWork, outline: reindexed, updatedAt: Date.now() }
+      await db.works.update(currentWork.id, { outline: reindexed })
       setCurrentWork(updated)
     },
     [currentWork, setCurrentWork],
   )
+
+  // 构建层级大纲文本（卷下缩进列章）
+  const buildOutlineHierarchyStr = useCallback(
+    (outlineData: typeof outline, storylinesData: typeof storylines) => {
+      const sorted = [...outlineData].sort((a, b) => a.order - b.order)
+      const volumeNodes = sorted.filter((n) => n.level === 'volume')
+      const lines: string[] = []
+      for (const vol of volumeNodes) {
+        lines.push(`【卷】${vol.title}：${vol.summary}`)
+        const chapters = sorted.filter((n) => n.level === 'chapter' && n.parentId === vol.id)
+        for (const ch of chapters) {
+          const storylineTag = ch.storylineIds?.length ? ` [线索: ${ch.storylineIds.map((id) => storylinesData.find((s) => s.id === id)?.name || id).join(', ')}]` : ''
+          lines.push(`  【章】${ch.title}：${ch.summary}${storylineTag}`)
+        }
+      }
+      const orphans = sorted.filter((n) => n.level === 'chapter' && !volumeNodes.some((v) => v.id === n.parentId))
+      for (const ch of orphans) {
+        const storylineTag = ch.storylineIds?.length ? ` [线索: ${ch.storylineIds.map((id) => storylinesData.find((s) => s.id === id)?.name || id).join(', ')}]` : ''
+        lines.push(`【章】${ch.title}：${ch.summary}${storylineTag}`)
+      }
+      return lines.join('\n')
+    },
+    [],
+  )
+
+  // 章节编号/格式工具
+  const numToChinese = (n: number): string => {
+    const chars = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十']
+    if (n <= 10) return chars[n]
+    if (n < 20) return '十' + (n % 10 === 0 ? '' : chars[n % 10])
+    if (n < 100) {
+      const tens = Math.floor(n / 10)
+      const ones = n % 10
+      return chars[tens] + '十' + (ones === 0 ? '' : chars[ones])
+    }
+    return String(n)
+  }
+
+  const makeTitleNormalizer = () => {
+    const existingTitles = outline.filter((n) => n.level === 'chapter').map((n) => n.title)
+    const useChinese = existingTitles.some((t) => /[一二三四五六七八九十百]+/.test(t.match(/第[一二三四五六七八九十百\d]+章/)?.[0] || ''))
+    const useColon = existingTitles.some((t) => /第[^\s]+章[：:]/.test(t))
+    return (title: string, chapterNum: number): string => {
+      const match = title.match(/第[^\s]+章[：:\s]*(.*)/)
+      const content = match?.[1]?.trim() || title
+      const numStr = useChinese ? numToChinese(chapterNum) : String(chapterNum)
+      const sep = useColon ? '：' : ' '
+      return `第${numStr}章${sep}${content}`
+    }
+  }
 
   // 持久化故事线
   const persistStorylines = useCallback(
@@ -147,7 +219,7 @@ export default function OutlinePage() {
     try {
       const seed = seedContext(currentWork)
       const chars = charactersContext(currentWork.characters)
-      const outlineStr = outline.map((n) => `${n.level === 'volume' ? '【卷】' : '【章】'}${n.title}：${n.summary}`).join('\n')
+      const outlineStr = buildOutlineHierarchyStr(outline, storylines)
       const existingStr = storylines.map((s) => `${s.name}：${s.description}`).join('\n')
 
       const prompt = buildStorylineRecommendPrompt(seed, chars, outlineStr, existingStr)
@@ -199,7 +271,7 @@ export default function OutlinePage() {
 
   // AI 润色线索
   const handlePolishStoryline = async () => {
-    if (!currentWork || !editingSl) return
+    if (!currentWork) return
     if (!aiConfig?.apiKey) { message.warning('请先配置 AI API Key'); return }
 
     const values = slForm.getFieldsValue()
@@ -213,10 +285,10 @@ export default function OutlinePage() {
     try {
       const seed = seedContext(currentWork)
       const chars = charactersContext(currentWork.characters)
-      const outlineStr = outline.map((n) => `${n.level === 'volume' ? '【卷】' : '【章】'}${n.title}：${n.summary}`).join('\n')
+      const outlineStr = buildOutlineHierarchyStr(outline, storylines)
 
       const prompt = buildStorylinePolishPrompt(
-        { name: values.name || editingSl.name, description: values.description },
+        { name: values.name || '', description: values.description },
         seed,
         chars,
         outlineStr,
@@ -324,6 +396,208 @@ export default function OutlinePage() {
     }
   }
 
+  // AI 检查大纲逻辑完整性
+  const handleCheckOutline = async () => {
+    if (!currentWork) return
+    if (!aiConfig?.apiKey) { message.warning('请先配置 AI API Key'); return }
+    if (!outline.length) { message.warning('大纲为空'); return }
+
+    setChecking(true)
+    if (!aiPanelOpen) toggleAIPanel()
+    setAIStream(true, '')
+
+    try {
+      const outlineStr = buildOutlineHierarchyStr(outline, storylines)
+
+      const storylinesStr = storylines.map((s) => `- ${s.name}：${s.description}`).join('\n')
+
+      const prompt = buildOutlineCheckPrompt(
+        seedContext(currentWork),
+        worldContext(currentWork),
+        charactersContext(currentWork.characters, 'major'),
+        constraintsContext(currentWork.constraints),
+        outlineStr,
+        storylinesStr,
+      )
+      const text = await generateStream(prompt, OUTLINE_SYSTEM_PROMPT, aiConfig, (_chunk, fullText) => {
+        setAIStream(true, fullText)
+      })
+      setAIStream(false, text)
+    } catch (e: any) {
+      message.error('检查失败：' + e.message)
+      setAIStream(false, '检查失败：' + e.message)
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  // AI 连续生成多卷章节
+  const handleMultiVolumeGenerate = async () => {
+    if (!currentWork) return
+    if (!aiConfig?.apiKey) { message.warning('请先配置 AI API Key'); return }
+
+    const values = multiGenForm.getFieldsValue()
+    const selectedIds: string[] = values.volumeIds || []
+    const countPerVolume: number = values.countPerVolume || 5
+    const allowReshuffle: boolean = values.allowReshuffle ?? false
+    if (selectedIds.length < 2) { message.warning('请至少选择 2 卷'); return }
+
+    setMultiGenModalOpen(false)
+    setMultiGenerating(true)
+    if (!aiPanelOpen) toggleAIPanel()
+    setAIStream(true, '')
+
+    try {
+      const allVolumeNodes = outline.filter((n) => n.level === 'volume').sort((a, b) => a.order - b.order)
+      const allVolumeSummaries = allVolumeNodes.map((n) => ({ title: n.title, summary: n.summary }))
+
+      // 为每个选中的卷计算参数
+      const volumesParam = selectedIds.map((id, _i, arr) => {
+        const volIdx = allVolumeNodes.findIndex((v) => v.id === id)
+        const vol = allVolumeNodes[volIdx]
+        const existingChapters = outline
+          .filter((n) => n.parentId === id)
+          .sort((a, b) => a.order - b.order)
+          .map((n) => ({ title: n.title, summary: n.summary }))
+
+        // 起始编号 = 所有前序卷的正式章节数（已有 + 本次批量中前面卷要生成的），跳过"第X卷终"
+        let nextNum = 1
+        for (let i = 0; i < volIdx; i++) {
+          const prevVolId = allVolumeNodes[i].id
+          // 已有章节（只认"第X章"格式）
+          nextNum += outline.filter(
+            (n) => n.level === 'chapter' && n.parentId === prevVolId && /第\d+章/.test(n.title)
+          ).length
+          // 如果前面的卷也在本次选中，加上要生成的章节数
+          if (arr.includes(prevVolId)) {
+            nextNum += countPerVolume
+          }
+        }
+        // 如果当前卷已有章节，从已有最大编号 +1 继续
+        if (existingChapters.length > 0) {
+          let maxInVol = 0
+          for (const ch of outline.filter((n) => n.parentId === id)) {
+            const m = ch.title.match(/第(\d+)章/)
+            if (m) maxInVol = Math.max(maxInVol, parseInt(m[1], 10))
+          }
+          if (maxInVol > 0) nextNum = maxInVol + 1
+        }
+
+        return {
+          index: volIdx,
+          title: vol.title,
+          summary: vol.summary,
+          existingChapters,
+          count: countPerVolume,
+          nextChapterNumber: nextNum,
+        }
+      })
+
+      const prompt = buildMultiVolumeChaptersPrompt(
+        volumesParam,
+        allVolumeSummaries,
+        worldContext(currentWork),
+        charactersContext(currentWork.characters, 'major'),
+        constraintsContext(currentWork.constraints),
+        storylines.map((s) => ({ id: s.id, name: s.name, description: s.description })),
+        allowReshuffle,
+      )
+
+      const text = await generateStream(prompt, OUTLINE_SYSTEM_PROMPT, aiConfig, (_chunk, fullText) => {
+        setAIStream(true, fullText)
+      })
+
+      // 解析 JSON
+      let jsonStr = text
+      const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
+      if (codeBlockMatch) jsonStr = codeBlockMatch[1]
+      // 兼容两种格式：纯数组 或 { chapters, updatedVolumes }
+      const objMatch = jsonStr.match(/\{[\s\S]*"chapters"[\s\S]*\}/)
+      let parsed: any[]
+      let updatedVolumes: { index: number; newSummary: string }[] | null = null
+      if (objMatch) {
+        const obj = JSON.parse(objMatch[0])
+        parsed = obj.chapters || []
+        updatedVolumes = obj.updatedVolumes || null
+      } else {
+        const arrMatch = jsonStr.match(/\[[\s\S]*\]/)
+        if (!arrMatch) {
+          message.error('AI 返回格式异常，请重试')
+          setAIStream(false, '生成失败')
+          return
+        }
+        parsed = JSON.parse(arrMatch[0]) as Array<any>
+      }
+      const normalizeTitle = makeTitleNormalizer()
+
+      // 构建 volumeIndex → volumeId 映射
+      const volumeIdMap = new Map<number, string>()
+      selectedIds.forEach((id) => {
+        const idx = allVolumeNodes.findIndex((v) => v.id === id)
+        volumeIdMap.set(idx, id)
+      })
+
+      // 按卷分组并生成节点
+      const newNodes: OutlineNode[] = []
+      const volumeCounters = new Map<number, number>() // volumeIndex → 当前编号
+
+      // 初始化计数器
+      for (const vp of volumesParam) {
+        volumeCounters.set(vp.index, vp.nextChapterNumber)
+      }
+
+      for (const item of parsed) {
+        const volIdx = item.volumeIndex ?? 0
+        const volId = volumeIdMap.get(volIdx)
+        if (!volId) continue
+
+        const chapterNum = volumeCounters.get(volIdx) ?? 1
+        volumeCounters.set(volIdx, chapterNum + 1)
+
+        const rawTitle = item.title || `新章节`
+        newNodes.push({
+          id: generateId(),
+          parentId: volId,
+          title: normalizeTitle(rawTitle, chapterNum),
+          summary: item.summary || '',
+          order: outline.length + newNodes.length,
+          level: 'chapter',
+          characterIds: [],
+          storylineIds: Array.isArray(item.storylineIds) ? item.storylineIds : [],
+        })
+      }
+
+      let finalOutline = [...outline, ...newNodes]
+
+      // 如果 AI 调整了卷摘要，更新对应卷节点
+      if (updatedVolumes?.length) {
+        finalOutline = finalOutline.map((n) => {
+          const update = updatedVolumes.find((u) => volumeIdMap.has(u.index) && n.id === volumeIdMap.get(u.index))
+          if (update) return { ...n, summary: update.newSummary }
+          return n
+        })
+      }
+
+      await persistOutline(finalOutline)
+
+      // 修正后的摘要
+      let summaryText = `已为 ${selectedIds.length} 卷生成 ${newNodes.length} 个章节：\n\n${newNodes.map((n) => `${n.title}\n${n.summary}`).join('\n\n')}`
+      if (updatedVolumes?.length) {
+        summaryText += `\n\n---\nAI 调整了以下卷的摘要：\n${updatedVolumes.map((u) => {
+          const volTitle = allVolumeNodes.find((v) => v.id === volumeIdMap.get(u.index))?.title || ''
+          return `第${u.index + 1}卷「${volTitle}」：${u.newSummary}`
+        }).join('\n')}`
+      }
+      setAIStream(false, summaryText)
+      message.success(`已为 ${selectedIds.length} 卷生成 ${newNodes.length} 个章节`)
+    } catch (e: any) {
+      message.error('生成失败：' + e.message)
+      setAIStream(false, '生成失败：' + e.message)
+    } finally {
+      setMultiGenerating(false)
+    }
+  }
+
   // 切换节点的故事线关联
   const toggleStorylineOnNode = useCallback(
     async (nodeId: string, storylineId: string) => {
@@ -355,11 +629,12 @@ export default function OutlinePage() {
     }
     const values = genForm.getFieldsValue()
     const volumes = values.volumes || 3
-    const chaptersPerVolume = values.chaptersPerVolume || 5
+    const chaptersPerVolume = values.genMode === 'volumeOnly' ? 0 : (values.chaptersPerVolume || 5)
     setGenModalOpen(false)
 
     const setAIStream = useStore.getState().setAIStream
     setLoading(true)
+    if (!aiPanelOpen) toggleAIPanel()
     setAIStream(true, '')
     try {
       const basePrompt = buildOutlinePrompt(
@@ -368,8 +643,11 @@ export default function OutlinePage() {
         charactersContext(currentWork.characters, 'major'),
         constraintsContext(currentWork.constraints),
         storylines.map((s) => ({ id: s.id, name: s.name, description: s.description })),
+        chaptersPerVolume,
       )
-      const prompt = `${basePrompt}\n\n要求：生成 ${volumes} 卷，每卷 ${chaptersPerVolume} 章。`
+      const prompt = chaptersPerVolume > 0
+        ? `${basePrompt}\n\n要求：生成 ${volumes} 卷，每卷 ${chaptersPerVolume} 章。`
+        : `${basePrompt}\n\n要求：生成 ${volumes} 卷，每卷 0 章（只生成卷，不生成章）。`
 
       const text = await generateStream(prompt, OUTLINE_SYSTEM_PROMPT, aiConfig, (_chunk, fullText) => {
         setAIStream(true, fullText)
@@ -456,11 +734,10 @@ export default function OutlinePage() {
 
   // 清空大纲（同时清理关联的章节内容和事件簿）
   const handleClear = async () => {
-    await persistOutline([])
-    if (currentWork?.chapters?.length || currentWork?.eventLog?.length) {
-      await db.works.update(currentWork.id, { chapters: [], eventLog: [] })
-      setCurrentWork({ ...currentWork, chapters: [], eventLog: [], updatedAt: Date.now() })
-    }
+    const work = currentWork
+    if (!work) return
+    await db.works.update(work.id, { outline: [], chapters: [], eventLog: [] })
+    setCurrentWork({ ...work, outline: [], chapters: [], eventLog: [], updatedAt: Date.now() })
     message.success('已清空大纲')
   }
 
@@ -498,22 +775,62 @@ export default function OutlinePage() {
     setEditing(null)
   }
 
-  // 删除节点（含子节点 + 关联章节）
+  // 删除节点（含子节点 + 关联章节 + 事件簿）
   const removeNode = async (id: string) => {
+    const work = useStore.getState().currentWork
+    if (!work) return
+    const curOutline = work.outline ?? []
     const toRemove = new Set<string>()
     const collect = (nodeId: string) => {
       toRemove.add(nodeId)
-      outline.filter((n) => n.parentId === nodeId).forEach((n) => collect(n.id))
+      curOutline.filter((n) => n.parentId === nodeId).forEach((n) => collect(n.id))
     }
     collect(id)
-    const newOutline = outline.filter((n) => !toRemove.has(n.id))
-    // 同步清理关联的章节内容
-    const keptChapters = (currentWork?.chapters ?? []).filter((c) => !toRemove.has(c.outlineId))
-    await persistOutline(newOutline)
-    if (keptChapters.length < (currentWork?.chapters ?? []).length) {
-      await db.works.update(currentWork!.id, { chapters: keptChapters })
-      setCurrentWork({ ...currentWork!, chapters: keptChapters })
+    const newOutline = curOutline.filter((n) => !toRemove.has(n.id))
+    // 同步清理关联的章节内容和事件簿
+    const keptChapters = (work.chapters ?? []).filter((c) => !toRemove.has(c.outlineId))
+    const keptEvents = (work.eventLog ?? []).filter((e) => !toRemove.has(e.chapterId))
+    await db.works.update(work.id, { outline: newOutline, chapters: keptChapters, eventLog: keptEvents })
+    setCurrentWork({ ...work, outline: newOutline, chapters: keptChapters, eventLog: keptEvents, updatedAt: Date.now() })
+  }
+
+  // 修复章节编号连续性（只改"第X章"格式，其他标题不动）
+  const handleRenumberChapters = async () => {
+    if (!currentWork) return
+    const sorted = [...outline].sort((a, b) => a.order - b.order)
+
+    // 检测现有格式
+    const chapterTitles = sorted.filter((n) => n.level === 'chapter' && /第.+章/.test(n.title)).map((n) => n.title)
+    const useChinese = chapterTitles.some((t) => /[一二三四五六七八九十百]+/.test(t.match(/第[一二三四五六七八九十百\d]+章/)?.[0] || ''))
+    const useColon = chapterTitles.some((t) => /第[^\s]+章[：:]/.test(t))
+
+    let num = 0
+    const updated = sorted.map((n) => {
+      if (n.level !== 'chapter') return n
+      const match = n.title.match(/第[一二三四五六七八九十百\d]+章[：:\s]*(.*)/)
+      if (!match) return n // 非"第X章"格式，不动
+      num++
+      const numStr = useChinese ? numToChinese(num) : String(num)
+      const sep = useColon ? '：' : ' '
+      const content = match[1]?.trim()
+      const newTitle = content ? `第${numStr}章${sep}${content}` : `第${numStr}章`
+      return { ...n, title: newTitle }
+    })
+
+    // 同步更新 chapters 中的 title
+    const chapters = currentWork.chapters ?? []
+    const updatedChapters = chapters.map((ch) => {
+      const node = updated.find((n) => n.id === ch.outlineId)
+      if (node && node.title !== ch.title) return { ...ch, title: node.title }
+      return ch
+    })
+
+    await persistOutline(updated)
+    if (updatedChapters.some((c, i) => c !== chapters[i])) {
+      await db.works.update(currentWork.id, { chapters: updatedChapters })
+      setCurrentWork({ ...useStore.getState().currentWork!, chapters: updatedChapters })
     }
+    message.success(`已修复 ${num} 个章节编号`)
   }
 
   // AI 润色当前编辑的节点
@@ -600,6 +917,7 @@ export default function OutlinePage() {
     setAddChaptersModalOpen(false)
     const setAIStream = useStore.getState().setAIStream
     setLoading(true)
+    if (!aiPanelOpen) toggleAIPanel()
     setAIStream(true, '')
     try {
       const existingChapters = outline
@@ -607,28 +925,35 @@ export default function OutlinePage() {
         .sort((a, b) => a.order - b.order)
         .map((n) => ({ title: n.title, summary: n.summary }))
 
-      // 从所有已有章节标题中提取最大编号
-      const allChapterTitles = outline.filter((n) => n.level === 'chapter').map((n) => n.title)
-      let maxNum = 0
-      for (const t of allChapterTitles) {
-        const m = t.match(/第(\d+)章/)
-        if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10))
-      }
-      const nextChapterNumber = maxNum + 1
-
-      // 构建全卷结构
+      // 构建全卷结构，计算当前卷的起始章节编号
       const allVolumes = outline
         .filter((n) => n.level === 'volume')
         .sort((a, b) => a.order - b.order)
-        .map((n) => ({ title: n.title, summary: n.summary }))
-      const volumeIndex = allVolumes.findIndex((_, i) => {
-        const vol = outline.filter((n) => n.level === 'volume').sort((a, b) => a.order - b.order)[i]
-        return vol?.id === addChaptersVolume.id
-      })
+      const volumeIndex = allVolumes.findIndex((v) => v.id === addChaptersVolume.id)
+
+      // 起始编号 = 前面所有卷的正式章节数 + 1（跳过"第X卷终"等非正式章节）
+      let nextChapterNumber = 1
+      for (let i = 0; i < volumeIndex; i++) {
+        nextChapterNumber += outline.filter(
+          (n) => n.level === 'chapter' && n.parentId === allVolumes[i].id && /第\d+章/.test(n.title)
+        ).length
+      }
+
+      // 如果当前卷已有章节，从已有最大编号 +1 续编（只认"第X章"格式）
+      if (existingChapters.length > 0) {
+        let maxInVolume = 0
+        for (const ch of outline.filter((n) => n.parentId === addChaptersVolume.id)) {
+          const m = ch.title.match(/第(\d+)章/)
+          if (m) maxInVolume = Math.max(maxInVolume, parseInt(m[1], 10))
+        }
+        if (maxInVolume > 0) nextChapterNumber = maxInVolume + 1
+      }
+
+      const allVolumeSummaries = allVolumes.map((n) => ({ title: n.title, summary: n.summary }))
 
       const prompt = buildAddChaptersPrompt(
         { title: addChaptersVolume.title, summary: addChaptersVolume.summary, index: volumeIndex >= 0 ? volumeIndex : 0 },
-        allVolumes,
+        allVolumeSummaries,
         existingChapters,
         count,
         nextChapterNumber,
@@ -671,21 +996,28 @@ export default function OutlinePage() {
           .filter((id): id is string => id !== null)
       }
 
+      const normalizeTitle = makeTitleNormalizer()
       const startOrder = outline.length
-      const newNodes: OutlineNode[] = parsed.map((item, i) => ({
-        id: generateId(),
-        parentId: addChaptersVolume.id,
-        title: item.title || `新章节 ${i + 1}`,
-        summary: item.summary || '',
-        order: startOrder + i,
-        level: 'chapter',
-        characterIds: [],
-        storylineIds: resolveStorylineIds(item.storylineIds),
-      }))
+      const newNodes: OutlineNode[] = parsed.map((item, i) => {
+        const chapterNum = nextChapterNumber + i
+        const rawTitle = item.title || `新章节 ${i + 1}`
+        return {
+          id: generateId(),
+          parentId: addChaptersVolume.id,
+          title: normalizeTitle(rawTitle, chapterNum),
+          summary: item.summary || '',
+          order: startOrder + i,
+          level: 'chapter',
+          characterIds: [],
+          storylineIds: resolveStorylineIds(item.storylineIds),
+        }
+      })
 
       const newOutline = [...outline, ...newNodes]
       await persistOutline(newOutline)
-      setAIStream(false, text)
+      // AI 面板显示修正后的结果
+      const correctedText = `已为「${addChaptersVolume.title}」生成 ${newNodes.length} 个章节：\n\n${newNodes.map((n, i) => `${n.title}\n${n.summary}`).join('\n\n')}`
+      setAIStream(false, correctedText)
       message.success(`已为「${addChaptersVolume.title}」添加 ${newNodes.length} 个章节`)
     } catch (err: any) {
       message.error(`生成失败：${err.message}`)
@@ -737,7 +1069,24 @@ export default function OutlinePage() {
               </Button>
             )}
             {outline.length > 0 && (
-              <Popconfirm title="确定清空所有大纲？" onConfirm={handleClear} okText="确认" cancelText="取消" okButtonProps={{ autoFocus: true }}>
+              <Button icon={<ExperimentOutlined />} onClick={() => { multiGenForm.setFieldsValue({ volumeIds: [], countPerVolume: 5 }); setMultiGenModalOpen(true) }}>
+                AI 连续生成多卷
+              </Button>
+            )}
+            {outline.length > 0 && (
+              <>
+                <Button icon={<ExperimentOutlined />} onClick={handleCheckOutline} loading={checking}>
+                  检查逻辑完整性
+                </Button>
+                <Button onClick={handleRenumberChapters}>
+                  修复章节编号
+                </Button>
+              </>
+            )}
+            {outline.length > 0 && (
+              <Popconfirm title="确定清空所有大纲？" onConfirm={handleClear} okText="确认" cancelText="取消" okButtonProps={{ autoFocus: true }}
+                onOpenChange={(open) => { if (open) setTimeout(() => { (document.querySelector('.ant-popconfirm .ant-btn-primary') as HTMLElement | null)?.focus() }, 100) }}
+              >
                 <Button danger>清空大纲</Button>
               </Popconfirm>
             )}
@@ -831,7 +1180,9 @@ export default function OutlinePage() {
                         <Button size="small" icon={<PlusOutlined />} onClick={() => handleAdd('chapter', vol.id)}>手动添加</Button>
                         <Button size="small" icon={<ExperimentOutlined />} onClick={() => openAddChapters(vol)}>AI 添加</Button>
                         <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(vol)} />
-                        <Popconfirm title="确定删除？章节也会被删除" onConfirm={() => removeNode(vol.id)} okText="确认" cancelText="取消" okButtonProps={{ autoFocus: true }}>
+                        <Popconfirm title="确定删除？章节也会被删除" onConfirm={() => removeNode(vol.id)} okText="确认" cancelText="取消" okButtonProps={{ autoFocus: true }}
+                          onOpenChange={(open) => { if (open) setTimeout(() => { (document.querySelector('.ant-popconfirm .ant-btn-primary') as HTMLElement | null)?.focus() }, 100) }}
+                        >
                           <Button size="small" danger icon={<DeleteOutlined />} />
                         </Popconfirm>
                       </Space>
@@ -861,7 +1212,9 @@ export default function OutlinePage() {
                             !readOnly ? (
                               <Space>
                                 <Button type="text" size="small" icon={<EditOutlined />} onClick={() => openEdit(ch)} />
-                                <Popconfirm title="确定删除？" onConfirm={() => removeNode(ch.id)} okText="确认" cancelText="取消" okButtonProps={{ autoFocus: true }}>
+                                <Popconfirm title="确定删除？" onConfirm={() => removeNode(ch.id)} okText="确认" cancelText="取消" okButtonProps={{ autoFocus: true }}
+                                  onOpenChange={(open) => { if (open) setTimeout(() => { (document.querySelector('.ant-popconfirm .ant-btn-primary') as HTMLElement | null)?.focus() }, 100) }}
+                                >
                                   <Button type="text" size="small" danger icon={<DeleteOutlined />} />
                                 </Popconfirm>
                               </Space>
@@ -906,18 +1259,31 @@ export default function OutlinePage() {
       <Modal
         title="AI 生成大纲设置"
         open={genModalOpen}
+        forceRender
         mask={{ closable: false }}
         onOk={handleGenerate}
         onCancel={() => setGenModalOpen(false)}
         okText="开始生成"
         cancelText="取消"
       >
-        <Form form={genForm} layout="vertical" initialValues={{ volumes: 3, chaptersPerVolume: 5 }}>
+        <Form form={genForm} layout="vertical" initialValues={{ volumes: 3, genMode: 'volumeOnly', chaptersPerVolume: 5 }}>
           <Form.Item name="volumes" label="卷数">
             <InputNumber min={1} max={10} style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item name="chaptersPerVolume" label="每卷章数">
-            <InputNumber min={1} max={20} style={{ width: '100%' }} />
+          <Form.Item name="genMode" label="生成模式">
+            <Radio.Group>
+              <Radio value="volumeOnly">只生成卷（后续单独添加章）</Radio>
+              <Radio value="all">一次性生成卷+章</Radio>
+            </Radio.Group>
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(prev, cur) => prev.genMode !== cur.genMode}>
+            {({ getFieldValue }) =>
+              getFieldValue('genMode') === 'all' && (
+                <Form.Item name="chaptersPerVolume" label="每卷章数">
+                  <InputNumber min={1} max={20} style={{ width: '100%' }} />
+                </Form.Item>
+              )
+            }
           </Form.Item>
         </Form>
       </Modal>
@@ -926,6 +1292,7 @@ export default function OutlinePage() {
       <Modal
         title={isNew ? (editing?.level === 'volume' ? '新增卷' : '新增章节') : '编辑'}
         open={editModalOpen}
+        forceRender
         mask={{ closable: false }}
         onOk={isNew ? handleSaveNew : handleSave}
         onCancel={() => setEditModalOpen(false)}
@@ -960,18 +1327,17 @@ export default function OutlinePage() {
             <Form.Item name="storylineIds" label="关联故事线">
               <Space wrap>
                 {storylines.map((sl) => {
-                  const selected = (form.getFieldValue('storylineIds') || []).includes(sl.id)
+                  const selected = storylineIds.includes(sl.id)
                   return (
                     <Tooltip key={sl.id} title={sl.description || '暂无描述'} placement="top">
                       <Tag
                         color={selected ? sl.color : undefined}
                         style={{ cursor: 'pointer', margin: 0 }}
                         onClick={() => {
-                          const current: string[] = form.getFieldValue('storylineIds') || []
                           form.setFieldsValue({
                             storylineIds: selected
-                              ? current.filter((id) => id !== sl.id)
-                              : [...current, sl.id],
+                              ? storylineIds.filter((id: string) => id !== sl.id)
+                              : [...storylineIds, sl.id],
                           })
                           // 强制刷新
                           setEditing({ ...editing! })
@@ -992,6 +1358,7 @@ export default function OutlinePage() {
       <Modal
         title={`AI 为「${addChaptersVolume?.title || ''}」添加章节`}
         open={addChaptersModalOpen}
+        forceRender
         mask={{ closable: false }}
         onOk={handleAIAddChapters}
         onCancel={() => { setAddChaptersModalOpen(false); setAddChaptersVolume(null) }}
@@ -1012,6 +1379,7 @@ export default function OutlinePage() {
       <Modal
         title={editingSl ? '编辑线索' : '添加线索'}
         open={slModalOpen}
+        forceRender
         mask={{ closable: false }}
         onOk={handleSaveSl}
         onCancel={() => { setSlModalOpen(false); setEditingSl(null) }}
@@ -1019,7 +1387,9 @@ export default function OutlinePage() {
         cancelText="取消"
         footer={editingSl ? (_, { OkBtn, CancelBtn }) => (
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <Popconfirm title="确定删除此线索？" onConfirm={() => { handleDeleteSl(editingSl.id); setSlModalOpen(false) }} okText="确认" cancelText="取消">
+            <Popconfirm title="确定删除此线索？" onConfirm={() => { handleDeleteSl(editingSl.id); setSlModalOpen(false) }} okText="确认" cancelText="取消"
+              onOpenChange={(open) => { if (open) setTimeout(() => { (document.querySelector('.ant-popconfirm .ant-btn-primary') as HTMLElement | null)?.focus() }, 100) }}
+            >
               <Button danger>删除</Button>
             </Popconfirm>
             <Space>
@@ -1075,6 +1445,36 @@ export default function OutlinePage() {
               </div>
             ) : null
           })()}
+        </Form>
+      </Modal>
+
+      {/* AI 连续生成多卷弹窗 */}
+      <Modal
+        title="AI 连续生成多卷章节"
+        open={multiGenModalOpen}
+        forceRender
+        onOk={handleMultiVolumeGenerate}
+        onCancel={() => setMultiGenModalOpen(false)}
+        okText="开始生成"
+        cancelText="取消"
+        mask={{ closable: false }}
+        confirmLoading={multiGenerating}
+      >
+        <Form form={multiGenForm} layout="vertical" initialValues={{ volumeIds: [], countPerVolume: 5, allowReshuffle: true }}>
+          <Form.Item name="volumeIds" label="选择要连续生成的卷（至少 2 卷）">
+            <Checkbox.Group
+              options={outline.filter((n) => n.level === 'volume').sort((a, b) => a.order - b.order).map((v, i) => ({
+                label: `第${i + 1}卷「${v.title}」`,
+                value: v.id,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item name="countPerVolume" label="每卷生成章数">
+            <InputNumber min={1} max={20} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="allowReshuffle" valuePropName="checked">
+            <Checkbox>允许 AI 调整各卷摘要（重新分配剧情到更合理的位置）</Checkbox>
+          </Form.Item>
         </Form>
       </Modal>
     </div>

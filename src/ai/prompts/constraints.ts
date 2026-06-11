@@ -36,3 +36,45 @@ ${characters}
 优先级要合理，不能所有约束都是"必须"。
 只输出 JSON，不要输出其他内容。`
 }
+
+export const CONSTRAINT_POLISH_SYSTEM_PROMPT = `你是一位严谨的故事逻辑审核师。
+你的任务是润色单条核心约束，使其更具体、更可验证、表述更精准。
+要求：
+- 保持约束的原意和作用范围不变
+- title 简洁有力，不超过 20 字
+- description 具体可验证，50-100 字
+- type 和 priority 可根据润色后的内容微调
+- 不要改变约束的根本意图`
+
+export function buildConstraintPolishPrompt(
+  currentConstraint: string,
+  allConstraints: string,
+  seed: string,
+  worldSettings: string,
+  characters: string,
+): string {
+  return `请润色以下核心约束。
+
+故事种子：
+${seed}
+
+世界观：
+${worldSettings}
+
+主要人物：
+${characters}
+
+当前所有约束：
+${allConstraints}
+
+待润色的约束：
+${currentConstraint}
+
+请严格输出 JSON 对象，包含：
+- title: 润色后的标题
+- description: 润色后的描述（50-100字，具体可验证）
+- type: 'event' | 'fate' | 'foreshadow' | 'rule' | 'rhythm'
+- priority: 'required' | 'suggested' | 'optional'
+
+只输出 JSON，不要输出其他内容。`
+}

@@ -30,6 +30,7 @@ export async function generate(prompt: string, systemPrompt: string, config: AIC
           { role: 'user', content: prompt },
         ],
         stream: false,
+        ...(config.maxTokens ? { max_tokens: config.maxTokens } : {}),
       }),
       signal: controller.signal,
       cache: 'no-store',
@@ -59,7 +60,8 @@ export async function generateStream(
   onChunk: (chunk: string, fullText: string) => void,
 ) {
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), 300000)
+  const timeoutMs = 1200000 // 20 分钟
+  let timeoutId = setTimeout(() => controller.abort(), timeoutMs)
 
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
 
@@ -74,6 +76,7 @@ export async function generateStream(
           { role: 'user', content: prompt },
         ],
         stream: true,
+        ...(config.maxTokens ? { max_tokens: config.maxTokens } : {}),
       }),
       signal: controller.signal,
       cache: 'no-store',
@@ -90,10 +93,15 @@ export async function generateStream(
     const decoder = new TextDecoder()
     let fullText = ''
     let buffer = ''
+    let lastFlush = Date.now()
 
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
+
+      // 有数据进来，重置超时计时器
+      clearTimeout(timeoutId)
+      timeoutId = setTimeout(() => controller.abort(), timeoutMs)
 
       buffer += decoder.decode(value, { stream: true })
       const lines = buffer.split('\n')
@@ -110,12 +118,23 @@ export async function generateStream(
           const content = parsed.choices?.[0]?.delta?.content
           if (content) {
             fullText += content
-            onChunk(content, fullText)
           }
         } catch {
           // 跳过无法解析的行
         }
       }
+
+      // 每 50ms 批量刷新 UI，避免 React 过度重渲染
+      const now = Date.now()
+      if (now - lastFlush >= 50) {
+        onChunk('', fullText)
+        lastFlush = now
+      }
+    }
+
+    // 最后刷新一次
+    if (fullText) {
+      onChunk('', fullText)
     }
 
     return fullText

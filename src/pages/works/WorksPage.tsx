@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router'
 import { Table, Button, Tag, Space, Switch, Popconfirm, Typography, message } from 'antd'
-import { PlusOutlined, EyeOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
+import { PlusOutlined, EyeOutlined, EditOutlined, DeleteOutlined, CopyOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { db } from '@/core/db'
 import { useAuthStore } from '@/core/auth-store'
 import { useStore } from '@/core/store'
+import { generateId } from '@/utils/id'
 import type { Work } from '@/core/types'
 
 const { Title } = Typography
@@ -73,6 +74,24 @@ export default function WorksPage() {
     loadWorks()
   }
 
+  const handleCopy = async (work: WorkItem) => {
+    if (!user) return
+    const newId = generateId()
+    const { id, ownerName, ...rest } = work
+    const newWork: Work = {
+      ...rest,
+      id: newId,
+      ownerId: user.id,
+      title: `${work.title}_副本`,
+      shared: false,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }
+    await db.works.add(newWork)
+    message.success(`已复制「${work.title}」`)
+    loadWorks()
+  }
+
   const isOwner = (work: WorkItem) => user && work.ownerId === user.id
 
   const columns: ColumnsType<WorkItem> = [
@@ -121,7 +140,7 @@ export default function WorksPage() {
     {
       title: '操作',
       key: 'actions',
-      width: 160,
+      width: 200,
       render: (_: unknown, record: WorkItem) => (
         <Space>
           {isOwner(record) ? (
@@ -135,6 +154,9 @@ export default function WorksPage() {
           ) : (
             <Tag>仅标题</Tag>
           )}
+          <Button type="link" icon={<CopyOutlined />} onClick={() => handleCopy(record)}>
+            复制
+          </Button>
           {isOwner(record) && (
             <Popconfirm title="确认删除此作品？" onConfirm={() => handleDelete(record)} okText="确认" cancelText="取消" okButtonProps={{ autoFocus: true }}>
               <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>

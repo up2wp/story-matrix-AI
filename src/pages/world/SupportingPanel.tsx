@@ -9,16 +9,19 @@ import {
   Modal,
   Form,
   Input,
+  InputNumber,
   Select,
   message,
   Popconfirm,
 } from 'antd'
+import TagInput from '../../components/TagInput'
 import {
   PlusOutlined,
   EditOutlined,
   DeleteOutlined,
   ExperimentOutlined,
   TeamOutlined,
+  ArrowUpOutlined,
 } from '@ant-design/icons'
 import { useState } from 'react'
 import type { Character, Relation } from '@/core/types'
@@ -37,8 +40,6 @@ interface Props {
   wb: ReturnType<typeof import('@/features/world/useWorldBuilder').useWorldBuilder>
 }
 
-const RELATION_TYPES = ['血缘', '师徒', '朋友', '敌对', '暧昧', '上下级', '盟友', '宿敌', '青梅竹马', '对手']
-
 export default function SupportingPanel({ wb }: Props) {
   const readOnly = useStore((s) => s.readOnly)
   const aiConfig = useSystemConfigStore((s) => s.aiConfig)
@@ -48,6 +49,8 @@ export default function SupportingPanel({ wb }: Props) {
   const [editRelations, setEditRelations] = useState<Relation[]>([])
   const [form] = Form.useForm()
   const [polishing, setPolishing] = useState(false)
+  const [genModalOpen, setGenModalOpen] = useState(false)
+  const [genForm] = Form.useForm()
 
   const characters = wb.currentWork?.characters ?? []
   const supportingChars = characters.filter((c) => c.role !== 'major')
@@ -56,7 +59,7 @@ export default function SupportingPanel({ wb }: Props) {
   const getCharName = (id: string) => characters.find((c) => c.id === id)?.name || '未知'
 
   // 添加/更新/删除关系
-  const addRelation = () => setEditRelations([...editRelations, { targetId: '', type: '', description: '' }])
+  const addRelation = () => setEditRelations([...editRelations, { targetId: '', description: '' }])
   const updateRelation = (index: number, patch: Partial<Relation>) => {
     const updated = [...editRelations]
     updated[index] = { ...updated[index], ...patch }
@@ -64,12 +67,17 @@ export default function SupportingPanel({ wb }: Props) {
   }
   const removeRelation = (index: number) => setEditRelations(editRelations.filter((_, i) => i !== index))
 
-  // AI 随机生成 3 个非主要人物
+  // AI 生成非主要人物
   const handleAIGenerate = async () => {
     if (!aiConfig.apiKey) {
       message.warning('请先在系统管理中配置 AI API Key')
       return
     }
+    const values = genForm.getFieldsValue()
+    const count = values.count || 3
+    const hints = values.hints || ''
+    setGenModalOpen(false)
+
     const setAIStream = useStore.getState().setAIStream
     wb.setLoading(true)
     setAIStream(true, '')
@@ -79,6 +87,8 @@ export default function SupportingPanel({ wb }: Props) {
       const prompt = buildSupportingCharsPrompt(
         charactersContext(majorChars),
         worldContext(work),
+        count,
+        hints,
       )
       const text = await generateStream(prompt, SUPPORTING_SYSTEM_PROMPT, aiConfig, (_chunk, fullText) => {
         setAIStream(true, fullText)
@@ -98,7 +108,7 @@ export default function SupportingPanel({ wb }: Props) {
         return
       }
       const parsed = JSON.parse(jsonMatch[0]) as Array<any>
-      const generated: Character[] = parsed.slice(0, 3).map((item) => ({
+      const generated: Character[] = parsed.slice(0, count).map((item) => ({
         id: generateId(),
         name: item.name || '未命名',
         role: item.role || 'supporting',
@@ -230,8 +240,8 @@ export default function SupportingPanel({ wb }: Props) {
       name: char.name,
       role: char.role,
       bio: char.bio,
-      traits: char.personality.traits.join('、'),
-      tags: char.tags.join('、'),
+      traits: char.personality.traits,
+      tags: char.tags,
     })
     setEditModalOpen(true)
   }
@@ -246,10 +256,10 @@ export default function SupportingPanel({ wb }: Props) {
       bio: values.bio,
       personality: {
         ...editing.personality,
-        traits: values.traits.split(/[,，、]/).map((t: string) => t.trim()).filter(Boolean),
+        traits: values.traits || [],
       },
       relations: editRelations,
-      tags: values.tags.split(/[,，、]/).map((t: string) => t.trim()).filter(Boolean),
+      tags: values.tags || [],
     }
 
     if (isNew) {
@@ -268,11 +278,13 @@ export default function SupportingPanel({ wb }: Props) {
         <div style={{ marginBottom: 16 }}>
           <Space>
             <Button icon={<PlusOutlined />} onClick={handleAdd}>手动新增</Button>
-            <Button icon={<ExperimentOutlined />} onClick={handleAIGenerate} loading={wb.loading}>
-              AI 随机生成 3 个
+            <Button icon={<ExperimentOutlined />} onClick={() => { genForm.setFieldsValue({ count: 3, hints: '' }); setGenModalOpen(true) }}>
+              AI 生成
             </Button>
             {supportingChars.length > 0 && (
-              <Popconfirm title="确定清空所有非主要人物？" onConfirm={handleClearAll} okText="确认" cancelText="取消" okButtonProps={{ autoFocus: true }}>
+              <Popconfirm title="确定清空所有非主要人物？" onConfirm={handleClearAll} okText="确认" cancelText="取消" okButtonProps={{ autoFocus: true }}
+                onOpenChange={(open) => { if (open) setTimeout(() => { (document.querySelector('.ant-popconfirm .ant-btn-primary') as HTMLElement | null)?.focus() }, 100) }}
+              >
                 <Button danger>清空所有</Button>
               </Popconfirm>
             )}
@@ -304,7 +316,7 @@ export default function SupportingPanel({ wb }: Props) {
                       <div style={{ marginTop: 4 }}>
                         {char.relations.map((r, i) => (
                           <Tag key={i} color="orange">
-                            {getCharName(r.targetId)}：{r.type || '未定义'}
+                            {getCharName(r.targetId)}{r.description ? `（${r.description}）` : ''}
                           </Tag>
                         ))}
                       </div>
@@ -313,6 +325,12 @@ export default function SupportingPanel({ wb }: Props) {
                   {!readOnly && (
                     <Space>
                       <Button type="text" icon={<EditOutlined />} onClick={() => openEdit(char)} />
+                      {char.role !== 'major' && (
+                        <Button type="text" icon={<ArrowUpOutlined />} onClick={async () => {
+                          await wb.updateCharacter(char.id, { role: 'major' })
+                          message.success(`${char.name} 已升级为主要角色`)
+                        }}>升级</Button>
+                      )}
                       <Popconfirm title="确定删除？" onConfirm={async () => {
                         for (const c of characters) {
                           if (c.relations?.some((r) => r.targetId === char.id)) {
@@ -321,7 +339,9 @@ export default function SupportingPanel({ wb }: Props) {
                         }
                         await wb.removeCharacter(char.id)
                         message.success('已删除')
-                      }} okText="确认" cancelText="取消" okButtonProps={{ autoFocus: true }}>
+                      }} okText="确认" cancelText="取消" okButtonProps={{ autoFocus: true }}
+                        onOpenChange={(open) => { if (open) setTimeout(() => { (document.querySelector('.ant-popconfirm .ant-btn-primary') as HTMLElement | null)?.focus() }, 100) }}
+                      >
                         <Button type="text" danger icon={<DeleteOutlined />} />
                       </Popconfirm>
                     </Space>
@@ -336,11 +356,13 @@ export default function SupportingPanel({ wb }: Props) {
       <Modal
         title={isNew ? '新增角色' : '编辑角色'}
         open={editModalOpen}
+        forceRender
         mask={{ closable: false }}
         onOk={handleSave}
         onCancel={() => setEditModalOpen(false)}
         okText="保存"
         cancelText="取消"
+        width={780}
         footer={(_, { OkBtn, CancelBtn }) => (
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
             <Button
@@ -374,10 +396,10 @@ export default function SupportingPanel({ wb }: Props) {
             <TextArea autoSize={{ minRows: 2, maxRows: 6 }} />
           </Form.Item>
           <Form.Item name="traits" label="性格特质">
-            <Input placeholder="用顿号分隔" />
+            <TagInput placeholder="输入后回车添加" />
           </Form.Item>
           <Form.Item name="tags" label="标签">
-            <Input placeholder="用顿号分隔" />
+            <TagInput placeholder="输入后回车添加" color="blue" />
           </Form.Item>
 
           <Form.Item label="角色关系">
@@ -393,20 +415,11 @@ export default function SupportingPanel({ wb }: Props) {
                   style={{ flex: 2 }}
                   allowClear
                 />
-                <Select
-                  placeholder="关系类型"
-                  value={rel.type || undefined}
-                  onChange={(v) => updateRelation(i, { type: v })}
-                  options={RELATION_TYPES.map((t) => ({ label: t, value: t }))}
-                  style={{ flex: 1 }}
-                  showSearch
-                  allowClear
-                />
                 <Input
-                  placeholder="描述（可选）"
+                  placeholder="关系描述"
                   value={rel.description}
                   onChange={(e) => updateRelation(i, { description: e.target.value })}
-                  style={{ flex: 2 }}
+                  style={{ flex: 3 }}
                 />
                 <Button type="text" danger icon={<DeleteOutlined />} onClick={() => removeRelation(i)} />
               </div>
@@ -414,6 +427,30 @@ export default function SupportingPanel({ wb }: Props) {
             <Button type="dashed" icon={<PlusOutlined />} onClick={addRelation} block>
               添加关系
             </Button>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* AI 生成设置弹窗 */}
+      <Modal
+        title="AI 生成非主要人物"
+        open={genModalOpen}
+        forceRender
+        onOk={handleAIGenerate}
+        onCancel={() => setGenModalOpen(false)}
+        okText="开始生成"
+        cancelText="取消"
+        mask={{ closable: false }}
+      >
+        <Form form={genForm} layout="vertical" initialValues={{ count: 3, hints: '' }}>
+          <Form.Item name="count" label="生成数量">
+            <InputNumber min={1} max={30} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="hints" label="角色名单/提示（可选）" extra="输入角色名或简要描述，AI 会据此补充完善">
+            <Input.TextArea
+              placeholder="例如：铁匠老王、客栈掌柜、乞丐少年\n或：需要一个反派的线人，一个忠厚的村民"
+              autoSize={{ minRows: 3, maxRows: 6 }}
+            />
           </Form.Item>
         </Form>
       </Modal>

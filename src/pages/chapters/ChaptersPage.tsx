@@ -14,6 +14,7 @@ import {
   Collapse,
   Modal,
   List,
+  Spin,
 } from 'antd'
 import {
   ExperimentOutlined,
@@ -21,6 +22,8 @@ import {
   LoadingOutlined,
   BookOutlined,
   DeleteOutlined,
+  ThunderboltOutlined,
+  PlusOutlined,
 } from '@ant-design/icons'
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import type { Chapter } from '@/core/types'
@@ -30,7 +33,7 @@ import { useSystemConfigStore } from '@/core/system-config-store'
 import { db } from '@/core/db'
 import { generate, generateStream } from '@/ai/client'
 import { seedContext, worldContext, charactersContext, constraintsContext, eventLogContext } from '@/ai/context'
-import { CHAPTER_SYSTEM_PROMPT, buildChapterPrompt, buildExtractEventsPrompt } from '@/ai/prompts/chapters'
+import { CHAPTER_SYSTEM_PROMPT, buildChapterPrompt, buildExtractEventsPrompt, buildInspirationPrompt, buildInspirationChapterPrompt } from '@/ai/prompts/chapters'
 import { DEFAULT_EVENT_LOG_CONFIG } from '@/features/seed/options'
 import type { EventLogEntry, EventLogConfig } from '@/core/types'
 import RichEditor from '@/components/editor/RichEditor'
@@ -41,6 +44,8 @@ export default function ChaptersPage() {
   const currentWork = useStore((s) => s.currentWork)
   const setCurrentWork = useStore((s) => s.setCurrentWork)
   const readOnly = useStore((s) => s.readOnly)
+  const aiPanelOpen = useStore((s) => s.aiPanelOpen)
+  const toggleAIPanel = useStore((s) => s.toggleAIPanel)
   const aiConfig = useSystemConfigStore((s) => s.aiConfig)
   const [loading, setLoading] = useState(false)
   const [activeChapterId, setActiveChapterId] = useState<string | null>(null)
@@ -50,6 +55,15 @@ export default function ChaptersPage() {
   const [countdown, setCountdown] = useState(0)
   const [eventLogOpen, setEventLogOpen] = useState(false)
   const [editingPrompt, setEditingPrompt] = useState<string | null>(null)
+  const [directionOpen, setDirectionOpen] = useState(false)
+  const [directionDraft, setDirectionDraft] = useState('')
+  const directionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 快速续写
+  const [qwOpen, setQwOpen] = useState(false)
+  const [qwStep, setQwStep] = useState<'mode' | 'inspire'>('mode')
+  const [qwMode, setQwMode] = useState<'newVolume' | 'continue'>('continue')
+  const [qwInspirations, setQwInspirations] = useState<{ title: string; summary: string }[]>([])
+  const [qwLoading, setQwLoading] = useState(false)
   const countdownRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const cancelAutoRef = useRef(false)
 
@@ -65,8 +79,31 @@ export default function ChaptersPage() {
 
   const chapters = currentWork?.chapters ?? []
   const outline = currentWork?.outline ?? []
-  const chapterOutlineNodes = outline.filter((n) => n.level === 'chapter')
+  const chapterOutlineNodes = outline.filter((n) => n.level === 'chapter').sort((a, b) => a.order - b.order)
+  const volumeNodes = outline.filter((n) => n.level === 'volume').sort((a, b) => a.order - b.order)
   const activeChapter = chapters.find((c) => c.id === activeChapterId)
+
+  // 按卷分组的章节列表
+  const chaptersByVolume = useMemo(() => {
+    const grouped: { volume: typeof outline[0] | null; chapters: typeof chapterOutlineNodes }[] = []
+    const orphans = chapterOutlineNodes.filter((ch) => !volumeNodes.some((v) => v.id === ch.parentId))
+    for (const vol of volumeNodes) {
+      grouped.push({
+        volume: vol,
+        chapters: chapterOutlineNodes.filter((ch) => ch.parentId === vol.id),
+      })
+    }
+    if (orphans.length > 0) {
+      grouped.push({ volume: null, chapters: orphans })
+    }
+    return grouped
+  }, [chapterOutlineNodes, volumeNodes])
+
+  // 切换章节时同步创作方向草稿
+  useEffect(() => {
+    setDirectionDraft(activeChapter?.userDirection || '')
+    setDirectionOpen(false)
+  }, [activeChapterId])
 
   // 持久化（始终从 store 取最新 currentWork）
   const persistChapters = useCallback(
@@ -80,21 +117,33 @@ export default function ChaptersPage() {
     [setCurrentWork],
   )
 
-  // 确保章节存在（自动从大纲创建缺失的章节）
+  // 确保章节存在（自动从大纲创建缺失的章节，并同步标题）
   const ensureChapter = useCallback(
     async (outlineId: string): Promise<Chapter> => {
       const work = useStore.getState().currentWork
       if (!work) throw new Error('无当前作品')
       const currentChapters = work.chapters ?? []
       const currentOutline = work.outline ?? []
-      const existing = currentChapters.find((c) => c.outlineId === outlineId)
-      if (existing) return existing
-
       const node = currentOutline.find((n) => n.id === outlineId)
+      const nodeTitle = node?.title || '未命名章节'
+      const existing = currentChapters.find((c) => c.outlineId === outlineId)
+
+      if (existing) {
+        // 同步大纲标题
+        if (existing.title !== nodeTitle) {
+          const updated = currentChapters.map((c) =>
+            c.id === existing.id ? { ...c, title: nodeTitle } : c,
+          )
+          await persistChapters(updated)
+          return updated.find((c) => c.id === existing.id)!
+        }
+        return existing
+      }
+
       const newChapter: Chapter = {
         id: generateId(),
         outlineId,
-        title: node?.title || '未命名章节',
+        title: nodeTitle,
         content: '',
         wordCount: 0,
         scenes: [],
@@ -220,9 +269,12 @@ export default function ChaptersPage() {
       const prevChapter = currentChapters[currentChapters.findIndex((c) => c.id === chapter.id) - 1]
       const prevSummary = prevChapter ? prevChapter.content.slice(-500) : ''
 
-      // 事件簿上下文
-      const eventLog = work.eventLog ?? []
-      const eventLogStr = eventLogContext(eventLog, chapter.id)
+      // 事件簿上下文（排除当前章及后续章节的事件，避免重写时泄漏未来信息）
+      const allOutline = currentOutline.filter((n) => n.level === 'chapter')
+      const currentIdx = allOutline.findIndex((n) => n.id === chapter.outlineId)
+      const excludeIds = new Set(allOutline.slice(currentIdx).map((n) => n.id))
+      const eventLog = (work.eventLog ?? []).filter((e) => !excludeIds.has(e.chapterId))
+      const eventLogStr = eventLogContext(eventLog)
 
       const prompt = buildChapterPrompt(
         seedContext(work),
@@ -233,6 +285,7 @@ export default function ChaptersPage() {
         chapterSummary,
         prevSummary,
         eventLogStr,
+        chapter.userDirection,
       )
       const text = await generateStream(prompt, CHAPTER_SYSTEM_PROMPT, aiConfig, (_chunk, fullText) => {
         setAIStream(true, fullText)
@@ -251,10 +304,15 @@ export default function ChaptersPage() {
       setAIStream(false, text)
 
       // 提取事件到事件簿（需 await 避免并发流累积 fetch buffer）
+      const eventLogConfig = work.eventLogConfig ?? DEFAULT_EVENT_LOG_CONFIG
+      if (eventLogConfig.enabled) {
+        message.loading({ content: '正在提取事件到事件簿…', key: 'extractEvents', duration: 0 })
+      }
       await extractEvents(chapter, text, work)
+      message.destroy('extractEvents')
 
       // 显示完成通知，等待倒计时
-      const currentOutlineNodes = currentOutline.filter((n) => n.level === 'chapter')
+      const currentOutlineNodes = currentOutline.filter((n) => n.level === 'chapter').sort((a, b) => a.order - b.order)
       const currentOutlineIndex = currentOutlineNodes.findIndex((n) => n.id === chapter.outlineId)
       const nextOutlineNode = currentOutlineNodes[currentOutlineIndex + 1]
       const shouldContinue = await showCompletionNotification(chapter.title, wordCount, !!nextOutlineNode)
@@ -338,10 +396,11 @@ export default function ChaptersPage() {
 
       if (!newEntries.length) return
 
-      // 保存事件簿
+      // 保存事件簿（先清除当前章旧事件，再写入新事件）
       const latestWork = useStore.getState().currentWork
       if (!latestWork) return
-      const updatedEventLog = [...(latestWork.eventLog ?? []), ...newEntries]
+      const oldEventLog = (latestWork.eventLog ?? []).filter((e) => e.chapterId !== chapter.id)
+      const updatedEventLog = [...oldEventLog, ...newEntries]
       await db.works.update(latestWork.id, { eventLog: updatedEventLog })
       setCurrentWork({ ...latestWork, eventLog: updatedEventLog, updatedAt: Date.now() })
     } catch {
@@ -385,6 +444,242 @@ export default function ChaptersPage() {
     const updatedEventLog = (work.eventLog ?? []).filter((e) => e.id !== eventId)
     await db.works.update(work.id, { eventLog: updatedEventLog })
     setCurrentWork({ ...work, eventLog: updatedEventLog, updatedAt: Date.now() })
+  }
+
+  // === 快速续写 ===
+  const handleQuickWrite = async (mode: 'newVolume' | 'continue') => {
+    if (!currentWork) return
+    if (!aiConfig?.apiKey) { message.warning('请先配置 AI API Key'); return }
+
+    setQwMode(mode)
+    setQwLoading(true)
+    setQwStep('inspire')
+    setQwInspirations([])
+    const setAIStream = useStore.getState().setAIStream
+    if (!aiPanelOpen) toggleAIPanel()
+    setAIStream(true, '')
+
+    try {
+      const seed = seedContext(currentWork)
+      const world = worldContext(currentWork)
+      const chars = charactersContext(currentWork.characters, 'major')
+      const eventLog = eventLogContext(currentWork.eventLog ?? [])
+
+      // 前文摘要：取最后一章的内容前500字
+      const sortedChapters = [...chapters].sort((a, b) => {
+        const aNode = outline.find((n) => n.id === a.outlineId)
+        const bNode = outline.find((n) => n.id === b.outlineId)
+        return (aNode?.order ?? 0) - (bNode?.order ?? 0)
+      })
+      const lastChapter = sortedChapters[sortedChapters.length - 1]
+      const prevSummary = lastChapter?.content?.slice(0, 500) || ''
+
+      const prompt = buildInspirationPrompt(mode, seed, world, chars, prevSummary, eventLog)
+      const text = await generateStream(prompt, CHAPTER_SYSTEM_PROMPT, aiConfig, (_chunk, fullText) => {
+        setAIStream(true, fullText)
+      })
+
+      // 解析 JSON 数组
+      let cleaned = text.trim()
+      cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '')
+      const arrMatch = cleaned.match(/\[[\s\S]*\]/)
+      if (arrMatch) cleaned = arrMatch[0]
+      const parsed = JSON.parse(cleaned)
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        setQwInspirations(parsed.map((item: any) => ({
+          title: item.title || '未命名灵感',
+          summary: item.summary || '',
+        })))
+      } else {
+        throw new Error('AI 返回格式不正确')
+      }
+      setAIStream(false, '')
+    } catch (err: any) {
+      message.error('灵感生成失败：' + err.message)
+      setAIStream(false, '灵感生成失败：' + err.message)
+      setQwOpen(false)
+    } finally {
+      setQwLoading(false)
+    }
+  }
+
+  const handlePickInspiration = async (insp: { title: string; summary: string }) => {
+    if (!currentWork) return
+    if (!aiConfig?.apiKey) { message.warning('请先配置 AI API Key'); return }
+
+    const work = useStore.getState().currentWork
+    if (!work) return
+
+    const setAIStream = useStore.getState().setAIStream
+    setQwOpen(false)
+    setQwLoading(true)
+    if (!aiPanelOpen) toggleAIPanel()
+    setAIStream(true, '')
+
+    try {
+      const currentOutline = work.outline ?? []
+      const currentChapters = work.chapters ?? []
+      let newNodeId = generateId()
+      let parentNodeId: string | undefined
+
+      if (qwMode === 'newVolume') {
+        // 新建卷 + 章
+        const volId = generateId()
+        parentNodeId = volId
+        const volOrder = currentOutline.filter((n) => n.level === 'volume').length
+        const volNode = {
+          id: volId,
+          title: insp.title,
+          summary: insp.summary,
+          order: volOrder,
+          level: 'volume' as const,
+          characterIds: [],
+          storylineIds: [],
+        }
+        const chNode = {
+          id: newNodeId,
+          parentId: volId,
+          title: insp.title,
+          summary: insp.summary,
+          order: volOrder + 1,
+          level: 'chapter' as const,
+          characterIds: [],
+          storylineIds: [],
+        }
+        await persistChapters([...currentChapters])
+        const newOutline = [...currentOutline, volNode, chNode]
+        await db.works.update(work.id, { outline: newOutline })
+        setCurrentWork({ ...work, outline: newOutline, updatedAt: Date.now() })
+      } else {
+        // 续写：在最后一个卷下新增章
+        const volumes = currentOutline.filter((n) => n.level === 'volume').sort((a, b) => a.order - b.order)
+        const lastVol = volumes[volumes.length - 1]
+        if (!lastVol) {
+          message.warning('请先在大纲中创建一个卷')
+          setQwLoading(false)
+          return
+        }
+        parentNodeId = lastVol.id
+        const siblings = currentOutline.filter((n) => n.level === 'chapter' && n.parentId === lastVol.id)
+        const chOrder = lastVol.order + siblings.length + 1
+        const chNode = {
+          id: newNodeId,
+          parentId: lastVol.id,
+          title: insp.title,
+          summary: insp.summary,
+          order: chOrder,
+          level: 'chapter' as const,
+          characterIds: [],
+          storylineIds: [],
+        }
+        const newOutline = [...currentOutline, chNode]
+        await db.works.update(work.id, { outline: newOutline })
+        setCurrentWork({ ...work, outline: newOutline, updatedAt: Date.now() })
+      }
+
+      // 创建章节对象
+      const newChapter: Chapter = {
+        id: generateId(),
+        outlineId: newNodeId,
+        title: insp.title,
+        content: '',
+        wordCount: 0,
+        scenes: [],
+        versions: [],
+      }
+      const updatedChapters = [...(work.chapters ?? []), newChapter]
+      await persistChapters(updatedChapters)
+
+      // 刷新 outline
+      const freshWork = useStore.getState().currentWork
+      if (freshWork) {
+        const freshOutline = freshWork.outline ?? []
+        const sorted = [...freshOutline].sort((a, b) => a.order - b.order)
+        const vols = sorted.filter((n) => n.level === 'volume')
+        let idx = 0
+        const reindexed: typeof sorted = []
+        for (const vol of vols) {
+          reindexed.push({ ...vol, order: idx++ })
+          const chs = sorted.filter((n) => n.level === 'chapter' && n.parentId === vol.id).sort((a, b) => a.order - b.order)
+          for (const ch of chs) {
+            reindexed.push({ ...ch, order: idx++ })
+          }
+        }
+        await db.works.update(freshWork.id, { outline: reindexed })
+        setCurrentWork({ ...freshWork, outline: reindexed, updatedAt: Date.now() })
+      }
+
+      // 自动写正文
+      setActiveChapterId(newChapter.id)
+      message.success(`已创建「${insp.title}」，开始写作...`)
+
+      // 重新取 work 用于写作
+      const writeWork = useStore.getState().currentWork
+      if (!writeWork) return
+      const prevChapters = writeWork.chapters ?? []
+      const sortedChs = [...prevChapters].sort((a, b) => {
+        const aNode = (writeWork.outline ?? []).find((n) => n.id === a.outlineId)
+        const bNode = (writeWork.outline ?? []).find((n) => n.id === b.outlineId)
+        return (aNode?.order ?? 0) - (bNode?.order ?? 0)
+      })
+      const chIdx = sortedChs.findIndex((c) => c.id === newChapter.id)
+      const prevCh = chIdx > 0 ? sortedChs[chIdx - 1] : null
+      const prevContent = prevCh?.content?.slice(-500) || ''
+
+      const filteredEvents = (writeWork.eventLog ?? []).filter((e) => {
+        const ch = sortedChs.find((c) => c.id === e.chapterId)
+        if (!ch) return true
+        const chNode = (writeWork.outline ?? []).find((n) => n.id === ch.outlineId)
+        const targetNode = (writeWork.outline ?? []).find((n) => n.id === newChapter.outlineId)
+        return chNode && targetNode && chNode.order < targetNode.order
+      })
+      const eventLogStr = eventLogContext(filteredEvents)
+
+      const writePrompt = buildInspirationChapterPrompt(
+        seedContext(writeWork),
+        worldContext(writeWork),
+        charactersContext(writeWork.characters, 'major'),
+        constraintsContext(writeWork.constraints),
+        insp.title,
+        insp.summary,
+        prevContent,
+        eventLogStr,
+      )
+
+      setWritingChapterId(newChapter.id)
+      setStreamingContent('')
+
+      const text = await generateStream(writePrompt, CHAPTER_SYSTEM_PROMPT, aiConfig, (_chunk, fullText) => {
+        setStreamingContent(fullText)
+        setAIStream(true, fullText)
+      })
+
+      // 保存正文
+      const wordCount = text.length
+      const finalChapters = (useStore.getState().currentWork?.chapters ?? []).map((c) =>
+        c.id === newChapter.id ? { ...c, title: insp.title, content: text, wordCount } : c,
+      )
+      await persistChapters(finalChapters)
+
+      // 事件提取
+      if ((writeWork.eventLogConfig ?? DEFAULT_EVENT_LOG_CONFIG).enabled) {
+        message.loading({ content: '正在提取事件到事件簿…', key: 'extractEvents', duration: 0 })
+        await extractEvents({ ...newChapter, title: insp.title }, text, writeWork)
+        message.destroy('extractEvents')
+      }
+
+      setStreamingContent(null)
+      setWritingChapterId(null)
+      setAIStream(false, text)
+      message.success(`「${insp.title}」写作完成（${wordCount}字）`)
+    } catch (err: any) {
+      message.error('写作失败：' + err.message)
+      setAIStream(false, '写作失败：' + err.message)
+      setStreamingContent(null)
+      setWritingChapterId(null)
+    } finally {
+      setQwLoading(false)
+    }
   }
 
   // 按章节分组的事件簿
@@ -451,48 +746,71 @@ export default function ChaptersPage() {
           {chapterOutlineNodes.length === 0 ? (
             <Empty description="先在大纲中创建章节" />
           ) : (
-            chapterOutlineNodes.map((node) => {
-              const chapter = chapters.find((c) => c.outlineId === node.id)
-              const isActive = chapter?.id === activeChapterId
-              const isWriting = chapter?.id === writingChapterId
-              const hasContent = chapter && chapter.wordCount > 0
-              return (
-                <div
-                  key={node.id}
-                  style={{
-                    cursor: 'pointer',
-                    background: isActive ? '#e6f4ff' : undefined,
-                    padding: '8px 12px',
-                    borderRadius: 6,
-                    marginBottom: 4,
-                  }}
-                  onClick={async () => {
-                    const ch = await ensureChapter(node.id)
-                    setActiveChapterId(ch.id)
-                  }}
-                >
-                  <div style={{ width: '100%' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text strong style={{ fontSize: 13 }}>{node.title}</Text>
-                      {isWriting ? (
-                        <Tag color="processing" icon={<LoadingOutlined />} style={{ fontSize: 11 }}>
-                          写作中
-                        </Tag>
-                      ) : hasContent ? (
-                        <Tag color="blue" style={{ fontSize: 11 }}>
-                          {chapter!.wordCount} 字
-                        </Tag>
-                      ) : null}
-                    </div>
-                    <Text type="secondary" style={{ fontSize: 11 }} ellipsis>
-                      {node.summary}
-                    </Text>
+            chaptersByVolume.map((group, gi) => (
+              <div key={group.volume?.id || 'orphan'} style={{ marginBottom: gi < chaptersByVolume.length - 1 ? 12 : 0 }}>
+                {group.volume && (
+                  <div style={{ padding: '4px 12px', marginBottom: 4 }}>
+                    <Text type="secondary" style={{ fontSize: 12, fontWeight: 600 }}>{group.volume.title}</Text>
                   </div>
-                </div>
-              )
-            })
+                )}
+                {group.chapters.map((node) => {
+                  const chapter = chapters.find((c) => c.outlineId === node.id)
+                  const isActive = chapter?.id === activeChapterId
+                  const isWriting = chapter?.id === writingChapterId
+                  const hasContent = chapter && chapter.wordCount > 0
+                  return (
+                    <div
+                      key={node.id}
+                      style={{
+                        cursor: 'pointer',
+                        background: isActive ? '#e6f4ff' : undefined,
+                        padding: '8px 12px',
+                        borderRadius: 6,
+                        marginBottom: 4,
+                      }}
+                      onClick={async () => {
+                        const ch = await ensureChapter(node.id)
+                        setActiveChapterId(ch.id)
+                      }}
+                    >
+                      <div style={{ width: '100%' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Text strong style={{ fontSize: 13 }}>{node.title}</Text>
+                          {isWriting ? (
+                            <Tag color="processing" icon={<LoadingOutlined />} style={{ fontSize: 11 }}>
+                              写作中
+                            </Tag>
+                          ) : hasContent ? (
+                            <Tag color="blue" style={{ fontSize: 11 }}>
+                              {chapter!.wordCount} 字
+                            </Tag>
+                          ) : null}
+                        </div>
+                        <Text type="secondary" style={{ fontSize: 11 }} ellipsis>
+                          {node.summary}
+                        </Text>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ))
           )}
         </div>
+
+        {/* 快速续写 */}
+        {!readOnly && (
+          <div style={{ flexShrink: 0, paddingTop: 8, borderTop: '1px solid #f0f0f0', textAlign: 'center' }}>
+            <Button
+              type="primary"
+              icon={<ThunderboltOutlined />}
+              block
+              onClick={() => { setQwStep('mode'); setQwInspirations([]); setQwOpen(true) }}
+            >
+              快速续写
+            </Button>
+          </div>
+        )}
 
         {/* 清空所有正文 */}
         {!readOnly && chapters.length > 0 && (
@@ -553,6 +871,49 @@ export default function ChaptersPage() {
               )}
             </div>
 
+            {/* 创作方向 */}
+            {!readOnly && (
+              <div style={{ marginBottom: 12 }}>
+                <Text
+                  type="secondary"
+                  style={{ fontSize: 13, cursor: 'pointer', userSelect: 'none' }}
+                  onClick={() => setDirectionOpen(!directionOpen)}
+                >
+                  {directionOpen ? '▾' : '▸'} 创作方向（可选）
+                  {directionDraft && !directionOpen && <Tag color="blue" style={{ marginLeft: 8 }}>已填写</Tag>}
+                </Text>
+                {directionOpen && (
+                  <Input.TextArea
+                    value={directionDraft}
+                    onChange={(e) => {
+                      const val = e.target.value
+                      setDirectionDraft(val)
+                      // 防抖持久化
+                      if (directionTimerRef.current) clearTimeout(directionTimerRef.current)
+                      directionTimerRef.current = setTimeout(() => {
+                        const updated = (useStore.getState().currentWork?.chapters ?? []).map((c) =>
+                          c.id === activeChapter.id ? { ...c, userDirection: val } : c,
+                        )
+                        persistChapters(updated)
+                      }, 500)
+                    }}
+                    onBlur={() => {
+                      // 失焦时立即保存
+                      if (directionTimerRef.current) clearTimeout(directionTimerRef.current)
+                      const updated = (useStore.getState().currentWork?.chapters ?? []).map((c) =>
+                        c.id === activeChapter.id ? { ...c, userDirection: directionDraft } : c,
+                      )
+                      persistChapters(updated)
+                    }}
+                    placeholder="描述你想要的剧情走向、具体场景、角色互动等，AI 会严格遵循。留空则按大纲自由发挥。"
+                    autoSize={{ minRows: 2, maxRows: 6 }}
+                    style={{ marginTop: 8 }}
+                    allowClear
+                  />
+                )}
+              </div>
+            )}
+
             {/* 大纲摘要 */}
             {getOutlineNode(activeChapter.outlineId)?.summary && (
               <Card size="small" style={{ marginBottom: 16, background: '#fafafa' }}>
@@ -610,6 +971,66 @@ export default function ChaptersPage() {
           </div>
         )}
       </div>
+
+      {/* 快速续写弹窗 */}
+      <Modal
+        title={qwStep === 'mode' ? '快速续写 - 选择模式' : '快速续写 - 选择灵感'}
+        open={qwOpen}
+        onCancel={() => setQwOpen(false)}
+        footer={null}
+        width={qwStep === 'mode' ? 420 : 680}
+        mask={{ closable: false }}
+      >
+        {qwStep === 'mode' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '8px 0' }}>
+            <Text type="secondary">选择创作模式，AI 将根据你的选择生成灵感方向：</Text>
+            <Button
+              size="large"
+              icon={<PlusOutlined />}
+              block
+              onClick={() => handleQuickWrite('newVolume')}
+              loading={qwLoading}
+            >
+              新卷 + 1章
+            </Button>
+            <Button
+              size="large"
+              icon={<ThunderboltOutlined />}
+              block
+              onClick={() => handleQuickWrite('continue')}
+              loading={qwLoading}
+            >
+              续写 1 章
+            </Button>
+          </div>
+        )}
+        {qwStep === 'inspire' && (
+          <div>
+            {qwLoading && qwInspirations.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '32px 0' }}>
+                <Spin tip="AI 正在构思灵感..." />
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {qwInspirations.map((insp, i) => (
+                  <Card
+                    key={i}
+                    size="small"
+                    hoverable
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => handlePickInspiration(insp)}
+                  >
+                    <Space direction="vertical" style={{ width: '100%' }}>
+                      <Text strong>{insp.title}</Text>
+                      <Text type="secondary" style={{ fontSize: 13 }}>{insp.summary}</Text>
+                    </Space>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
 
       {/* 事件簿弹窗 */}
       <Modal
@@ -669,7 +1090,11 @@ export default function ChaptersPage() {
                 renderItem={(event) => (
                   <List.Item
                     actions={[
-                      <Popconfirm key="del" title="确定删除？" onConfirm={() => handleDeleteEvent(event.id)}>
+                      <Popconfirm key="del" title="确定删除？" onConfirm={() => handleDeleteEvent(event.id)} okButtonProps={{ autoFocus: true }} okText="确认" cancelText="取消"
+                        onOpenChange={(open) => {
+                          if (open) setTimeout(() => { (document.querySelector('.ant-popconfirm .ant-btn-primary') as HTMLElement | null)?.focus() }, 100)
+                        }}
+                      >
                         <Button type="text" size="small" icon={<DeleteOutlined />} danger />
                       </Popconfirm>,
                     ]}

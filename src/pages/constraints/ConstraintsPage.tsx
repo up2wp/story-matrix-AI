@@ -32,8 +32,8 @@ import { useStore } from '@/core/store'
 import { useSystemConfigStore } from '@/core/system-config-store'
 import { db } from '@/core/db'
 import { generateStream } from '@/ai/client'
-import { seedContext, worldContext, charactersContext } from '@/ai/context'
-import { CONSTRAINT_SYSTEM_PROMPT, buildConstraintsPrompt } from '@/ai/prompts/constraints'
+import { seedContext, worldContext, charactersContext, constraintsContext } from '@/ai/context'
+import { CONSTRAINT_SYSTEM_PROMPT, buildConstraintsPrompt, CONSTRAINT_POLISH_SYSTEM_PROMPT, buildConstraintPolishPrompt } from '@/ai/prompts/constraints'
 
 const { Title, Paragraph, Text } = Typography
 const { TextArea } = Input
@@ -69,6 +69,8 @@ export default function ConstraintsPage() {
   const [filterType, setFilterType] = useState<ConstraintType | 'all'>('all')
   const [filterPriority, setFilterPriority] = useState<ConstraintPriority | 'all'>('all')
   const [form] = Form.useForm()
+  const [polishing, setPolishing] = useState(false)
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
 
   const constraints = currentWork?.constraints ?? []
 
@@ -128,6 +130,63 @@ export default function ConstraintsPage() {
       setAIStream(false, `生成失败：${err.message}`)
     } finally {
       setLoading(false)
+    }
+  }
+
+  // AI 润色单条约束
+  const handleAIPolish = async () => {
+    if (!aiConfig.apiKey) {
+      message.warning('请先在系统管理中配置 AI API Key')
+      return
+    }
+    if (!editing || !currentWork) return
+    const values = form.getFieldsValue()
+    const currentConstraint = JSON.stringify({
+      type: values.type || editing.type,
+      title: values.title || editing.title,
+      description: values.description || editing.description,
+      priority: values.priority || editing.priority,
+    }, null, 2)
+
+    const setAIStream = useStore.getState().setAIStream
+    setPolishing(true)
+    setAIStream(true, '')
+    try {
+      const prompt = buildConstraintPolishPrompt(
+        currentConstraint,
+        constraintsContext(constraints),
+        seedContext(currentWork),
+        worldContext(currentWork),
+        charactersContext(currentWork.characters, 'major'),
+      )
+      const text = await generateStream(prompt, CONSTRAINT_POLISH_SYSTEM_PROMPT, aiConfig, (_chunk, fullText) => {
+        setAIStream(true, fullText)
+      })
+
+      let jsonStr = text
+      const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
+      if (codeBlockMatch) jsonStr = codeBlockMatch[1]
+      const jsonMatch = jsonStr.match(/\{[\s\S]*\}/)
+      if (!jsonMatch) {
+        message.error('AI 返回格式异常，请重试')
+        setAIStream(false, '润色失败')
+        return
+      }
+
+      const parsed = JSON.parse(jsonMatch[0])
+      form.setFieldsValue({
+        title: parsed.title,
+        description: parsed.description,
+        type: parsed.type,
+        priority: parsed.priority,
+      })
+      setAIStream(false, text)
+      message.success('AI 润色完成')
+    } catch (err: any) {
+      message.error(`润色失败：${err.message}`)
+      setAIStream(false, `润色失败：${err.message}`)
+    } finally {
+      setPolishing(false)
     }
   }
 
@@ -210,7 +269,9 @@ export default function ConstraintsPage() {
               AI 随机生成
             </Button>
             {constraints.length > 0 && (
-              <Popconfirm title="确定清空所有约束？" onConfirm={handleClear} okText="确认" cancelText="取消" okButtonProps={{ autoFocus: true }}>
+              <Popconfirm title="确定清空所有约束？" onConfirm={handleClear} okText="确认" cancelText="取消" okButtonProps={{ autoFocus: true }}
+                onOpenChange={(open) => { if (open) setTimeout(() => { (document.querySelector('.ant-popconfirm .ant-btn-primary') as HTMLElement | null)?.focus() }, 100) }}
+              >
                 <Button danger>清空约束</Button>
               </Popconfirm>
             )}
@@ -298,16 +359,46 @@ export default function ConstraintsPage() {
                         <Tag color={statusInfo.color} icon={statusInfo.icon}>{statusInfo.label}</Tag>
                         <Text strong>{constraint.title}</Text>
                       </Space>
-                      {constraint.description && (
-                        <Paragraph style={{ margin: 0 }} type="secondary">
-                          {constraint.description}
-                        </Paragraph>
-                      )}
+                      {constraint.description && (() => {
+                        const expanded = expandedIds.has(constraint.id)
+                        return (
+                          <div>
+                            <Paragraph
+                              style={{
+                                margin: 0,
+                                whiteSpace: 'pre-wrap',
+                                ...(expanded ? {} : { maxHeight: '20em', overflow: 'hidden' }),
+                              }}
+                              type="secondary"
+                            >
+                              {constraint.description}
+                            </Paragraph>
+                            {constraint.description.split('\n').length > 20 && (
+                              <Text
+                                type="secondary"
+                                style={{ fontSize: 12, cursor: 'pointer', color: '#1677ff' }}
+                                onClick={() => {
+                                  setExpandedIds(prev => {
+                                    const next = new Set(prev)
+                                    if (next.has(constraint.id)) next.delete(constraint.id)
+                                    else next.add(constraint.id)
+                                    return next
+                                  })
+                                }}
+                              >
+                                {expanded ? '收起' : '展开全部'}
+                              </Text>
+                            )}
+                          </div>
+                        )
+                      })()}
                     </div>
                     {!readOnly && (
                       <Space>
                         <Button type="text" size="small" icon={<EditOutlined />} onClick={() => openEdit(constraint)} />
-                        <Popconfirm title="确定删除？" onConfirm={() => removeConstraint(constraint.id)} okButtonProps={{ autoFocus: true }}>
+                        <Popconfirm title="确定删除？" onConfirm={() => removeConstraint(constraint.id)} okButtonProps={{ autoFocus: true }}
+                          onOpenChange={(open) => { if (open) setTimeout(() => { (document.querySelector('.ant-popconfirm .ant-btn-primary') as HTMLElement | null)?.focus() }, 100) }}
+                        >
                           <Button type="text" size="small" danger icon={<DeleteOutlined />} />
                         </Popconfirm>
                       </Space>
@@ -323,12 +414,27 @@ export default function ConstraintsPage() {
       <Modal
         title={isNew ? '新增约束' : '编辑约束'}
         open={editModalOpen}
+        forceRender
         mask={{ closable: false }}
         onOk={isNew ? handleSaveNew : handleSave}
         onCancel={() => setEditModalOpen(false)}
-        okText="保存"
-        cancelText="取消"
         width={600}
+        footer={(_, { OkBtn, CancelBtn }) => (
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <Button
+              icon={<ExperimentOutlined />}
+              loading={polishing}
+              onClick={handleAIPolish}
+              disabled={readOnly}
+            >
+              AI 润色
+            </Button>
+            <Space>
+              <CancelBtn />
+              <OkBtn />
+            </Space>
+          </div>
+        )}
       >
         <Form form={form} layout="vertical">
           <Form.Item name="type" label="类型">

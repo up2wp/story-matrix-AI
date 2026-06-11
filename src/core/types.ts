@@ -24,7 +24,6 @@ export type CharacterRole = 'major' | 'supporting' | 'minor'
 
 export interface Relation {
   targetId: string             // 目标角色 ID
-  type: string                 // 关系类型：血缘/师徒/敌对/暧昧/朋友...
   description: string          // 关系描述
 }
 
@@ -109,6 +108,7 @@ export interface Chapter {
   wordCount: number
   scenes: Scene[]
   versions: Version[]
+  userDirection?: string       // 用户创作方向
 }
 
 export interface Version {
@@ -178,6 +178,7 @@ export interface AIConfig {
   apiKey: string
   baseUrl?: string
   model: string
+  maxTokens?: number
 }
 
 // --- 用户 ---

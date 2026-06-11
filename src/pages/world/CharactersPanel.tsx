@@ -14,6 +14,7 @@ import {
   Collapse,
   Popconfirm,
 } from 'antd'
+import TagInput from '../../components/TagInput'
 import {
   PlusOutlined,
   ExperimentOutlined,
@@ -49,8 +50,6 @@ const EMPTY_CHAR: Character = {
   relations: [],
   tags: [],
 }
-
-const RELATION_TYPES = ['血缘', '师徒', '朋友', '敌对', '暧昧', '上下级', '盟友', '宿敌', '青梅竹马', '对手']
 
 export default function CharactersPanel({ wb }: Props) {
   const readOnly = useStore((s) => s.readOnly)
@@ -140,14 +139,16 @@ export default function CharactersPanel({ wb }: Props) {
       const parsed = JSON.parse(jsonMatch[0])
       // 解析关系：AI 返回的 targetId 可能是角色名，需要解析为 ID
       const rawRelations = parsed.relations || []
-      const resolvedRelations = rawRelations.map((r: any) => {
-        if (r.targetId && !characters.find((c) => c.id === r.targetId)) {
-          // targetId 不是 ID，尝试按名字匹配
-          const match = characters.find((c) => c.name === r.targetId)
-          return { ...r, targetId: match?.id || '' }
-        }
-        return r
-      }).filter((r: any) => r.targetId) // 过滤掉匹配不到的
+      const resolvedRelations = rawRelations
+        .map((r: any) => {
+          if (!r.targetId) return null
+          // 尝试按 ID 或名字匹配已有角色
+          let match = characters.find((c) => c.id === r.targetId)
+          if (!match) match = characters.find((c) => c.name === r.targetId)
+          if (!match) return null
+          return { targetId: match.id, description: r.description || '' }
+        })
+        .filter(Boolean)
 
       const newChar: Character = {
         id: generateId(),
@@ -426,7 +427,7 @@ export default function CharactersPanel({ wb }: Props) {
 
   // 添加关系
   const addRelation = () => {
-    setEditRelations([...editRelations, { targetId: '', type: '', description: '' }])
+    setEditRelations([...editRelations, { targetId: '', description: '' }])
   }
 
   // 更新关系
@@ -495,7 +496,9 @@ export default function CharactersPanel({ wb }: Props) {
                         <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(char)}>
                           编辑
                         </Button>
-                        <Popconfirm title="确定删除？" onConfirm={() => handleDelete(char.id)} okText="确认" cancelText="取消" okButtonProps={{ autoFocus: true }}>
+                        <Popconfirm title="确定删除？" onConfirm={() => handleDelete(char.id)} okText="确认" cancelText="取消" okButtonProps={{ autoFocus: true }}
+                          onOpenChange={(open) => { if (open) setTimeout(() => { (document.querySelector('.ant-popconfirm .ant-btn-primary') as HTMLElement | null)?.focus() }, 100) }}
+                        >
                           <Button size="small" danger icon={<DeleteOutlined />} />
                         </Popconfirm>
                       </Space>
@@ -505,49 +508,48 @@ export default function CharactersPanel({ wb }: Props) {
                   <Paragraph style={{ marginBottom: 12 }}>{char.bio || '暂无背景描述'}</Paragraph>
 
                   {/* 关系展示 */}
-                  {char.relations && char.relations.length > 0 && (
+                  {char.relations && char.relations.filter(r => getCharName(r.targetId) !== '未知角色').length > 0 && (
                     <div style={{ marginBottom: 12 }}>
                       <Text type="secondary" style={{ fontSize: 12 }}>角色关系：</Text>
                       <div style={{ marginTop: 4 }}>
-                        {char.relations.map((r, i) => (
+                        {char.relations.filter(r => getCharName(r.targetId) !== '未知角色').map((r, i) => (
                           <Tag key={i} color="orange">
-                            {getCharName(r.targetId)}：{r.type || '未定义'}
+                            {getCharName(r.targetId)}{r.description ? `（${r.description}）` : ''}
                           </Tag>
                         ))}
                       </div>
                     </div>
                   )}
 
-                  {char.personality.traits.length > 0 && (
-                    <div style={{ marginBottom: 12 }}>
-                      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>性格特质</Text>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                        {char.personality.traits.map((t) => (
-                          <Tag key={t}>{t}</Tag>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {char.personality.habits.length > 0 && (
-                    <div style={{ marginBottom: 12 }}>
-                      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>行为习惯</Text>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                        {char.personality.habits.map((h) => (
-                          <Tag key={h} color="default">{h}</Tag>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {char.personality.arc.length > 0 && (
+                  {(char.personality.traits.length > 0 || char.personality.habits.length > 0 || char.personality.arc.length > 0) && (
                     <Collapse
                       ghost
-                      defaultActiveKey={['arc']}
                       items={[
                         {
-                          key: 'arc',
-                          label: '性格弧线',
+                          key: 'personality',
+                          label: '性格特质 · 行为习惯 · 性格弧线',
                           children: (
-                            <div>
+                            <>
+                              {char.personality.traits.length > 0 && (
+                                <div style={{ marginBottom: 12 }}>
+                                  <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>性格特质</Text>
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                                    {char.personality.traits.map((t) => (
+                                      <Tag key={t}>{t}</Tag>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                              {char.personality.habits.length > 0 && (
+                                <div style={{ marginBottom: 12 }}>
+                                  <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>行为习惯</Text>
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                                    {char.personality.habits.map((h) => (
+                                      <Tag key={h} color="default">{h}</Tag>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                               {char.personality.arc.map((a, i) => (
                                 <div key={i} style={{ marginBottom: 8 }}>
                                   <Tag color="purple">{a.stage}</Tag>
@@ -561,7 +563,7 @@ export default function CharactersPanel({ wb }: Props) {
                                   )}
                                 </div>
                               ))}
-                            </div>
+                            </>
                           ),
                         },
                       ]}
@@ -577,12 +579,13 @@ export default function CharactersPanel({ wb }: Props) {
       <Modal
         title={isNew ? '新增角色' : '编辑角色'}
         open={editModalOpen}
+        forceRender
         mask={{ closable: false }}
         onOk={handleSave}
         onCancel={() => setEditModalOpen(false)}
         okText="保存"
         cancelText="取消"
-        width={600}
+        width={900}
         footer={(_, { OkBtn, CancelBtn }) => (
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
             <Button
@@ -608,13 +611,13 @@ export default function CharactersPanel({ wb }: Props) {
             <TextArea autoSize={{ minRows: 3, maxRows: 8 }} />
           </Form.Item>
           <Form.Item name="traits" label="性格特质">
-            <Select mode="tags" placeholder="输入后回车添加" tokenSeparators={['、', ',']} />
+            <TagInput placeholder="输入后回车添加" />
           </Form.Item>
           <Form.Item name="habits" label="行为习惯">
-            <Select mode="tags" placeholder="输入后回车添加" tokenSeparators={['、', ',']} />
+            <TagInput placeholder="输入后回车添加" />
           </Form.Item>
           <Form.Item name="tags" label="标签">
-            <Select mode="tags" placeholder="输入后回车添加" tokenSeparators={['、', ',']} />
+            <TagInput placeholder="输入后回车添加" color="blue" />
           </Form.Item>
 
           {/* 性格弧线编辑 */}
@@ -674,20 +677,11 @@ export default function CharactersPanel({ wb }: Props) {
                   style={{ flex: 2 }}
                   allowClear
                 />
-                <Select
-                  placeholder="关系类型"
-                  value={rel.type || undefined}
-                  onChange={(v) => updateRelation(i, { type: v })}
-                  options={RELATION_TYPES.map((t) => ({ label: t, value: t }))}
-                  style={{ flex: 1 }}
-                  showSearch
-                  allowClear
-                />
                 <Input
-                  placeholder="描述（可选）"
+                  placeholder="关系描述"
                   value={rel.description}
                   onChange={(e) => updateRelation(i, { description: e.target.value })}
-                  style={{ flex: 2 }}
+                  style={{ flex: 3 }}
                 />
                 <Button type="text" danger icon={<DeleteOutlined />} onClick={() => removeRelation(i)} />
               </div>

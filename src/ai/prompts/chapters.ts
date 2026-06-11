@@ -22,8 +22,12 @@ export function buildChapterPrompt(
   chapterSummary: string,
   previousContent: string,
   eventLog?: string,
+  userDirection?: string,
 ): string {
   const eventSection = eventLog ? `\n\n历史事件时间线（必须遵守，不能与历史事件矛盾）：\n${eventLog}` : ''
+  const directionSection = userDirection?.trim()
+    ? `\n\n用户创作方向（必须严格遵循，不得偏离）：\n${userDirection.trim()}`
+    : ''
 
   return `根据以下信息，为「${chapterTitle}」撰写完整正文。
 
@@ -44,10 +48,11 @@ ${chapterSummary}
 
 ${previousContent ? `前文末尾（用于衔接）：\n${previousContent}` : '这是全书第一章。'}
 ${eventSection}
+${directionSection}
 
 要求：
 - 直接输出正文内容，不要输出标题、场景划分或元信息
-- 2000-4000字
+- 充分展开每一个情节点，不少于3000字，内容充实饱满
 - 风格符合故事基调
 - 对话体现角色性格
 - 结尾留悬念或情绪钩子，自然过渡到下一章
@@ -92,4 +97,87 @@ ${customPrompt}
 - description: 事件描述（30-50字）
 
 只输出 JSON，不要输出其他内容。`
+}
+
+// ============================================================
+// 快速续写 - 灵感生成 & 章节写作
+// ============================================================
+
+export function buildInspirationPrompt(
+  mode: 'newVolume' | 'continue',
+  seed: string,
+  worldSettings: string,
+  characters: string,
+  previousSummary: string,
+  eventLog?: string,
+): string {
+  const modeDesc = mode === 'newVolume'
+    ? '新的一卷（全新的情节线、冲突和转折）'
+    : '在当前卷中继续推进故事'
+
+  const contextParts = [`故事种子：\n${seed}`]
+  if (worldSettings && worldSettings !== '暂无') contextParts.push(`世界观：\n${worldSettings}`)
+  if (characters && characters !== '暂无') contextParts.push(`主要人物：\n${characters}`)
+  if (previousSummary) contextParts.push(`前文要点：\n${previousSummary}`)
+  if (eventLog) contextParts.push(`已有事件：\n${eventLog}`)
+
+  return `你是一位天马行空的小说策划师。请为一部网络小说生成 5 个随机创作灵感。
+
+当前需要生成的是：${modeDesc}
+
+${contextParts.join('\n\n')}
+
+请生成 5 个完全不同的灵感方向，每个灵感需要：
+- title：一个抓人眼球的章节标题（中文，4-10字）
+- summary：约300字的内容简介，描述这一章的主要情节、冲突、转折和结局
+
+要求：
+- 每个灵感方向要截然不同（不要同质化）
+- 要有戏剧冲突、悬念和反转
+- 要与已有世界观和角色兼容
+- 要有网文的节奏感和爽感
+
+严格输出 JSON 数组，每个元素包含 title 和 summary 字段。
+只输出 JSON，不要输出其他内容。`
+}
+
+export function buildInspirationChapterPrompt(
+  seed: string,
+  worldSettings: string,
+  characters: string,
+  constraints: string,
+  chapterTitle: string,
+  chapterSummary: string,
+  previousContent: string,
+  eventLog?: string,
+): string {
+  const eventSection = eventLog ? `\n\n历史事件时间线（必须遵守，不能与历史事件矛盾）：\n${eventLog}` : ''
+
+  return `根据以下信息，为「${chapterTitle}」撰写完整正文。
+
+${`故事种子：
+${seed}`}
+
+${`世界观：
+${worldSettings}`}
+
+${`主要人物：
+${characters}`}
+
+${`核心约束：
+${constraints}`}
+
+本章大纲摘要：
+${chapterSummary}
+
+${previousContent ? `前文末尾（用于衔接）：\n${previousContent}` : '这是全书第一章。'}
+${eventSection}
+
+要求：
+- 直接输出正文内容，不要输出标题、场景划分或元信息
+- 充分展开每一个情节点，不少于3000字，内容充实饱满
+- 风格符合故事基调，对话体现角色性格
+- 结尾留悬念或情绪钩子
+- 严格遵守叙述视角（pov）
+- 不能与历史事件时间线中的记录矛盾`
 }
