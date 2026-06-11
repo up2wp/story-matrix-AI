@@ -25,7 +25,7 @@ app.get('/api/health', (_req, res) => {
 // 公开路由（无需登录）
 app.use('/api/auth', authRouter)
 
-// users 路由：POST 公开（注册），其余需登录
+// users 路由：需登录，创建用户需管理员；公开注册走 /api/auth/register
 app.use('/api/users', usersRouter)
 // 需要登录的路由
 app.use('/api/works', requireAuth, worksRouter)

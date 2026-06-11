@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import db from '../db.js'
 
 const router = Router()
 
@@ -21,6 +22,11 @@ interface ChatCompletionPayload {
 
 function normalizeBaseUrl(baseUrl?: string) {
   return (baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '')
+}
+
+function loadSystemAIConfig(): AIConfigPayload | null {
+  const row: any = db.prepare('SELECT aiConfig FROM systemConfig WHERE id = ?').get('singleton')
+  return row?.aiConfig ? JSON.parse(row.aiConfig) : null
 }
 
 function providerHeaders(apiKey?: string) {
@@ -64,15 +70,20 @@ router.post('/models', async (req, res) => {
 
 router.post('/chat-completions', async (req, res) => {
   const { config, messages, stream } = req.body as ChatCompletionPayload
-  if (!config?.model || !messages?.length) {
+  const aiConfig = config?.apiKey && config.apiKey !== '__server_configured__' ? config : loadSystemAIConfig()
+
+  if (!aiConfig?.model || !messages?.length) {
     return res.status(400).json({ error: '缺少模型或消息内容' })
+  }
+  if (!aiConfig.apiKey) {
+    return res.status(400).json({ error: '请先在系统管理中配置 AI API Key' })
   }
 
   try {
-    const response = await fetch(`${normalizeBaseUrl(config.baseUrl)}/chat/completions`, {
+    const response = await fetch(`${normalizeBaseUrl(aiConfig.baseUrl)}/chat/completions`, {
       method: 'POST',
-      headers: providerHeaders(config.apiKey),
-      body: JSON.stringify({ model: config.model, messages, stream: Boolean(stream) }),
+      headers: providerHeaders(aiConfig.apiKey),
+      body: JSON.stringify({ model: aiConfig.model, messages, stream: Boolean(stream) }),
     })
 
     if (!response.ok) {

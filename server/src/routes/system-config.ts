@@ -4,12 +4,21 @@ import { requireAdmin, sessions } from '../middleware/auth.js'
 
 const router = Router()
 
-// 行 → 对象（AI 配置仅管理员可见）
+// 行 → 对象（普通用户只获得可用性标记，不暴露真实 API Key）
 function rowToConfig(row: any, includeAI = false) {
+  const aiConfig = row.aiConfig ? JSON.parse(row.aiConfig) : undefined
   return {
     id: row.id,
     registrationEnabled: Boolean(row.registrationEnabled),
-    ...(includeAI && { aiConfig: row.aiConfig ? JSON.parse(row.aiConfig) : undefined }),
+    ...(includeAI && { aiConfig }),
+    ...(!includeAI && aiConfig && {
+      aiConfig: {
+        provider: aiConfig.provider,
+        baseUrl: aiConfig.baseUrl,
+        model: aiConfig.model,
+        apiKey: aiConfig.apiKey ? '__server_configured__' : '',
+      },
+    }),
   }
 }
 

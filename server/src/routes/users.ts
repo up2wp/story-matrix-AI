@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import db from '../db.js'
-import { requireAuth } from '../middleware/auth.js'
+import { requireAdmin, requireAuth } from '../middleware/auth.js'
 
 const router = Router()
 
@@ -29,8 +29,8 @@ router.get('/:id', requireAuth, (req, res) => {
   res.json(user)
 })
 
-// POST /api/users — 创建用户（公开，用于注册）
-router.post('/', (req, res) => {
+// POST /api/users — 创建用户（需管理员）
+router.post('/', requireAdmin, (req, res) => {
   const { id, username, passwordHash, displayName, role, createdAt } = req.body
   try {
     db.prepare(
