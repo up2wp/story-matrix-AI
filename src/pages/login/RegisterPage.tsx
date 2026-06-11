@@ -36,11 +36,12 @@ export default function RegisterPage() {
         display: 'flex',
         justifyContent: 'center',
         alignItems: 'center',
-        minHeight: '100vh',
-        background: '#f5f5f5',
+         minHeight: '100dvh',
+         padding: 16,
+         background: '#f5f5f5',
       }}
     >
-      <Card style={{ width: 400, boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
+      <Card style={{ width: 'min(400px, 100%)', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
           <Title level={3} style={{ marginBottom: 4 }}>Story Matrix AI</Title>
           <Text type="secondary">创建新账号</Text>

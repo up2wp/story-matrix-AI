@@ -74,6 +74,7 @@ interface AppState {
   // 侧边栏折叠
   sidebarCollapsed: boolean
   toggleSidebar: () => void
+  setSidebarCollapsed: (collapsed: boolean) => void
 
   // AI 面板开关
   aiPanelOpen: boolean
@@ -123,6 +124,7 @@ export const useStore = create<AppState>((set) => ({
 
   sidebarCollapsed: false,
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+  setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
 
   aiPanelOpen: true,
   toggleAIPanel: () => set((s) => ({ aiPanelOpen: !s.aiPanelOpen })),

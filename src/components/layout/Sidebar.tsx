@@ -40,7 +40,7 @@ export default function Sidebar() {
           { key: '/preview', icon: <ReadOutlined />, label: '全文预览' },
         ]
       : []),
-    ...(user?.role === 'admin'
+    ...(user && ['owner', 'admin'].includes(user.role)
       ? [
           { type: 'divider' as const },
           { key: '/admin', icon: <SettingOutlined />, label: '系统管理' },

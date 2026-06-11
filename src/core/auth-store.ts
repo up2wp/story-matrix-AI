@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import { db } from './db'
 import { getToken, setToken } from './api-client'
 import type { User } from './types'
 
@@ -27,8 +26,13 @@ interface AuthState {
   login: (username: string, password: string) => Promise<boolean>
   register: (username: string, password: string, displayName: string) => Promise<{ success: boolean; error?: string }>
   changePassword: (_oldPassword: string, newPassword: string) => Promise<{ success: boolean; error?: string }>
+  updateProfile: (displayName: string) => Promise<{ success: boolean; error?: string }>
   logout: () => void
   initSession: () => Promise<void>
+}
+
+function errorMessage(err: unknown, fallback: string) {
+  return err instanceof Error ? err.message : fallback
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -93,21 +97,44 @@ export const useAuthStore = create<AuthState>((set) => ({
       setToken(token)
       set({ user, isAuthenticated: true })
       return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err.message || '注册失败' }
+    } catch (err: unknown) {
+      return { success: false, error: errorMessage(err, '注册失败') }
     }
   },
 
-  changePassword: async (_oldPassword, newPassword) => {
-    const { user } = useAuthStore.getState()
-    if (!user) return { success: false, error: '未登录' }
-
+  changePassword: async (oldPassword, newPassword) => {
     try {
-      const newHash = await hashPassword(newPassword)
-      await db.users.update(user.id, { passwordHash: newHash })
+      const res = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({ oldPassword, newPassword }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: '修改密码失败' }))
+        return { success: false, error: err.error || '修改密码失败' }
+      }
       return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err.message || '修改密码失败' }
+    } catch (err: unknown) {
+      return { success: false, error: errorMessage(err, '修改密码失败') }
+    }
+  },
+
+  updateProfile: async (displayName) => {
+    try {
+      const res = await fetch('/api/auth/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({ displayName }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: '修改资料失败' }))
+        return { success: false, error: err.error || '修改资料失败' }
+      }
+      const user = await res.json()
+      set({ user })
+      return { success: true }
+    } catch (err: unknown) {
+      return { success: false, error: errorMessage(err, '修改资料失败') }
     }
   },
 

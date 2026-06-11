@@ -6,11 +6,91 @@
 
 html, body, #root {
   height: 100%;
-  overflow: hidden;
+  min-height: 100%;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+body {
+  overflow: hidden;
 }
 
 /* 修复 Ant Design Sider 内部 margin hack 导致的亚像素溢出滚动条 */
 .ant-layout-sider .ant-layout-sider-children {
   overflow: hidden;
+}
+
+@media (max-width: 768px) {
+  body {
+    overflow: auto;
+  }
+
+  .ant-modal {
+    max-width: calc(100vw - 24px);
+    margin: 12px auto;
+  }
+
+  .ant-modal .ant-modal-body {
+    max-height: calc(100dvh - 180px);
+    overflow-y: auto;
+  }
+
+  .mobile-user-cards {
+    display: block;
+  }
+
+  .desktop-user-table {
+    display: none;
+  }
+
+  .preview-page-layout {
+    display: block !important;
+    overflow: auto !important;
+  }
+
+  .preview-page-toc,
+  .preview-fullscreen-toc {
+    display: none !important;
+  }
+
+  .preview-page-main {
+    min-width: 0;
+    overflow: visible !important;
+  }
+
+  .preview-toolbar .ant-space {
+    display: grid;
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+
+  .preview-toolbar .ant-btn,
+  .preview-toolbar .ant-checkbox-wrapper {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .preview-content-card {
+    width: 100%;
+    overflow: visible !important;
+  }
+
+  .preview-content-card .ant-card-body {
+    max-width: none !important;
+    padding: 16px !important;
+  }
+
+  .preview-fullscreen-layout {
+    display: block !important;
+    overflow: auto !important;
+  }
+
+  .preview-fullscreen-content {
+    padding: 56px 18px 24px !important;
+  }
+}
+
+@media (min-width: 769px) {
+  .mobile-user-cards {
+    display: none;
+  }
 }

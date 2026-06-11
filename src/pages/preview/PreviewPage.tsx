@@ -179,9 +179,9 @@ export default function PreviewPage() {
         </div>
 
         {/* 目录 + 正文 */}
-        <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        <div className="preview-fullscreen-layout" style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
           {/* 左侧迷你目录 */}
-          <div style={{ width: 200, flexShrink: 0, overflow: 'auto', padding: '16px 12px', borderRight: `1px solid ${theme.border}` }}>
+          <div className="preview-fullscreen-toc" style={{ width: 200, flexShrink: 0, overflow: 'auto', padding: '16px 12px', borderRight: `1px solid ${theme.border}` }}>
             <Text strong style={{ fontSize: 13, color: theme.title, display: 'block', marginBottom: 12 }}>
               {currentWork.title}
             </Text>
@@ -211,7 +211,7 @@ export default function PreviewPage() {
           </div>
 
           {/* 正文 */}
-          <div style={{ flex: 1, overflow: 'auto', padding: '32px 48px' }}>
+          <div className="preview-fullscreen-content" style={{ flex: 1, overflow: 'auto', padding: '32px 48px' }}>
             <div style={{ maxWidth: 720, margin: '0 auto' }}>
               {renderContent(colorStyle)}
             </div>
@@ -223,9 +223,10 @@ export default function PreviewPage() {
 
   // 普通模式
   return (
-    <div style={{ display: 'flex', gap: 16, flex: 1, overflow: 'hidden' }}>
+    <div className="preview-page-layout" style={{ display: 'flex', gap: 16, flex: 1, overflow: 'hidden' }}>
       {/* 左栏：目录 */}
       <div
+        className="preview-page-toc"
         style={{
           width: 240,
           flexShrink: 0,
@@ -284,9 +285,9 @@ export default function PreviewPage() {
       </div>
 
       {/* 右栏：正文 */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div className="preview-page-main" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {/* 工具栏 */}
-        <div style={{ flexShrink: 0, marginBottom: 16 }}>
+        <div className="preview-toolbar" style={{ flexShrink: 0, marginBottom: 16 }}>
           <Space wrap>
             <Checkbox
               checked={includeMetadata}
@@ -314,6 +315,7 @@ export default function PreviewPage() {
 
         {/* 全文内容 */}
         <Card
+          className="preview-content-card"
           bodyStyle={{ padding: 24, maxWidth: 800, margin: '0 auto' }}
           style={{ flex: 1, overflow: 'auto' }}
         >

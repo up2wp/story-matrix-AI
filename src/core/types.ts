@@ -185,10 +185,11 @@ export interface AIConfig {
 export interface User {
   id: string
   username: string
-  passwordHash: string   // SHA-256 hex digest
+  passwordHash?: string   // SHA-256 hex digest
   displayName: string
-  role: 'admin' | 'user'
+  role: 'owner' | 'admin' | 'user'
   createdAt: number
+  deletedAt?: number | null
 }
 
 // --- 系统配置 ---

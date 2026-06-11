@@ -6,6 +6,7 @@ import {
   UserOutlined,
   LogoutOutlined,
   LockOutlined,
+  IdcardOutlined,
   DownOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router'
@@ -21,11 +22,35 @@ export default function TopBar() {
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
   const changePassword = useAuthStore((s) => s.changePassword)
+  const updateProfile = useAuthStore((s) => s.updateProfile)
   const navigate = useNavigate()
 
+  const [profileModalOpen, setProfileModalOpen] = useState(false)
+  const [profileLoading, setProfileLoading] = useState(false)
+  const [profileForm] = Form.useForm()
   const [pwdModalOpen, setPwdModalOpen] = useState(false)
   const [pwdLoading, setPwdLoading] = useState(false)
   const [pwdForm] = Form.useForm()
+
+  const openProfileModal = () => {
+    profileForm.setFieldsValue({ displayName: user?.displayName })
+    setProfileModalOpen(true)
+  }
+
+  const handleUpdateProfile = async (values: { displayName: string }) => {
+    setProfileLoading(true)
+    try {
+      const result = await updateProfile(values.displayName)
+      if (result.success) {
+        message.success('资料已更新')
+        setProfileModalOpen(false)
+      } else {
+        message.error(result.error || '修改失败')
+      }
+    } finally {
+      setProfileLoading(false)
+    }
+  }
 
   const handleChangePassword = async (values: { oldPassword: string; newPassword: string; confirmPassword: string }) => {
     if (values.newPassword !== values.confirmPassword) {
@@ -48,6 +73,12 @@ export default function TopBar() {
   }
 
   const userMenuItems = [
+    {
+      key: 'profile',
+      icon: <IdcardOutlined />,
+      label: '个人资料',
+      onClick: openProfileModal,
+    },
     {
       key: 'password',
       icon: <LockOutlined />,
@@ -94,6 +125,23 @@ export default function TopBar() {
           </Dropdown>
         </Space>
       </Header>
+
+      <Modal
+        title="个人资料"
+        open={profileModalOpen}
+        mask={{ closable: false }}
+        onCancel={() => { setProfileModalOpen(false); profileForm.resetFields() }}
+        onOk={() => profileForm.submit()}
+        confirmLoading={profileLoading}
+        okText="保存"
+        cancelText="取消"
+      >
+        <Form form={profileForm} onFinish={handleUpdateProfile} layout="vertical">
+          <Form.Item name="displayName" label="显示名称" rules={[{ required: true, message: '请输入显示名称' }]}>
+            <Input />
+          </Form.Item>
+        </Form>
+      </Modal>
 
       <Modal
         title="修改密码"
