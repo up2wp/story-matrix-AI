@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3'
+import type { Database as DatabaseInstance } from 'better-sqlite3'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
@@ -23,7 +24,8 @@ db.exec(`
     passwordHash TEXT NOT NULL,
     displayName TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'user',
-    createdAt INTEGER NOT NULL
+    createdAt INTEGER NOT NULL,
+    deletedAt INTEGER
   );
 
   CREATE TABLE IF NOT EXISTS works (
@@ -42,5 +44,19 @@ db.exec(`
     aiConfig TEXT
   );
 `)
+
+function columnExists(database: DatabaseInstance, table: string, column: string): boolean {
+  return database.prepare(`PRAGMA table_info(${table})`).all().some((row: any) => row.name === column)
+}
+
+export function migrateDatabase(database: DatabaseInstance = db) {
+  if (!columnExists(database, 'users', 'deletedAt')) {
+    database.prepare('ALTER TABLE users ADD COLUMN deletedAt INTEGER').run()
+  }
+
+  database.prepare("UPDATE users SET role = 'owner' WHERE username = 'admin' AND role = 'admin'").run()
+}
+
+migrateDatabase()
 
 export default db

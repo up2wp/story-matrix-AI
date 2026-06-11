@@ -13,6 +13,20 @@ interface Session {
   createdAt: number
 }
 
+export interface CurrentUser {
+  id: string
+  username: string
+  displayName: string
+  role: 'owner' | 'admin' | 'user'
+  createdAt: number
+  deletedAt: number | null
+}
+
+export interface AuthenticatedRequest extends Request {
+  session: Session
+  currentUser: CurrentUser
+}
+
 export const sessions = new Map<string, Session>()
 
 const SESSION_TTL = 24 * 60 * 60 * 1000 // 24 小时
@@ -57,26 +71,57 @@ function getSession(req: Request): Session | null {
   return session
 }
 
+export function getCurrentUser(req: Request): CurrentUser | null {
+  const session = getSession(req)
+  if (!session) return null
+
+  const user = db.prepare(
+    'SELECT id, username, displayName, role, createdAt, deletedAt FROM users WHERE id = ?'
+  ).get(session.userId) as CurrentUser | undefined
+
+  if (!user || user.deletedAt) return null
+  session.username = user.username
+  session.role = user.role
+  return user
+}
+
 /** 认证中间件 — 要求登录 */
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
   const session = getSession(req)
-  if (!session) {
+  const user = getCurrentUser(req)
+  if (!session || !user) {
     return res.status(401).json({ error: '未登录，请先登录' })
   }
-  // 将会话信息挂载到 req 上
-  ;(req as any).session = session
+  const authReq = req as AuthenticatedRequest
+  authReq.session = session
+  authReq.currentUser = user
   next()
 }
 
-/** 管理员权限中间件 — 要求 admin 角色 */
+/** 管理员权限中间件 — 要求 owner/admin 角色 */
 export function requireAdmin(req: Request, res: Response, next: NextFunction) {
   const session = getSession(req)
-  if (!session) {
+  const user = getCurrentUser(req)
+  if (!session || !user) {
     return res.status(401).json({ error: '未登录，请先登录' })
   }
-  if (session.role !== 'admin') {
+  if (!['owner', 'admin'].includes(user.role)) {
     return res.status(403).json({ error: '需要管理员权限' })
   }
-  ;(req as any).session = session
+  const authReq = req as AuthenticatedRequest
+  authReq.session = session
+  authReq.currentUser = user
   next()
+}
+
+export function canManageUser(actor: CurrentUser, target: CurrentUser | { role: CurrentUser['role']; id?: string }) {
+  if (actor.role === 'owner') return target.role !== 'owner'
+  if (actor.role === 'admin') return target.role === 'user'
+  return false
+}
+
+export function canCreateRole(actor: CurrentUser, role: CurrentUser['role']) {
+  if (actor.role === 'owner') return role === 'admin' || role === 'user'
+  if (actor.role === 'admin') return role === 'user'
+  return false
 }

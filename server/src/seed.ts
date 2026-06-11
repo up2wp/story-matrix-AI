@@ -20,13 +20,15 @@ export function seed() {
     console.log('[seed] 已创建默认系统配置')
   }
 
-  // 确保 admin 用户存在
+  // 确保 admin 拥有者存在
   const admin = db.prepare('SELECT id FROM users WHERE username = ?').get('admin')
   if (!admin) {
     const id = crypto.randomUUID()
     db.prepare(
       'INSERT INTO users (id, username, passwordHash, displayName, role, createdAt) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(id, 'admin', sha256('admin'), 'Admin', 'admin', Date.now())
-    console.log('[seed] 已创建默认管理员 (admin/admin)')
+    ).run(id, 'admin', sha256('admin'), 'Admin', 'owner', Date.now())
+    console.log('[seed] 已创建默认拥有者 (admin/admin)')
+  } else {
+    db.prepare("UPDATE users SET role = 'owner', deletedAt = NULL WHERE username = 'admin'").run()
   }
 }
