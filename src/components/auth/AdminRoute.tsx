@@ -4,7 +4,7 @@ import { useAuthStore } from '@/core/auth-store'
 export default function AdminRoute({ children }: { children: React.ReactNode }) {
   const user = useAuthStore(s => s.user)
 
-  if (!user || user.role !== 'admin') {
+  if (!user || !['owner', 'admin'].includes(user.role)) {
     return <Navigate to="/works" replace />
   }
 

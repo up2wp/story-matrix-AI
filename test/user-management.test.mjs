@@ -8,6 +8,8 @@ const usersRouteSource = await readFile(new URL('../server/src/routes/users.ts',
 const authStoreSource = await readFile(new URL('../src/core/auth-store.ts', import.meta.url), 'utf8')
 const adminPageSource = await readFile(new URL('../src/pages/admin/AdminPage.tsx', import.meta.url), 'utf8')
 const topBarSource = await readFile(new URL('../src/components/layout/TopBar.tsx', import.meta.url), 'utf8')
+const adminRouteSource = await readFile(new URL('../src/components/auth/AdminRoute.tsx', import.meta.url), 'utf8')
+const sidebarSource = await readFile(new URL('../src/components/layout/Sidebar.tsx', import.meta.url), 'utf8')
 
 assert.match(
   dbSource,
@@ -63,6 +65,12 @@ assert.match(
   'delete user route should soft-delete users instead of hard deleting rows',
 )
 
+assert.match(
+  usersRouteSource,
+  /function canViewUser/,
+  'single-user lookup endpoints should enforce role-scoped visibility',
+)
+
 assert.doesNotMatch(
   usersRouteSource,
   /DELETE FROM users/,
@@ -103,6 +111,18 @@ assert.match(
   topBarSource,
   /label: '个人资料'/,
   'avatar dropdown should expose profile editing',
+)
+
+assert.match(
+  adminRouteSource,
+  /\['owner', 'admin'\]\.includes\(user\.role\)/,
+  'owners and admins should both be allowed into the admin route',
+)
+
+assert.match(
+  sidebarSource,
+  /\['owner', 'admin'\]\.includes\(user\.role\)/,
+  'owners and admins should both see the system management navigation item',
 )
 
 console.log('user-management behavior assertions passed')

@@ -29,6 +29,13 @@ function getUser(id: string): CurrentUser | undefined {
   return db.prepare(`SELECT ${SAFE_FIELDS} FROM users WHERE id = ?`).get(id) as CurrentUser | undefined
 }
 
+function canViewUser(actor: CurrentUser, target: CurrentUser) {
+  if (actor.id === target.id) return true
+  if (actor.role === 'owner') return target.role !== 'owner'
+  if (actor.role === 'admin') return target.role === 'user'
+  return false
+}
+
 function paramId(req: AuthenticatedRequest) {
   return Array.isArray(req.params.id) ? req.params.id[0] : req.params.id
 }
@@ -83,18 +90,22 @@ router.get('/', requireAdmin, (req, res) => {
 
 // GET /api/users/by-username?username=X — 按用户名查询（需登录）
 router.get('/by-username', requireAuth, (req, res) => {
+  const currentUser = (req as AuthenticatedRequest).currentUser
   const username = req.query.username as string
   if (!username) return res.status(400).json({ error: '缺少 username 参数' })
-  const user = db.prepare(`SELECT ${SAFE_FIELDS} FROM users WHERE username = ? AND deletedAt IS NULL`).get(username)
+  const user = db.prepare(`SELECT ${SAFE_FIELDS} FROM users WHERE username = ? AND deletedAt IS NULL`).get(username) as CurrentUser | undefined
   if (!user) return res.status(404).json({ error: '用户不存在' })
+  if (!canViewUser(currentUser, user)) return res.status(403).json({ error: '无权查看该用户' })
   res.json(user)
 })
 
 // GET /api/users/:id — 按 ID 查询（需登录）
 router.get('/:id', requireAuth, (req, res) => {
+  const currentUser = (req as AuthenticatedRequest).currentUser
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id
-  const user = db.prepare(`SELECT ${SAFE_FIELDS} FROM users WHERE id = ? AND deletedAt IS NULL`).get(id)
+  const user = db.prepare(`SELECT ${SAFE_FIELDS} FROM users WHERE id = ? AND deletedAt IS NULL`).get(id) as CurrentUser | undefined
   if (!user) return res.status(404).json({ error: '用户不存在' })
+  if (!canViewUser(currentUser, user)) return res.status(403).json({ error: '无权查看该用户' })
   res.json(user)
 })
 
