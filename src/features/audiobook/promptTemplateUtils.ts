@@ -4,7 +4,13 @@ export const CONTEXT_PLACEHOLDER = '【上下文】'
 export const TEXT_PLACEHOLDER = '【文本】'
 
 export function validatePromptTemplate(template: string) {
-  return template.includes(CONTEXT_PLACEHOLDER) && template.includes(TEXT_PLACEHOLDER)
+  return template.includes(CONTEXT_PLACEHOLDER)
+}
+
+function removeSpeechTextPlaceholder(template: string) {
+  return template
+    .replace(/^[ \t]*(朗读|待朗读正文|正文|文本)[:：][ \t]*【文本】[ \t]*$/gm, '')
+    .replaceAll(TEXT_PLACEHOLDER, '')
 }
 
 function paragraphsWithOffsets(content: string) {
@@ -45,11 +51,12 @@ export function fillPromptTemplate(binding: VoiceBinding, chapter: Chapter, segm
   if (!template.trim()) throw new Error(`${binding.displayName} 缺少提示词模板`)
   if (!validatePromptTemplate(template)) throw new Error(`${binding.displayName} 的提示词模板缺少占位符`)
   const context = contextBeforeSegment(chapter, segment)
-  const filled = template.replaceAll(CONTEXT_PLACEHOLDER, context).replaceAll(TEXT_PLACEHOLDER, segment.text)
+  const cleanedTemplate = removeSpeechTextPlaceholder(template)
+  const filled = cleanedTemplate.replaceAll(CONTEXT_PLACEHOLDER, context)
   if (filled.length <= limit) return { instruct: filled, clipped: false, hash: stableHash(filled) }
   const overflow = filled.length - limit
   const clippedContext = context.slice(Math.min(context.length, overflow + 20))
-  const clipped = template.replaceAll(CONTEXT_PLACEHOLDER, clippedContext).replaceAll(TEXT_PLACEHOLDER, segment.text).slice(-limit)
+  const clipped = cleanedTemplate.replaceAll(CONTEXT_PLACEHOLDER, clippedContext).slice(-limit)
   return { instruct: clipped, clipped: true, hash: stableHash(clipped) }
 }
 

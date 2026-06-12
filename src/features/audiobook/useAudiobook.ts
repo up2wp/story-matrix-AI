@@ -383,7 +383,7 @@ export function useAudiobook() {
     if (!work) return ''
     if (!aiConfig.apiKey) throw new Error('请先在系统管理中配置 AI')
     const text = await generate(buildQwenTtsRoleTemplatePrompt(work, characterId), AUDIOBOOK_TEMPLATE_SYSTEM_PROMPT, aiConfig)
-    if (!validatePromptTemplate(text)) throw new Error('AI 返回缺少【上下文】或【文本】占位符')
+    if (!validatePromptTemplate(text)) throw new Error('AI 返回缺少【上下文】占位符')
     return text.trim()
   }
 

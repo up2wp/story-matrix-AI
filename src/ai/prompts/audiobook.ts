@@ -12,8 +12,9 @@ export const AUDIOBOOK_SEGMENT_SYSTEM_PROMPT = `你是小说有声读物分镜�
 - 保持原文顺序，不要改写正文内容`
 
 export const AUDIOBOOK_TEMPLATE_SYSTEM_PROMPT = `你是 QwenTTS 有声读物提示词设计师。
-只输出 100-200 字中文提示词模板，不要 Markdown，不要解释。
-模板必须包含占位符【上下文】和【文本】，并能直接作为 Voicebox instruct 使用。`
+只输出 100-200 字中文朗读指导，不要 Markdown，不要解释。
+指导必须包含占位符【上下文】，只能描述角色音色、语气、节奏、情绪控制和朗读规则。
+不要包含待合成正文，不要包含【文本】占位符；正文会通过 Voicebox text 参数单独传入。`
 
 export function buildVoicePrompt(work: Work, characterId?: string, mood?: string) {
   if (!characterId) {
@@ -63,7 +64,7 @@ ${chapter.content}
 export function buildQwenTtsRoleTemplatePrompt(work: Work, characterId: string) {
   const character = work.characters.find((item) => item.id === characterId)
   if (!character) throw new Error('角色不存在')
-  return `请基于以下世界观和角色设定，为该角色生成 QwenTTS 有声读物提示词模板。
+  return `请基于以下世界观和角色设定，为该角色生成 QwenTTS 有声读物朗读指导。
 
 # 世界观
 ${seedContext(work)}
@@ -79,9 +80,8 @@ ${worldContext(work)}
 关系：${character.relations.map((relation) => `${relation.type}:${relation.description}`).join('；') || '未设定'}
 
 # 输出要求
-请生成 100-200 字中文模板，必须包含并保留以下两行：
+请生成 100-200 字中文朗读指导，必须包含并保留这一行：
 当前语境：【上下文】
-朗读：【文本】
 
-模板应说明角色音色、语气、节奏、情绪控制和朗读规则。`
+朗读指导应说明角色音色、语气、节奏、情绪控制和朗读规则。不要写待朗读正文，不要输出【文本】占位符。`
 }

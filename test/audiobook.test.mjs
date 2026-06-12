@@ -10,6 +10,8 @@ const serverIndexSource = await readFile(new URL('../server/src/index.ts', impor
 const voiceboxRouteSource = await readFile(new URL('../server/src/routes/voicebox.ts', import.meta.url), 'utf8')
 const userVoicesRouteSource = await readFile(new URL('../server/src/routes/user-voices.ts', import.meta.url), 'utf8')
 const voiceboxClientSource = await readFile(new URL('../src/features/audiobook/voiceboxClient.ts', import.meta.url), 'utf8')
+const promptTemplateUtilsSource = await readFile(new URL('../src/features/audiobook/promptTemplateUtils.ts', import.meta.url), 'utf8')
+const useUserVoicesSource = await readFile(new URL('../src/features/audiobook/useUserVoices.ts', import.meta.url), 'utf8')
 const systemConfigStoreSource = await readFile(new URL('../src/core/system-config-store.ts', import.meta.url), 'utf8')
 const adminPageSource = await readFile(new URL('../src/pages/admin/AdminPage.tsx', import.meta.url), 'utf8')
 const useAudiobookSource = await readFile(new URL('../src/features/audiobook/useAudiobook.ts', import.meta.url), 'utf8')
@@ -259,6 +261,18 @@ assert.match(
 
 assert.match(
   voiceboxClientSource,
+  /language\?: string/,
+  'Voicebox profile creation should allow explicit language selection',
+)
+
+assert.match(
+  useUserVoicesSource,
+  /language: voiceboxConfig\.defaultLanguage/,
+  'user voice creation should pass the configured Voicebox language to cloned profiles',
+)
+
+assert.match(
+  voiceboxClientSource,
   /\/api\/user-voices/,
   'browser user voice client should call same-origin user voice routes',
 )
@@ -373,8 +387,20 @@ assert.match(
 
 assert.match(
   audiobookPromptSource,
-  /【上下文】[\s\S]*【文本】/,
-  'QwenTTS prompt templates should preserve context and text placeholders',
+  /当前语境：【上下文】/,
+  'QwenTTS instruct prompts should preserve the context placeholder',
+)
+
+assert.doesNotMatch(
+  audiobookPromptSource,
+  /朗读[:：]【文本】|当前朗读[:：]【文本】|待朗读正文[:：]【文本】/,
+  'QwenTTS instruct prompts should not require speech text placeholders because Voicebox receives text separately',
+)
+
+assert.match(
+  promptTemplateUtilsSource,
+  /removeSpeechTextPlaceholder/,
+  'legacy prompt templates should strip speech text placeholders before building Voicebox instruct',
 )
 
 assert.match(
