@@ -151,6 +151,71 @@ export interface EventLogConfig {
   extractPrompt: string
 }
 
+// --- 有声读物 / Voicebox ---
+
+export interface VoiceboxConfig {
+  serviceUrl: string
+  authType: 'none' | 'bearer' | 'api-key' | 'custom-header'
+  bearerToken?: string
+  apiKey?: string
+  customHeaderName?: string
+  customHeaderValue?: string
+  defaultEngine: string
+  defaultLanguage: string
+  defaultChunking: boolean
+  defaultCrossfade: number
+  defaultNormalize: boolean
+}
+
+export type VoiceBindingSource = 'profile' | 'sample' | 'pending'
+export type AudiobookSpeakerKind = 'narrator' | 'character'
+export type ChapterAudioStatus = 'pending' | 'generating' | 'completed' | 'failed'
+
+export interface VoiceBinding {
+  id: string
+  speakerKind: AudiobookSpeakerKind
+  characterId?: string
+  displayName: string
+  source: VoiceBindingSource
+  profileId?: string
+  profileName?: string
+  sampleId?: string
+  prompt: string
+  referenceText?: string
+  updatedAt: number
+}
+
+export interface AudiobookSegment {
+  id: string
+  chapterId: string
+  order: number
+  speakerKind: AudiobookSpeakerKind
+  characterId?: string
+  speakerName: string
+  text: string
+  mood: string
+  prompt: string
+  generationId?: string
+  status: ChapterAudioStatus
+  error?: string
+}
+
+export interface ChapterAudioState {
+  chapterId: string
+  status: ChapterAudioStatus
+  segmentIds: string[]
+  generationIds: string[]
+  updatedAt: number
+  error?: string
+}
+
+export interface WorkAudiobookConfig {
+  narratorBinding: VoiceBinding
+  characterBindings: Record<string, VoiceBinding>
+  segmentsByChapter: Record<string, AudiobookSegment[]>
+  chapterAudio: Record<string, ChapterAudioState>
+}
+
 // --- 作品 ---
 
 export interface Work {
@@ -169,6 +234,7 @@ export interface Work {
   chapters: Chapter[]
   eventLog?: EventLogEntry[]
   eventLogConfig?: EventLogConfig
+  audiobook?: WorkAudiobookConfig
 }
 
 // --- AI 相关 ---
@@ -199,4 +265,5 @@ export interface SystemConfig {
   id: 'singleton'
   registrationEnabled: boolean
   aiConfig?: AIConfig
+  voiceboxConfig?: VoiceboxConfig
 }

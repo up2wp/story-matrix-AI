@@ -120,7 +120,7 @@ router.patch('/:id', (req, res) => {
   }
 
   // 嵌套字段合并到 data JSON
-  const nestedKeys = ['seed', 'characters', 'settings', 'constraints', 'storylines', 'outline', 'chapters', 'eventLog', 'eventLogConfig']
+  const nestedKeys = ['seed', 'characters', 'settings', 'constraints', 'storylines', 'outline', 'chapters', 'eventLog', 'eventLogConfig', 'audiobook']
   const hasNested = nestedKeys.some((k) => k in fields)
   if (hasNested) {
     const existingData = JSON.parse(existing.data)
