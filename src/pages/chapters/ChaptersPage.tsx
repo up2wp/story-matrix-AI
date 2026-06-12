@@ -989,7 +989,6 @@ export default function ChaptersPage() {
                 work={currentWork}
                 chapter={activeChapter}
                 writing={writingChapterId === activeChapter.id}
-                involvedCharacterIds={(getOutlineNode(activeChapter.outlineId)?.characterIds || []).map((idOrName) => currentWork.characters.find((c) => c.id === idOrName || c.name === idOrName)?.id).filter((id): id is string => Boolean(id))}
               />
             )}
           </div>
