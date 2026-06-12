@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Table, Button, Modal, Form, Input, Select, Popconfirm, Space, Switch, Typography, Tag, message, Tabs, Card } from 'antd'
-import { PlusOutlined, DeleteOutlined, EditOutlined, UserOutlined, SettingOutlined, RobotOutlined } from '@ant-design/icons'
+import { PlusOutlined, DeleteOutlined, EditOutlined, UserOutlined, SettingOutlined, RobotOutlined, CustomerServiceOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { getToken } from '@/core/api-client'
 import { db } from '@/core/db'
 import { useAuthStore } from '@/core/auth-store'
 import { useSystemConfigStore } from '@/core/system-config-store'
-import type { User, AIConfig } from '@/core/types'
+import type { User, AIConfig, VoiceboxConfig } from '@/core/types'
 
 const { Title, Text } = Typography
 
@@ -19,9 +19,141 @@ export default function AdminPage() {
           { key: 'users', label: '用户管理', icon: <UserOutlined />, children: <UserManagement /> },
           { key: 'settings', label: '系统设置', icon: <SettingOutlined />, children: <SystemSettings /> },
           { key: 'model', label: '模型管理', icon: <RobotOutlined />, children: <ModelSettings /> },
+          { key: 'voicebox', label: 'Voicebox', icon: <CustomerServiceOutlined />, children: <VoiceboxSettings /> },
         ]}
       />
     </div>
+  )
+}
+
+// --- Voicebox 设置 ---
+
+function VoiceboxSettings() {
+  const voiceboxConfig = useSystemConfigStore(s => s.voiceboxConfig)
+  const saveVoiceboxConfig = useSystemConfigStore(s => s.saveVoiceboxConfig)
+  const [form] = Form.useForm()
+  const [saving, setSaving] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [profiles, setProfiles] = useState<Array<{ id?: string; profile_id?: string; name?: string; display_name?: string }>>([])
+
+  useEffect(() => {
+    form.setFieldsValue(voiceboxConfig)
+  }, [voiceboxConfig, form])
+
+  const requestHeaders = () => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    const token = getToken()
+    if (token) headers.Authorization = `Bearer ${token}`
+    return headers
+  }
+
+  const handleSave = async (values: VoiceboxConfig) => {
+    setSaving(true)
+    try {
+      await saveVoiceboxConfig({
+        ...values,
+        bearerToken: values.bearerToken === '__server_configured__' ? voiceboxConfig.bearerToken : values.bearerToken,
+        apiKey: values.apiKey === '__server_configured__' ? voiceboxConfig.apiKey : values.apiKey,
+        customHeaderValue: values.customHeaderValue === '__server_configured__' ? voiceboxConfig.customHeaderValue : values.customHeaderValue,
+      })
+      message.success('Voicebox 配置已保存')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleTest = async () => {
+    setTesting(true)
+    try {
+      const healthResponse = await fetch('/api/voicebox/health', { headers: requestHeaders() })
+      if (!healthResponse.ok) throw new Error(await healthResponse.text())
+      const profilesResponse = await fetch('/api/voicebox/profiles', { headers: requestHeaders() })
+      if (!profilesResponse.ok) throw new Error(await profilesResponse.text())
+      const data = await profilesResponse.json() as Array<{ id?: string; profile_id?: string; name?: string; display_name?: string }>
+      setProfiles(data)
+      message.success(`Voicebox 连接正常，读取到 ${data.length} 个音色`)
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : '未知错误'
+      message.error(`Voicebox 连接失败: ${errMsg}`)
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  const authType = Form.useWatch('authType', form) || 'none'
+
+  return (
+    <Form form={form} onFinish={handleSave} layout="vertical" initialValues={voiceboxConfig}>
+      <Card title="Voicebox 服务" style={{ marginBottom: 16 }}>
+        <Form.Item name="serviceUrl" label="服务地址" rules={[{ required: true, message: '请输入 Voicebox 服务地址' }]} extra="支持本机、内网或线上 Voicebox 域名。浏览器不会直连该地址，所有请求都会通过 Story Matrix 后端代理。">
+          <Input placeholder="https://voicebox.example.com" />
+        </Form.Item>
+        <Form.Item name="authType" label="鉴权方式" rules={[{ required: true, message: '请选择鉴权方式' }]}>
+          <Select
+            options={[
+              { value: 'none', label: '无鉴权' },
+              { value: 'bearer', label: 'Bearer Token' },
+              { value: 'api-key', label: 'X-API-Key' },
+              { value: 'custom-header', label: '自定义 Header' },
+            ]}
+          />
+        </Form.Item>
+        {authType === 'bearer' && (
+          <Form.Item name="bearerToken" label="Bearer Token" extra="只保存在后端系统配置中，浏览器不会直接发送给 Voicebox。">
+            <Input.Password placeholder="输入 Bearer Token" />
+          </Form.Item>
+        )}
+        {authType === 'api-key' && (
+          <Form.Item name="apiKey" label="API Key" extra="请求 Voicebox 时后端会以 X-API-Key header 注入。">
+            <Input.Password placeholder="输入 API Key" />
+          </Form.Item>
+        )}
+        {authType === 'custom-header' && (
+          <Space direction="vertical" style={{ width: '100%' }}>
+            <Form.Item name="customHeaderName" label="Header 名称" rules={[{ required: true, message: '请输入 Header 名称' }]}>
+              <Input placeholder="例如 Authorization 或 X-Voicebox-Key" />
+            </Form.Item>
+            <Form.Item name="customHeaderValue" label="Header 值">
+              <Input.Password placeholder="输入 Header 值" />
+            </Form.Item>
+          </Space>
+        )}
+        <Form.Item name="defaultEngine" label="默认引擎" rules={[{ required: true, message: '请输入默认引擎' }]}> 
+          <Input placeholder="f5-tts" />
+        </Form.Item>
+        <Form.Item name="defaultLanguage" label="默认语言" rules={[{ required: true, message: '请输入默认语言' }]}>
+          <Input placeholder="zh" />
+        </Form.Item>
+        <Space wrap>
+          <Form.Item name="defaultChunking" valuePropName="checked" style={{ marginBottom: 0 }}>
+            <Switch checkedChildren="分块" unCheckedChildren="不分块" />
+          </Form.Item>
+          <Form.Item name="defaultNormalize" valuePropName="checked" style={{ marginBottom: 0 }}>
+            <Switch checkedChildren="归一化" unCheckedChildren="不归一化" />
+          </Form.Item>
+          <Form.Item name="defaultCrossfade" label="交叉淡化" style={{ marginBottom: 0 }}>
+            <Input type="number" min={0} max={1} step={0.05} style={{ width: 120 }} />
+          </Form.Item>
+        </Space>
+      </Card>
+
+      <Space>
+        <Button type="primary" htmlType="submit" loading={saving}>保存配置</Button>
+        <Button htmlType="button" onClick={handleTest} loading={testing}>检查连接 / 刷新音色</Button>
+      </Space>
+
+      <Card title="已读取音色" size="small" style={{ marginTop: 16 }}>
+        {profiles.length ? (
+          <Space wrap>
+            {profiles.map((profile, index) => (
+              <Tag key={profile.id || profile.profile_id || index}>{profile.name || profile.display_name || profile.id || profile.profile_id}</Tag>
+            ))}
+          </Space>
+        ) : (
+          <Text type="secondary">保存配置后点击检查连接，可通过后端代理读取 Voicebox profiles。</Text>
+        )}
+      </Card>
+    </Form>
   )
 }
 

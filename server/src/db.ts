@@ -41,7 +41,8 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS systemConfig (
     id TEXT PRIMARY KEY CHECK (id = 'singleton'),
     registrationEnabled INTEGER NOT NULL DEFAULT 0,
-    aiConfig TEXT
+    aiConfig TEXT,
+    voiceboxConfig TEXT
   );
 `)
 
@@ -54,6 +55,10 @@ function columnExists(database: DatabaseInstance, table: string, column: string)
 export function migrateDatabase(database: DatabaseInstance = db) {
   if (!columnExists(database, 'users', 'deletedAt')) {
     database.prepare('ALTER TABLE users ADD COLUMN deletedAt INTEGER').run()
+  }
+
+  if (!columnExists(database, 'systemConfig', 'voiceboxConfig')) {
+    database.prepare('ALTER TABLE systemConfig ADD COLUMN voiceboxConfig TEXT').run()
   }
 
   database.prepare("UPDATE users SET role = 'owner' WHERE username = 'admin' AND role = 'admin'").run()

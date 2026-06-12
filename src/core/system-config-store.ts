@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { db } from './db'
-import type { AIConfig } from './types'
+import type { AIConfig, VoiceboxConfig } from './types'
 import { useStore } from './store'
 
 // ============================================================
@@ -10,10 +10,12 @@ import { useStore } from './store'
 interface SystemConfigState {
   registrationEnabled: boolean
   aiConfig: AIConfig
+  voiceboxConfig: VoiceboxConfig
   isLoading: boolean
   loadConfig: () => Promise<void>
   toggleRegistration: () => Promise<void>
   saveAIConfig: (config: AIConfig) => Promise<void>
+  saveVoiceboxConfig: (config: VoiceboxConfig) => Promise<void>
 }
 
 const defaultAIConfig: AIConfig = {
@@ -23,21 +25,37 @@ const defaultAIConfig: AIConfig = {
   model: 'gpt-4o-mini',
 }
 
+export const defaultVoiceboxConfig: VoiceboxConfig = {
+  serviceUrl: 'http://127.0.0.1:17493',
+  authType: 'none',
+  bearerToken: '',
+  apiKey: '',
+  customHeaderName: '',
+  customHeaderValue: '',
+  defaultEngine: 'f5-tts',
+  defaultLanguage: 'zh',
+  defaultChunking: true,
+  defaultCrossfade: 0.15,
+  defaultNormalize: true,
+}
+
 export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
   registrationEnabled: false,
   aiConfig: { ...defaultAIConfig },
+  voiceboxConfig: { ...defaultVoiceboxConfig },
   isLoading: true,
 
   loadConfig: async () => {
     const config = await db.systemConfig.get('singleton')
     if (config) {
       const aiConfig = config.aiConfig || { ...defaultAIConfig }
-      set({ registrationEnabled: config.registrationEnabled, aiConfig, isLoading: false })
+      const voiceboxConfig = config.voiceboxConfig || { ...defaultVoiceboxConfig }
+      set({ registrationEnabled: config.registrationEnabled, aiConfig, voiceboxConfig, isLoading: false })
       // 同步到全局 store
       useStore.getState().setAIConfig(aiConfig)
     } else {
-      await db.systemConfig.add({ id: 'singleton', registrationEnabled: false, aiConfig: { ...defaultAIConfig } })
-      set({ registrationEnabled: false, aiConfig: { ...defaultAIConfig }, isLoading: false })
+      await db.systemConfig.add({ id: 'singleton', registrationEnabled: false, aiConfig: { ...defaultAIConfig }, voiceboxConfig: { ...defaultVoiceboxConfig } })
+      set({ registrationEnabled: false, aiConfig: { ...defaultAIConfig }, voiceboxConfig: { ...defaultVoiceboxConfig }, isLoading: false })
     }
   },
 
@@ -51,5 +69,10 @@ export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
     await db.systemConfig.update('singleton', { aiConfig: config })
     set({ aiConfig: config })
     useStore.getState().setAIConfig(config)
+  },
+
+  saveVoiceboxConfig: async (config: VoiceboxConfig) => {
+    await db.systemConfig.update('singleton', { voiceboxConfig: config })
+    set({ voiceboxConfig: config })
   },
 }))
