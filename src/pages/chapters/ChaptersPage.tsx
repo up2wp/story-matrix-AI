@@ -538,12 +538,10 @@ export default function ChaptersPage() {
       const currentOutline = work.outline ?? []
       const currentChapters = work.chapters ?? []
       let newNodeId = generateId()
-      let parentNodeId: string | undefined
 
       if (qwMode === 'newVolume') {
         // 新建卷 + 章
         const volId = generateId()
-        parentNodeId = volId
         const volOrder = currentOutline.filter((n) => n.level === 'volume').length
         const volNode = {
           id: volId,
@@ -577,7 +575,6 @@ export default function ChaptersPage() {
           setQwLoading(false)
           return
         }
-        parentNodeId = lastVol.id
         const siblings = currentOutline.filter((n) => n.level === 'chapter' && n.parentId === lastVol.id)
         const chOrder = lastVol.order + siblings.length + 1
         const chNode = {

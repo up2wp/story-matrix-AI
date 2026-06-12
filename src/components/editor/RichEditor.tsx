@@ -30,7 +30,7 @@ export default function RichEditor({
     el.scrollTop = el.scrollHeight
   }, [content])
 
-  const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+  const handleChange = useCallback(() => {
     if (composing.current) return
     if (ignoreChange.current) {
       ignoreChange.current = false
@@ -47,7 +47,7 @@ export default function RichEditor({
       defaultValue=""
       onChange={handleChange}
       onCompositionStart={() => { composing.current = true }}
-      onCompositionEnd={(e) => {
+      onCompositionEnd={() => {
         composing.current = false
         onChange?.(ref.current?.value ?? '')
       }}
