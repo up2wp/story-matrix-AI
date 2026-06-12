@@ -26,6 +26,7 @@ import {
   PlusOutlined,
 } from '@ant-design/icons'
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
+import { useSearchParams } from 'react-router'
 import type { Chapter } from '@/core/types'
 import { generateId } from '@/utils/id'
 import { useStore } from '@/core/store'
@@ -37,6 +38,7 @@ import { CHAPTER_SYSTEM_PROMPT, buildChapterPrompt, buildExtractEventsPrompt, bu
 import { DEFAULT_EVENT_LOG_CONFIG } from '@/features/seed/options'
 import type { EventLogEntry, EventLogConfig } from '@/core/types'
 import RichEditor from '@/components/editor/RichEditor'
+import ChapterAudiobookPanel from './ChapterAudiobookPanel'
 
 const { Title, Text } = Typography
 
@@ -55,6 +57,7 @@ export default function ChaptersPage() {
   const [countdown, setCountdown] = useState(0)
   const [eventLogOpen, setEventLogOpen] = useState(false)
   const [editingPrompt, setEditingPrompt] = useState<string | null>(null)
+  const [searchParams] = useSearchParams()
   const [directionOpen, setDirectionOpen] = useState(false)
   const [directionDraft, setDirectionDraft] = useState('')
   const directionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -76,6 +79,11 @@ export default function ChaptersPage() {
       notification.destroy('auto-continue')
     }
   }, [])
+
+  useEffect(() => {
+    const chapterId = searchParams.get('chapterId')
+    if (chapterId) setActiveChapterId(chapterId)
+  }, [searchParams])
 
   const chapters = currentWork?.chapters ?? []
   const outline = currentWork?.outline ?? []
@@ -978,6 +986,15 @@ export default function ChaptersPage() {
                 height="100%"
               />
             </Card>
+
+            {currentWork && (
+              <ChapterAudiobookPanel
+                work={currentWork}
+                chapter={activeChapter}
+                writing={writingChapterId === activeChapter.id}
+                involvedCharacterIds={(getOutlineNode(activeChapter.outlineId)?.characterIds || []).map((idOrName) => currentWork.characters.find((c) => c.id === idOrName || c.name === idOrName)?.id).filter((id): id is string => Boolean(id))}
+              />
+            )}
           </div>
         )}
       </div>
