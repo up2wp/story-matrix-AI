@@ -28,6 +28,7 @@ AI 驱动的小说创作工具，帮助作者从灵感激发到成稿全流程�
 - **版本管理** — 章节级版本历史，支持对比与回滚
 - **多线叙事** — 支持多视角、多时间线并行创作，矩阵式管理故事线
 - **导出发布** — 导出为 TXT / EPUB / PDF，支持自定义排版模板
+- **有声读物（Voicebox）** — 在全文预览中绑定旁白/角色音色，AI 分段后按章节生成、播放和下载有声读物清单
 
 ## 系统要求
 
@@ -95,6 +96,22 @@ Docker 部署默认访问 `http://localhost:3001`。源码本地构建镜像部�
 | OpenAI | `https://api.openai.com/v1` | 官方 API |
 | vLLM | `http://192.168.1.100:8000/v1` | 本地部署 |
 | Ollama | `http://localhost:11434/v1` | 本地部署 |
+
+### 7. 配置 Voicebox 有声读物
+
+如需生成有声读物，请先准备可访问的 Voicebox 服务，然后进入 **管理后台 → Voicebox** 配置服务地址。开发环境可使用默认地址 `http://127.0.0.1:17493`，生产环境应配置线上 Voicebox 域名，例如 `https://voicebox.example.com`。
+
+Voicebox 请求始终由 Story Matrix AI 后端代理转发，浏览器不会直连 Voicebox，也不会持有 Voicebox 的鉴权凭据。管理后台支持以下鉴权方式：无鉴权、Bearer Token、`X-API-Key`、自定义 Header。
+
+使用流程：
+
+1. 在管理后台保存 Voicebox 地址和鉴权方式，并点击“检查连接 / 刷新音色”。
+2. 在 **全文预览** 页面打开“有声读物”面板。
+3. 为旁白和角色选择已有 Voicebox profile，或上传参考音频与对应文本到 Voicebox sample。
+4. 选择已完成正文的章节，点击“AI 分段”，检查并编辑说话人、文本和语音提示词。
+5. 点击“生成章节音频”，完成后可在线播放片段或下载章节级清单。
+
+说明：Story Matrix AI 只保存 Voicebox profile/sample/generation ID、角色语音提示词和章节分段脚本；参考音频与生成音频仍由 Voicebox 管理。当前 v1 以章节级生成为边界，不做整本拼接或发布级后期。
 
 ## 技术栈
 
