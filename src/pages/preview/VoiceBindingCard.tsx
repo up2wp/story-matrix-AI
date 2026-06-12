@@ -88,7 +88,7 @@ export default function VoiceBindingCard({ binding, profiles, voices = [], ready
             if (profile) void onBindProfile(binding, profile)
           }}
         />
-        <Input.TextArea rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="QwenTTS 提示词模板，需包含【上下文】和【文本】" />
+        <Input.TextArea rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="QwenTTS 朗读指导，需包含【上下文】；正文会单独传给 Voicebox text" />
         <Space wrap>
           {binding.speakerKind === 'character' && onGeneratePrompt && <Button size="small" icon={<ExperimentOutlined />} loading={generating} onClick={handleGeneratePrompt}>AI 生成提示词</Button>}
           <Button size="small" onClick={() => onSavePrompt({ ...binding, prompt, promptTemplate: prompt, updatedAt: Date.now() })}>保存提示词</Button>
