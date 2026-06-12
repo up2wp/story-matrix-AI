@@ -266,14 +266,22 @@ export default function ChaptersPage() {
       const currentOutline = work.outline ?? []
       const outlineNode = currentOutline.find((n) => n.id === chapter.outlineId)
       const chapterSummary = outlineNode?.summary || ''
-      const prevChapter = currentChapters[currentChapters.findIndex((c) => c.id === chapter.id) - 1]
+      // 按大纲 order 找前一章（而非数组位置）
+      const sortedOutline = currentOutline.filter((n) => n.level === 'chapter').sort((a, b) => a.order - b.order)
+      const currentOutlineIdx = sortedOutline.findIndex((n) => n.id === chapter.outlineId)
+      const prevOutlineNode = currentOutlineIdx > 0 ? sortedOutline[currentOutlineIdx - 1] : null
+      const prevChapter = prevOutlineNode ? currentChapters.find((c) => c.outlineId === prevOutlineNode.id) : null
       const prevSummary = prevChapter ? prevChapter.content.slice(-500) : ''
 
       // 事件簿上下文（排除当前章及后续章节的事件，避免重写时泄漏未来信息）
       const allOutline = currentOutline.filter((n) => n.level === 'chapter')
       const currentIdx = allOutline.findIndex((n) => n.id === chapter.outlineId)
-      const excludeIds = new Set(allOutline.slice(currentIdx).map((n) => n.id))
-      const eventLog = (work.eventLog ?? []).filter((e) => !excludeIds.has(e.chapterId))
+      const excludeOutlineIds = new Set(allOutline.slice(currentIdx).map((n) => n.id))
+      // chapterId 存的是 chapter 对象 ID，需要通过 outlineId 关联
+      const excludeChapterIds = new Set(
+        currentChapters.filter((c) => excludeOutlineIds.has(c.outlineId)).map((c) => c.id)
+      )
+      const eventLog = (work.eventLog ?? []).filter((e) => !excludeChapterIds.has(e.chapterId))
       const eventLogStr = eventLogContext(eventLog)
 
       const prompt = buildChapterPrompt(
@@ -287,6 +295,8 @@ export default function ChaptersPage() {
         eventLogStr,
         chapter.userDirection,
       )
+      console.log('[写正文] 系统提示词:\n', CHAPTER_SYSTEM_PROMPT)
+      console.log('[写正文] 用户提示词:\n', prompt)
       const text = await generateStream(prompt, CHAPTER_SYSTEM_PROMPT, aiConfig, (_chunk, fullText) => {
         setAIStream(true, fullText)
         setStreamingContent(fullText)

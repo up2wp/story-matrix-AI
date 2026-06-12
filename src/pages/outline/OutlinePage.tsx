@@ -788,8 +788,10 @@ export default function OutlinePage() {
     collect(id)
     const newOutline = curOutline.filter((n) => !toRemove.has(n.id))
     // 同步清理关联的章节内容和事件簿
+    const removedChapters = (work.chapters ?? []).filter((c) => toRemove.has(c.outlineId))
+    const removedChapterIds = new Set(removedChapters.map((c) => c.id))
     const keptChapters = (work.chapters ?? []).filter((c) => !toRemove.has(c.outlineId))
-    const keptEvents = (work.eventLog ?? []).filter((e) => !toRemove.has(e.chapterId))
+    const keptEvents = (work.eventLog ?? []).filter((e) => !removedChapterIds.has(e.chapterId))
     await db.works.update(work.id, { outline: newOutline, chapters: keptChapters, eventLog: keptEvents })
     setCurrentWork({ ...work, outline: newOutline, chapters: keptChapters, eventLog: keptEvents, updatedAt: Date.now() })
   }
