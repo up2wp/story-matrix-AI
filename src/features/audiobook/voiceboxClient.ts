@@ -1,4 +1,5 @@
 import { getToken } from '@/core/api-client'
+import type { UserVoiceAsset } from '@/core/types'
 
 function requestHeaders(json = true) {
   const headers: Record<string, string> = {}
@@ -14,6 +15,16 @@ async function request<T>(url: string, options?: RequestInit) {
     const data = await response.json().catch(() => ({ error: response.statusText })) as { error?: string }
     throw new Error(data.error || `Voicebox 请求失败: ${response.status}`)
   }
+  return response.json() as Promise<T>
+}
+
+async function apiRequest<T>(url: string, options?: RequestInit) {
+  const response = await fetch(url, options)
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({ error: response.statusText })) as { error?: string }
+    throw new Error(data.error || `请求失败: ${response.status}`)
+  }
+  if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
 }
 
@@ -57,4 +68,37 @@ export const voiceboxClient = {
   status: (generationId: string) => request<Record<string, unknown>>(`/generate/${encodeURIComponent(generationId)}/status`, { headers: requestHeaders(false) }),
   audioUrl: (generationId: string) => `/api/voicebox/audio/${encodeURIComponent(generationId)}`,
   sampleUrl: (sampleId: string) => `/api/voicebox/samples/${encodeURIComponent(sampleId)}`,
+  fetchMediaUrl: async (url: string) => {
+    const response = await fetch(url, { headers: requestHeaders(false) })
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({ error: response.statusText })) as { error?: string }
+      throw new Error(data.error || `音频获取失败: ${response.status}`)
+    }
+    return URL.createObjectURL(await response.blob())
+  },
+}
+
+export const userVoicesClient = {
+  list: () => apiRequest<UserVoiceAsset[]>('/api/user-voices', { headers: requestHeaders(false) }),
+  create: (body: {
+    displayName: string
+    profileId: string
+    profileName?: string
+    sampleId?: string
+    referenceText: string
+    consentConfirmed: boolean
+  }) => apiRequest<UserVoiceAsset>('/api/user-voices', {
+    method: 'POST',
+    headers: requestHeaders(),
+    body: JSON.stringify(body),
+  }),
+  rename: (id: string, displayName: string) => apiRequest<UserVoiceAsset>(`/api/user-voices/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: requestHeaders(),
+    body: JSON.stringify({ displayName }),
+  }),
+  remove: (id: string) => apiRequest<void>(`/api/user-voices/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: requestHeaders(false),
+  }),
 }

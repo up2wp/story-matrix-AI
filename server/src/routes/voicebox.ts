@@ -20,6 +20,14 @@ interface VoiceboxProfilePayload {
   profile_id?: string
 }
 
+interface UserVoiceRow {
+  id: string
+  ownerId: string
+  profileId: string
+  sampleId?: string | null
+  deletedAt?: number | null
+}
+
 function defaultVoiceboxConfig() {
   return { serviceUrl: 'http://127.0.0.1:17493', authType: 'none' as const }
 }
@@ -99,6 +107,22 @@ function canUploadSample(profileId: string, userId: string) {
   return loadVoiceboxConfig().profileOwners?.[profileId] === userId
 }
 
+function findOwnedVoiceByProfile(profileId: string, userId: string) {
+  return db.prepare('SELECT * FROM userVoices WHERE profileId = ? AND ownerId = ? AND deletedAt IS NULL').get(profileId, userId) as UserVoiceRow | undefined
+}
+
+function ownsSample(sampleId: string, userId: string) {
+  return Boolean(db.prepare('SELECT id FROM userVoices WHERE sampleId = ? AND ownerId = ? AND deletedAt IS NULL').get(sampleId, userId))
+}
+
+function canAccessGeneration(generationId: string, userId: string) {
+  return Boolean(db.prepare('SELECT generationId FROM voiceboxGenerations WHERE generationId = ? AND ownerId = ?').get(generationId, userId))
+}
+
+function saveGenerationOwner(generationId: string, profileId: string, userId: string) {
+  db.prepare('INSERT OR REPLACE INTO voiceboxGenerations (generationId, ownerId, profileId, createdAt) VALUES (?, ?, ?, ?)').run(generationId, userId, profileId, Date.now())
+}
+
 function saveProfileOwner(profile: VoiceboxProfilePayload, userId: string) {
   const id = profileId(profile)
   if (!id) return
@@ -108,9 +132,25 @@ function saveProfileOwner(profile: VoiceboxProfilePayload, userId: string) {
 }
 
 async function collectRequestBody(req: Request) {
+  const contentLength = Number(req.headers['content-length'] || 0)
+  const maxBytes = 25 * 1024 * 1024
+  if (contentLength > maxBytes) throw new Error('参考音频不能超过 25MB')
   const chunks: Buffer[] = []
-  for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+  let total = 0
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    total += buffer.length
+    if (total > maxBytes) throw new Error('参考音频不能超过 25MB')
+    chunks.push(buffer)
+  }
   return Buffer.concat(chunks)
+}
+
+function assertMultipartLooksLikeAudio(body: Buffer) {
+  const preview = body.toString('utf8', 0, Math.min(body.length, 4096))
+  if (!/name="reference_text"/.test(preview)) throw new Error('请填写参考音频文本')
+  if (!/name="file"/.test(preview)) throw new Error('请上传参考音频文件')
+  if (!/(audio\/|filename="[^"]+\.(wav|mp3|m4a|ogg|flac|webm)")/i.test(preview)) throw new Error('请上传音频文件')
 }
 
 function sendProxyResult(res: ExpressResponse, result: Awaited<ReturnType<typeof proxyJson>>) {
@@ -169,6 +209,8 @@ router.get('/profiles/presets/:engine', async (req, res) => {
 router.get('/profiles/:profileId/samples', async (req, res) => {
   try {
     assertSafeId(req.params.profileId)
+    const currentUser = (req as unknown as AuthenticatedRequest).currentUser
+    if (!canUploadSample(req.params.profileId, currentUser.id)) return res.status(403).json({ error: '无权查看该音色样本' })
     sendProxyResult(res, await proxyJson(`/profiles/${encodeURIComponent(req.params.profileId)}/samples`))
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Voicebox samples 获取失败'
@@ -183,10 +225,12 @@ router.post('/profiles/:profileId/samples', async (req, res) => {
     if (!canUploadSample(req.params.profileId, currentUser.id)) return res.status(403).json({ error: '无权上传该音色样本' })
     const contentType = req.headers['content-type']
     if (!contentType?.includes('multipart/form-data')) return res.status(400).json({ error: '需要 multipart/form-data' })
+    const body = await collectRequestBody(req)
+    assertMultipartLooksLikeAudio(body)
     const response = await fetch(`${baseUrl()}/profiles/${encodeURIComponent(req.params.profileId)}/samples`, {
       method: 'POST',
       headers: upstreamHeaders({ 'Content-Type': contentType }),
-      body: await collectRequestBody(req),
+      body,
     })
     if (!response.ok) return res.status(response.status).json({ error: await readVoiceboxError(response) })
     res.status(response.status).json(await response.json())
@@ -201,13 +245,22 @@ router.post('/generate', async (req, res) => {
     const profileId = String(req.body?.profile_id || '')
     assertSafeId(profileId)
     const currentUser = (req as unknown as AuthenticatedRequest).currentUser
-    if (!canUseProfile(profileId, currentUser.id)) return res.status(403).json({ error: '无权使用该音色' })
+    const ownedVoice = findOwnedVoiceByProfile(profileId, currentUser.id)
+    if (!canUseProfile(profileId, currentUser.id) || (loadVoiceboxConfig().profileOwners?.[profileId] && !ownedVoice)) return res.status(403).json({ error: '无权使用该音色' })
     const body = { ...req.body, engine: 'qwentts1.7b' }
-    sendProxyResult(res, await proxyJson('/generate', {
+    const result = await proxyJson('/generate', {
       method: 'POST',
       headers: upstreamHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(body),
-    }))
+    })
+    if (!result.ok) return res.status(result.status).json({ error: result.error })
+    const generation = result.data as { generation_id?: string; id?: string }
+    const generationId = generation.generation_id || generation.id
+    if (generationId) {
+      assertSafeId(generationId)
+      saveGenerationOwner(generationId, profileId, currentUser.id)
+    }
+    res.status(result.status).json(result.data)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Voicebox 生成请求失败'
     res.status(502).json({ error: message })
@@ -217,6 +270,8 @@ router.post('/generate', async (req, res) => {
 router.get('/generate/:generationId/status', async (req, res) => {
   try {
     assertSafeId(req.params.generationId)
+    const currentUser = (req as unknown as AuthenticatedRequest).currentUser
+    if (!canAccessGeneration(req.params.generationId, currentUser.id)) return res.status(403).json({ error: '无权查看该生成状态' })
     sendProxyResult(res, await proxyJson(`/generate/${encodeURIComponent(req.params.generationId)}/status`))
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Voicebox 状态获取失败'
@@ -242,6 +297,8 @@ async function streamAudio(res: ExpressResponse, path: string, range?: string) {
 router.get('/audio/:generationId', async (req, res) => {
   try {
     assertSafeId(req.params.generationId)
+    const currentUser = (req as unknown as AuthenticatedRequest).currentUser
+    if (!canAccessGeneration(req.params.generationId, currentUser.id)) return res.status(403).json({ error: '无权播放该音频' })
     await streamAudio(res, `/audio/${encodeURIComponent(req.params.generationId)}`, req.headers.range)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Voicebox 音频获取失败'
@@ -252,6 +309,8 @@ router.get('/audio/:generationId', async (req, res) => {
 router.get('/samples/:sampleId', async (req, res) => {
   try {
     assertSafeId(req.params.sampleId)
+    const currentUser = (req as unknown as AuthenticatedRequest).currentUser
+    if (!ownsSample(req.params.sampleId, currentUser.id)) return res.status(403).json({ error: '无权播放该参考音频' })
     await streamAudio(res, `/samples/${encodeURIComponent(req.params.sampleId)}`, req.headers.range)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Voicebox 样本音频获取失败'
