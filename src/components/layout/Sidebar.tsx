@@ -8,6 +8,7 @@ import {
   FileTextOutlined,
   SettingOutlined,
   ReadOutlined,
+  CustomerServiceOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation } from 'react-router'
 import { useStore } from '@/core/store'
@@ -37,6 +38,7 @@ export default function Sidebar() {
           { key: '/constraints', icon: <AimOutlined />, label: '核心约束' },
           { key: '/outline', icon: <BranchesOutlined />, label: '主线大纲' },
           { key: '/chapters', icon: <FileTextOutlined />, label: '章节丰盈' },
+          { key: '/voices', icon: <CustomerServiceOutlined />, label: '声音管理' },
           { key: '/preview', icon: <ReadOutlined />, label: '全文预览' },
         ]
       : []),
