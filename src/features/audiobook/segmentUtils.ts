@@ -1,6 +1,5 @@
 import type { AudiobookSegment, Chapter, Work } from '@/core/types'
 import { generateId } from '@/utils/id'
-import { buildVoicePrompt } from '@/ai/prompts/audiobook'
 
 interface RawSegment {
   speakerKind?: string
@@ -28,6 +27,14 @@ export function normalizeSegments(work: Work, chapter: Chapter, rawSegments: Raw
       const character = segment.characterId ? work.characters.find((c) => c.id === segment.characterId) : undefined
       const speakerKind = character ? 'character' : 'narrator'
       const mood = segment.mood?.trim() || '平稳叙述'
+      const text = segment.text?.trim() || ''
+      const previousText = rawSegments.slice(0, index).map((item) => item.text?.trim() || '').filter(Boolean)
+      let searchFrom = 0
+      for (const prior of previousText) {
+        const priorIndex = chapter.content.indexOf(prior, searchFrom)
+        if (priorIndex >= 0) searchFrom = priorIndex + prior.length
+      }
+      const sourceStartOffset = chapter.content.indexOf(text, searchFrom)
       return {
         id: generateId(),
         chapterId: chapter.id,
@@ -35,9 +42,10 @@ export function normalizeSegments(work: Work, chapter: Chapter, rawSegments: Raw
         speakerKind,
         characterId: character?.id,
         speakerName: character?.name || segment.speakerName?.trim() || '旁白',
-        text: segment.text?.trim() || '',
+        text,
         mood,
-        prompt: (segment.prompt?.trim() || buildVoicePrompt(work, character?.id, mood)).slice(0, 500),
+        prompt: '',
+        sourceStartOffset: sourceStartOffset >= 0 ? sourceStartOffset : undefined,
         status: 'pending',
       }
     })

@@ -2,15 +2,18 @@ import type { Chapter, Work } from '@/core/types'
 import { charactersContext, outlineContext, seedContext, worldContext } from '@/ai/context'
 
 export const AUDIOBOOK_SEGMENT_SYSTEM_PROMPT = `你是小说有声读物分镜导演。
-你的任务是把已完成章节拆成适合 TTS 生成的旁白/角色语音片段，并为每个片段给出 Story Matrix AI 自己拥有的语音表演提示词。
+你的任务是把已完成章节拆成适合 TTS 生成的旁白/角色语音片段。
 
 严格要求：
 - 只输出 JSON 数组，不要 Markdown，不要解释
 - speakerKind 只能是 "narrator" 或 "character"
 - characterId 必须来自给定角色列表；无法判断时使用 narrator
-- prompt 必须简短，最多 120 个中文字符，适合放入 Voicebox instruct
 - 不要引用 Voicebox personality，不要要求 Voicebox 自己理解角色设定
 - 保持原文顺序，不要改写正文内容`
+
+export const AUDIOBOOK_TEMPLATE_SYSTEM_PROMPT = `你是 QwenTTS 有声读物提示词设计师。
+只输出 100-200 字中文提示词模板，不要 Markdown，不要解释。
+模板必须包含占位符【上下文】和【文本】，并能直接作为 Voicebox instruct 使用。`
 
 export function buildVoicePrompt(work: Work, characterId?: string, mood?: string) {
   if (!characterId) {
@@ -54,6 +57,31 @@ ${chapter.content}
 - characterId: string | null
 - speakerName: string
 - text: string
-- mood: string
-- prompt: string`
+- mood: string`
+}
+
+export function buildQwenTtsRoleTemplatePrompt(work: Work, characterId: string) {
+  const character = work.characters.find((item) => item.id === characterId)
+  if (!character) throw new Error('角色不存在')
+  return `请基于以下世界观和角色设定，为该角色生成 QwenTTS 有声读物提示词模板。
+
+# 世界观
+${seedContext(work)}
+
+${worldContext(work)}
+
+# 角色设定
+姓名：${character.name}
+经历：${character.bio}
+性格：${character.personality.traits.join('、') || '未设定'}
+习惯：${character.personality.habits.join('、') || '未设定'}
+标签：${character.tags.join('、') || '未设定'}
+关系：${character.relations.map((relation) => `${relation.type}:${relation.description}`).join('；') || '未设定'}
+
+# 输出要求
+请生成 100-200 字中文模板，必须包含并保留以下两行：
+当前语境：【上下文】
+朗读：【文本】
+
+模板应说明角色音色、语气、节奏、情绪控制和朗读规则。`
 }
