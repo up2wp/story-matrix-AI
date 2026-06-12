@@ -8,6 +8,7 @@ const worksRouteSource = await readFile(new URL('../server/src/routes/works.ts',
 const systemConfigRouteSource = await readFile(new URL('../server/src/routes/system-config.ts', import.meta.url), 'utf8')
 const serverIndexSource = await readFile(new URL('../server/src/index.ts', import.meta.url), 'utf8')
 const voiceboxRouteSource = await readFile(new URL('../server/src/routes/voicebox.ts', import.meta.url), 'utf8')
+const userVoicesRouteSource = await readFile(new URL('../server/src/routes/user-voices.ts', import.meta.url), 'utf8')
 const voiceboxClientSource = await readFile(new URL('../src/features/audiobook/voiceboxClient.ts', import.meta.url), 'utf8')
 const systemConfigStoreSource = await readFile(new URL('../src/core/system-config-store.ts', import.meta.url), 'utf8')
 const adminPageSource = await readFile(new URL('../src/pages/admin/AdminPage.tsx', import.meta.url), 'utf8')
@@ -15,6 +16,11 @@ const useAudiobookSource = await readFile(new URL('../src/features/audiobook/use
 const audiobookPromptSource = await readFile(new URL('../src/ai/prompts/audiobook.ts', import.meta.url), 'utf8')
 const previewPageSource = await readFile(new URL('../src/pages/preview/PreviewPage.tsx', import.meta.url), 'utf8')
 const audiobookPanelSource = await readFile(new URL('../src/pages/preview/AudiobookPanel.tsx', import.meta.url), 'utf8')
+const voiceBindingCardSource = await readFile(new URL('../src/pages/preview/VoiceBindingCard.tsx', import.meta.url), 'utf8')
+const chapterAudiobookPanelSource = await readFile(new URL('../src/pages/chapters/ChapterAudiobookPanel.tsx', import.meta.url), 'utf8')
+const voicesPageSource = await readFile(new URL('../src/pages/voices/VoicesPage.tsx', import.meta.url), 'utf8')
+const sidebarSource = await readFile(new URL('../src/components/layout/Sidebar.tsx', import.meta.url), 'utf8')
+const appSource = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8')
 const chapterAudioPlayerSource = await readFile(new URL('../src/pages/preview/ChapterAudioPlayer.tsx', import.meta.url), 'utf8')
 
 assert.match(
@@ -37,14 +43,26 @@ assert.match(
 
 assert.match(
   dbSource,
-  /ALTER TABLE systemConfig ADD COLUMN voiceboxConfig TEXT/,
-  'database migration should add voiceboxConfig with an additive ALTER TABLE upgrade path',
+  /CREATE TABLE IF NOT EXISTS userVoices/,
+  'database migration should add user voice index with an additive CREATE TABLE path',
+)
+
+assert.match(
+  dbSource,
+  /CREATE TABLE IF NOT EXISTS voiceboxGenerations/,
+  'database migration should add server-owned Voicebox generation authorization table',
 )
 
 assert.doesNotMatch(
   dbSource,
-  /DROP TABLE systemConfig|CREATE TABLE .*systemConfig_new|ALTER TABLE systemConfig RENAME/i,
-  'voicebox migration should not rebuild or drop the existing systemConfig table',
+  /DROP TABLE|CREATE TABLE .*_new|ALTER TABLE .* RENAME/i,
+  'voicebox migrations should not rebuild, rename, or drop existing data tables',
+)
+
+assert.match(
+  storeSource,
+  /chapterBindings: \{\}/,
+  'legacy works should receive chapter binding defaults without deleting old audiobook data',
 )
 
 assert.match(
@@ -90,6 +108,30 @@ assert.match(
 )
 
 assert.match(
+  serverIndexSource,
+  /app\.use\('\/api\/user-voices', requireAuth, userVoicesRouter\)/,
+  'user voice asset routes should be mounted behind authentication',
+)
+
+assert.match(
+  userVoicesRouteSource,
+  /ownerId = \?/,
+  'user voice assets should be queried by owner id',
+)
+
+assert.match(
+  userVoicesRouteSource,
+  /consentConfirmedAt/,
+  'user voice uploads should persist authorization confirmation time',
+)
+
+assert.match(
+  userVoicesRouteSource,
+  /loadProfileOwners\(\)\[profileId\] !== ownerId/,
+  'user voice registration should only accept profiles owned by the current user',
+)
+
+assert.match(
   voiceboxRouteSource,
   /router\.get\('\/profiles'/,
   'Voicebox proxy should expose explicit profile listing route',
@@ -109,14 +151,26 @@ assert.match(
 
 assert.match(
   voiceboxRouteSource,
-  /function canUseProfile/,
-  'Voicebox generation should authorize profile usage against local ownership metadata',
+  /function canAccessGeneration/,
+  'Voicebox audio and status proxy should authorize generation access server-side',
 )
 
 assert.match(
   voiceboxRouteSource,
-  /function canUploadSample/,
-  'Voicebox sample upload should only allow the owner of a locally-created profile',
+  /FROM voiceboxGenerations WHERE generationId = \? AND ownerId = \?/,
+  'Voicebox audio authorization must not trust user-writable work JSON',
+)
+
+assert.doesNotMatch(
+  voiceboxRouteSource,
+  /works WHERE ownerId|workContainsGeneration/,
+  'Voicebox audio authorization should not scan user-writable works data',
+)
+
+assert.match(
+  voiceboxRouteSource,
+  /function ownsSample/,
+  'Voicebox sample playback should only allow the owner of a locally-indexed sample',
 )
 
 assert.match(
@@ -141,6 +195,18 @@ assert.match(
   voiceboxRouteSource,
   /multipart\/form-data/,
   'reference uploads should forward multipart sample uploads to Voicebox semantics',
+)
+
+assert.match(
+  voiceboxRouteSource,
+  /参考音频不能超过 25MB/,
+  'reference uploads should enforce a server-side size limit before forwarding',
+)
+
+assert.match(
+  voiceboxRouteSource,
+  /无权查看该音色样本/,
+  'profile sample metadata should require profile ownership',
 )
 
 assert.match(
@@ -192,9 +258,15 @@ assert.match(
 )
 
 assert.match(
+  voiceboxClientSource,
+  /\/api\/user-voices/,
+  'browser user voice client should call same-origin user voice routes',
+)
+
+assert.match(
   useAudiobookSource,
-  /voiceboxClient\.createProfile\(\{ name: binding\.displayName, voice_type: 'cloned', description: binding\.prompt \}\)/,
-  'reference audio uploads should always create a user-owned Voicebox profile instead of reusing shared profiles',
+  /generatePromptTemplate/,
+  'chapter bindings should expose AI-generated QwenTTS prompt templates',
 )
 
 assert.doesNotMatch(
@@ -215,10 +287,52 @@ assert.doesNotMatch(
   'browser Voicebox client should not call Voicebox directly or carry upstream credentials',
 )
 
-assert.match(
+assert.doesNotMatch(
   previewPageSource,
   /<AudiobookPanel work=\{currentWork\} \/>/,
-  'audiobook workflow should live under full-text preview',
+  'audiobook workflow should no longer live under full-text preview',
+)
+
+assert.match(
+  chapterAudiobookPanelSource,
+  /有声读物/,
+  'chapter page should host the audiobook workflow under each written chapter',
+)
+
+assert.match(
+  chapterAudiobookPanelSource,
+  /chapterCharacterBindings\(chapter\.id, chapterCharacterIds\)/,
+  'chapter audiobook panel should read chapter-scoped role bindings',
+)
+
+assert.match(
+  chapterAudiobookPanelSource,
+  /searchParams\.get\('soundId'\)/,
+  'chapter audiobook panel should consume returned soundId from voice management',
+)
+
+assert.match(
+  voicesPageSource,
+  /我确认这是自己的声音/,
+  'voice management page should require voice authorization confirmation',
+)
+
+assert.match(
+  voicesPageSource,
+  /target\.searchParams\.set\('soundId', voice\.id\)/,
+  'voice management should return the created soundId to the calling chapter',
+)
+
+assert.match(
+  sidebarSource,
+  /声音管理/,
+  'sidebar should expose the user-level voice management page',
+)
+
+assert.match(
+  appSource,
+  /path="\/voices"/,
+  'app routing should include the voice management page',
 )
 
 assert.match(
@@ -229,14 +343,32 @@ assert.match(
 
 assert.match(
   audiobookPromptSource,
-  /不要引用 Voicebox personality/,
-  'audiobook prompts should be owned by Story Matrix rather than Voicebox personality prompts',
+  /【上下文】[\s\S]*【文本】/,
+  'QwenTTS prompt templates should preserve context and text placeholders',
 )
 
 assert.match(
   audiobookPanelSource,
+  /有声读物生成已迁移到章节丰盈/,
+  'legacy preview audiobook panel should only point users to chapter enrichment',
+)
+
+assert.match(
+  chapterAudiobookPanelSource,
   /SegmentReviewTable/,
-  'audiobook panel should show editable segment review before generation',
+  'chapter audiobook panel should show editable segment review before generation',
+)
+
+assert.match(
+  voiceBindingCardSource,
+  /我的声音/,
+  'voice binding card should expose user-managed voices in the selector',
+)
+
+assert.doesNotMatch(
+  audiobookPanelSource,
+  /Upload|onUploadReference|上传到 Voicebox/,
+  'legacy preview audiobook surface should not upload reference audio',
 )
 
 assert.match(
@@ -247,8 +379,20 @@ assert.match(
 
 assert.match(
   chapterAudioPlayerSource,
-  /voiceboxClient\.audioUrl/,
-  'chapter audio playback should use proxied same-origin Voicebox audio URLs',
+  /voiceboxClient\.fetchMediaUrl\(voiceboxClient\.audioUrl/,
+  'chapter audio playback should fetch proxied audio with authentication before rendering audio tags',
+)
+
+assert.match(
+  voiceboxClientSource,
+  /fetchMediaUrl[\s\S]*requestHeaders\(false\)/,
+  'media playback should include the same Bearer token auth used by API calls',
+)
+
+assert.match(
+  voicesPageSource,
+  /voiceboxClient\.fetchMediaUrl\(voiceboxClient\.sampleUrl/,
+  'voice sample audition should fetch protected sample audio with authentication',
 )
 
 assert.match(
