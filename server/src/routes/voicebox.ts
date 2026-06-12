@@ -84,6 +84,15 @@ async function proxyJson(path: string, init?: RequestInit) {
   return { ok: true as const, status: response.status, data: await response.json() }
 }
 
+async function readVoiceboxStatus(response: globalThis.Response) {
+  const contentType = response.headers.get('content-type') || ''
+  if (!contentType.includes('text/event-stream')) return response.json()
+  const text = await response.text()
+  const match = text.match(/^data:\s*(\{.*\})\s*$/m)
+  if (!match) throw new Error('Voicebox 状态响应格式无效')
+  return JSON.parse(match[1]) as Record<string, unknown>
+}
+
 function profileId(profile: VoiceboxProfilePayload) {
   return profile.id || profile.profile_id || ''
 }
@@ -247,11 +256,10 @@ router.post('/generate', async (req, res) => {
     const currentUser = (req as unknown as AuthenticatedRequest).currentUser
     const ownedVoice = findOwnedVoiceByProfile(profileId, currentUser.id)
     if (!canUseProfile(profileId, currentUser.id) || (loadVoiceboxConfig().profileOwners?.[profileId] && !ownedVoice)) return res.status(403).json({ error: '无权使用该音色' })
-    const body = { ...req.body, engine: 'qwentts1.7b' }
     const result = await proxyJson('/generate', {
       method: 'POST',
       headers: upstreamHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify(body),
+      body: JSON.stringify(req.body),
     })
     if (!result.ok) return res.status(result.status).json({ error: result.error })
     const generation = result.data as { generation_id?: string; id?: string }
@@ -272,7 +280,9 @@ router.get('/generate/:generationId/status', async (req, res) => {
     assertSafeId(req.params.generationId)
     const currentUser = (req as unknown as AuthenticatedRequest).currentUser
     if (!canAccessGeneration(req.params.generationId, currentUser.id)) return res.status(403).json({ error: '无权查看该生成状态' })
-    sendProxyResult(res, await proxyJson(`/generate/${encodeURIComponent(req.params.generationId)}/status`))
+    const response = await fetch(`${baseUrl()}/generate/${encodeURIComponent(req.params.generationId)}/status`, { headers: upstreamHeaders() })
+    if (!response.ok) return res.status(response.status).json({ error: await readVoiceboxError(response) })
+    res.status(response.status).json(await readVoiceboxStatus(response))
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Voicebox 状态获取失败'
     res.status(400).json({ error: message })

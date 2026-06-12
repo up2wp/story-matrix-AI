@@ -277,8 +277,38 @@ assert.doesNotMatch(
 
 assert.match(
   useAudiobookSource,
+  /engine: 'qwen'/,
+  'Voicebox generation should use the Voicebox qwen engine identifier',
+)
+
+assert.match(
+  useAudiobookSource,
+  /model_size: '1\.7B'/,
+  'Voicebox generation should request the Qwen 1.7B model through model_size',
+)
+
+assert.doesNotMatch(
+  useAudiobookSource,
+  /qwentts1\.7b/,
+  'Voicebox generation should not send the non-schema qwentts1.7b engine id',
+)
+
+assert.doesNotMatch(
+  voiceboxRouteSource,
   /engine: 'qwentts1\.7b'/,
-  'Voicebox generation should always use the qwentts1.7b model',
+  'Voicebox proxy should not overwrite generation requests with a non-schema engine id',
+)
+
+assert.match(
+  voiceboxRouteSource,
+  /readVoiceboxStatus/,
+  'Voicebox status proxy should adapt upstream SSE status responses into JSON',
+)
+
+assert.match(
+  voiceboxRouteSource,
+  /text\/event-stream/,
+  'Voicebox status proxy should recognize Voicebox SSE responses',
 )
 
 assert.doesNotMatch(

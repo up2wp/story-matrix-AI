@@ -299,7 +299,8 @@ export function useAudiobook() {
           const result = await voiceboxClient.generate({
             profile_id: binding.profileId,
             text: segment.text,
-            engine: 'qwentts1.7b',
+            engine: 'qwen',
+            model_size: '1.7B',
             language: voiceboxConfig.defaultLanguage,
             instruct,
             chunking: voiceboxConfig.defaultChunking,
