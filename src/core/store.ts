@@ -1,10 +1,24 @@
 import { create } from 'zustand'
-import type { Work, AIConfig } from './types'
+import type { Work, AIConfig, WorkAudiobookConfig } from './types'
 import { db } from './db'
 
 /** 清理旧版本遗留字段，补充新字段默认值 */
 function migrateWork(work: Work): Work {
   let changed = false
+
+  const defaultAudiobook: WorkAudiobookConfig = {
+    narratorBinding: {
+      id: 'narrator',
+      speakerKind: 'narrator',
+      displayName: '旁白',
+      source: 'pending',
+      prompt: `${work.seed.tone || '自然'}、清晰、适合长篇小说旁白`,
+      updatedAt: Date.now(),
+    },
+    characterBindings: {},
+    segmentsByChapter: {},
+    chapterAudio: {},
+  }
   // 清理约束的 scope 和 relatedOutlineIds
   const constraints = work.constraints.map((c: any) => {
     if ('scope' in c || 'relatedOutlineIds' in c) {
@@ -28,10 +42,14 @@ function migrateWork(work: Work): Work {
     work = { ...work, eventLog: [] }
     changed = true
   }
+  if (!work.audiobook) {
+    work = { ...work, audiobook: defaultAudiobook }
+    changed = true
+  }
   if (changed) {
     const migrated = { ...work, constraints, outline }
     // 异步持久化迁移结果
-    db.works.update(work.id, { constraints, outline }).catch(() => {})
+    db.works.update(work.id, { constraints, outline, eventLog: migrated.eventLog, audiobook: migrated.audiobook }).catch(() => {})
     return migrated
   }
   return work
