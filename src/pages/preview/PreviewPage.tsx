@@ -11,6 +11,7 @@ import {
 } from '@ant-design/icons'
 import { Navigate } from 'react-router'
 import { usePreview } from '@/features/preview/usePreview'
+import AudiobookPanel from './AudiobookPanel'
 
 const { Title, Text, Paragraph } = Typography
 
@@ -312,6 +313,8 @@ export default function PreviewPage() {
             </Button>
           </Space>
         </div>
+
+        <AudiobookPanel work={currentWork} />
 
         {/* 全文内容 */}
         <Card
