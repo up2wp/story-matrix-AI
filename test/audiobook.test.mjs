@@ -24,6 +24,7 @@ const voicesPageSource = await readFile(new URL('../src/pages/voices/VoicesPage.
 const sidebarSource = await readFile(new URL('../src/components/layout/Sidebar.tsx', import.meta.url), 'utf8')
 const appSource = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8')
 const chapterAudioPlayerSource = await readFile(new URL('../src/pages/preview/ChapterAudioPlayer.tsx', import.meta.url), 'utf8')
+const segmentReviewTableSource = await readFile(new URL('../src/pages/preview/SegmentReviewTable.tsx', import.meta.url), 'utf8')
 
 assert.match(
   typesSource,
@@ -455,6 +456,24 @@ assert.match(
   chapterAudioPlayerSource,
   /downloadChapterAudioManifest/,
   'chapter audio surface should provide a chapter-level download artifact',
+)
+
+assert.match(
+  chapterAudioPlayerSource,
+  /useMemo\(\(\) => completedAudioSegments\(segments\), \[segments\]\)/,
+  'chapter audio player should memoize completed segments so expanding the panel does not repeatedly refetch audio',
+)
+
+assert.match(
+  chapterAudioPlayerSource,
+  /if \(!completed\.length\)/,
+  'chapter audio player should not start audio loading or state updates when no completed segments exist',
+)
+
+assert.match(
+  segmentReviewTableSource,
+  /pagination=\{\{ pageSize: 20, showSizeChanger: true \}\}/,
+  'segment review table should paginate existing segments instead of rendering every textarea on panel expand',
 )
 
 console.log('audiobook behavior assertions passed')

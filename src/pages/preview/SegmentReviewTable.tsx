@@ -50,5 +50,5 @@ export default function SegmentReviewTable({ segments, characters, onUpdate }: P
     },
   ]
 
-  return <Table size="small" rowKey="id" columns={columns} dataSource={segments} pagination={false} scroll={{ x: 900 }} />
+  return <Table size="small" rowKey="id" columns={columns} dataSource={segments} pagination={{ pageSize: 20, showSizeChanger: true }} scroll={{ x: 900 }} />
 }

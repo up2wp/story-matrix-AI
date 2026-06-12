@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Button, Card, Empty, Space, Typography } from 'antd'
 import { DownloadOutlined } from '@ant-design/icons'
 import type { AudiobookSegment, Chapter } from '@/core/types'
@@ -13,10 +13,14 @@ interface Props {
 }
 
 export default function ChapterAudioPlayer({ chapter, segments }: Props) {
-  const completed = completedAudioSegments(segments)
+  const completed = useMemo(() => completedAudioSegments(segments), [segments])
   const [audioUrls, setAudioUrls] = useState<Record<string, string>>({})
 
   useEffect(() => {
+    if (!completed.length) {
+      setAudioUrls((current) => Object.keys(current).length ? {} : current)
+      return
+    }
     let cancelled = false
     const createdUrls: string[] = []
     async function loadAudio() {
