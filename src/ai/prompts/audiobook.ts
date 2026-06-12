@@ -77,7 +77,7 @@ ${worldContext(work)}
 性格：${character.personality.traits.join('、') || '未设定'}
 习惯：${character.personality.habits.join('、') || '未设定'}
 标签：${character.tags.join('、') || '未设定'}
-关系：${character.relations.map((relation) => `${relation.type}:${relation.description}`).join('；') || '未设定'}
+关系：${character.relations.map((relation) => relation.description).join('；') || '未设定'}
 
 # 输出要求
 请生成 100-200 字中文朗读指导，必须包含并保留这一行：
