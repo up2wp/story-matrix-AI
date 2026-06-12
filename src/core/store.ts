@@ -1,6 +1,12 @@
 import { create } from 'zustand'
-import type { Work, AIConfig, WorkAudiobookConfig } from './types'
+import type { Work, AIConfig, WorkAudiobookConfig, Chapter, VoiceBinding, AudiobookSegment } from './types'
 import { db } from './db'
+
+type LegacyRecord = Record<string, unknown>
+
+function asRecord(value: unknown): LegacyRecord {
+  return value && typeof value === 'object' ? value as LegacyRecord : {}
+}
 
 /** 清理旧版本遗留字段，补充新字段默认值 */
 function migrateWork(work: Work): Work {
@@ -13,29 +19,59 @@ function migrateWork(work: Work): Work {
       displayName: '旁白',
       source: 'pending',
       prompt: `${work.seed.tone || '自然'}、清晰、适合长篇小说旁白`,
+      promptTemplate: '',
       updatedAt: Date.now(),
+      promptUpdatedAt: Date.now(),
     },
     characterBindings: {},
+    chapterBindings: {},
     segmentsByChapter: {},
     chapterAudio: {},
   }
+
+  const migrateBinding = (binding: unknown): VoiceBinding => {
+    const record = asRecord(binding)
+    return {
+      ...record,
+      prompt: typeof record.prompt === 'string' ? record.prompt : '',
+      promptTemplate: typeof record.promptTemplate === 'string' ? record.promptTemplate : '',
+      updatedAt: typeof record.updatedAt === 'number' ? record.updatedAt : Date.now(),
+      promptUpdatedAt: typeof record.promptUpdatedAt === 'number' ? record.promptUpdatedAt : typeof record.updatedAt === 'number' ? record.updatedAt : Date.now(),
+    } as unknown as VoiceBinding
+  }
+
+  const migrateSegment = (segment: unknown, chapter: Chapter | undefined): AudiobookSegment => {
+    const record = asRecord(segment)
+    const text = typeof record.text === 'string' ? record.text.trim() : ''
+    const sourceStartOffset = typeof record.sourceStartOffset === 'number'
+      ? record.sourceStartOffset
+      : chapter?.content?.indexOf(text)
+    return {
+      ...record,
+      prompt: typeof record.prompt === 'string' ? record.prompt : '',
+      sourceStartOffset: typeof sourceStartOffset === 'number' && sourceStartOffset >= 0 ? sourceStartOffset : undefined,
+      sourceParagraphIndex: typeof record.sourceParagraphIndex === 'number' ? record.sourceParagraphIndex : undefined,
+    } as unknown as AudiobookSegment
+  }
   // 清理约束的 scope 和 relatedOutlineIds
-  const constraints = work.constraints.map((c: any) => {
-    if ('scope' in c || 'relatedOutlineIds' in c) {
+  const constraints = work.constraints.map((constraint) => {
+    const record = asRecord(constraint)
+    if ('scope' in record || 'relatedOutlineIds' in record) {
       changed = true
-      const { scope, relatedOutlineIds, ...rest } = c
-      return rest
+      const { scope: _scope, relatedOutlineIds: _relatedOutlineIds, ...rest } = record
+      return rest as unknown as typeof constraint
     }
-    return c
+    return constraint
   })
   // 清理大纲节点的 constraintIds
-  const outline = work.outline.map((n: any) => {
-    if ('constraintIds' in n) {
+  const outline = work.outline.map((node) => {
+    const record = asRecord(node)
+    if ('constraintIds' in record) {
       changed = true
-      const { constraintIds, ...rest } = n
-      return rest
+      const { constraintIds: _constraintIds, ...rest } = record
+      return rest as unknown as typeof node
     }
-    return n
+    return node
   })
   // 补充事件簿默认值
   if (!work.eventLog) {
@@ -45,6 +81,29 @@ function migrateWork(work: Work): Work {
   if (!work.audiobook) {
     work = { ...work, audiobook: defaultAudiobook }
     changed = true
+  } else {
+    const audiobook = asRecord(work.audiobook)
+    const characterBindings = asRecord(audiobook.characterBindings)
+    const chapterBindings = asRecord(audiobook.chapterBindings)
+    const segmentsByChapter = asRecord(audiobook.segmentsByChapter)
+    const nextAudiobook: WorkAudiobookConfig = {
+      narratorBinding: migrateBinding(audiobook.narratorBinding || defaultAudiobook.narratorBinding),
+      characterBindings: Object.fromEntries(Object.entries(characterBindings).map(([key, value]) => [key, migrateBinding(value)])),
+      chapterBindings: Object.fromEntries(Object.entries(chapterBindings).map(([chapterId, bindings]) => [
+        chapterId,
+        Object.fromEntries(Object.entries(asRecord(bindings)).map(([key, value]) => [key, migrateBinding(value)])),
+      ])),
+      segmentsByChapter: Object.fromEntries(Object.entries(segmentsByChapter).map(([chapterId, segments]) => {
+        const chapter = work.chapters.find((item) => item.id === chapterId)
+        return [chapterId, Array.isArray(segments) ? segments.map((segment) => migrateSegment(segment, chapter)) : []]
+      })),
+      chapterAudio: asRecord(audiobook.chapterAudio) as WorkAudiobookConfig['chapterAudio'],
+    }
+    const narratorBinding = asRecord(audiobook.narratorBinding)
+    if (!audiobook.chapterBindings || !narratorBinding.promptTemplate || Object.values(segmentsByChapter).some((segments) => Array.isArray(segments) && segments.some((segment) => typeof asRecord(segment).sourceStartOffset !== 'number'))) {
+      work = { ...work, audiobook: nextAudiobook }
+      changed = true
+    }
   }
   if (changed) {
     const migrated = { ...work, constraints, outline }
