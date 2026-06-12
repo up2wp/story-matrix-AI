@@ -20,6 +20,7 @@ const previewPageSource = await readFile(new URL('../src/pages/preview/PreviewPa
 const audiobookPanelSource = await readFile(new URL('../src/pages/preview/AudiobookPanel.tsx', import.meta.url), 'utf8')
 const voiceBindingCardSource = await readFile(new URL('../src/pages/preview/VoiceBindingCard.tsx', import.meta.url), 'utf8')
 const chapterAudiobookPanelSource = await readFile(new URL('../src/pages/chapters/ChapterAudiobookPanel.tsx', import.meta.url), 'utf8')
+const characterVoicesPageSource = await readFile(new URL('../src/pages/character-voices/CharacterVoicesPage.tsx', import.meta.url), 'utf8')
 const voicesPageSource = await readFile(new URL('../src/pages/voices/VoicesPage.tsx', import.meta.url), 'utf8')
 const sidebarSource = await readFile(new URL('../src/components/layout/Sidebar.tsx', import.meta.url), 'utf8')
 const appSource = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8')
@@ -344,16 +345,16 @@ assert.match(
   'chapter page should host the audiobook workflow under each written chapter',
 )
 
-assert.match(
+assert.doesNotMatch(
   chapterAudiobookPanelSource,
-  /chapterCharacterBindings\(chapter\.id, chapterCharacterIds\)/,
-  'chapter audiobook panel should read chapter-scoped role bindings',
+  /VoiceBindingCard|旁白配置|本章角色音色/,
+  'chapter audiobook panel should not render voice binding settings that now live on the character voice page',
 )
 
-assert.match(
+assert.doesNotMatch(
   chapterAudiobookPanelSource,
-  /searchParams\.get\('soundId'\)/,
-  'chapter audiobook panel should consume returned soundId from voice management',
+  /searchParams\.get\('soundId'\)|bindChapterVoice|bindChapterProfile|saveChapterBinding/,
+  'chapter audiobook panel should not consume voice-management return params after voice settings move out',
 )
 
 assert.match(
@@ -370,14 +371,38 @@ assert.match(
 
 assert.match(
   sidebarSource,
-  /声音管理/,
-  'sidebar should expose the user-level voice management page',
+  /key: '\/works'[\s\S]*key: '\/voices'[\s\S]*\.\.\.\(hasWork/,
+  'sidebar should expose user-level voice management directly below works before work-scoped items',
 )
 
 assert.match(
   appSource,
   /path="\/voices"/,
   'app routing should include the voice management page',
+)
+
+assert.match(
+  appSource,
+  /path="\/character-voices"/,
+  'app routing should include the work-scoped character voice settings page',
+)
+
+assert.match(
+  sidebarSource,
+  /key: '\/character-voices'[\s\S]*label: '角色声音'[\s\S]*key: '\/chapters'/,
+  'sidebar should place character voice settings before chapter enrichment',
+)
+
+assert.match(
+  characterVoicesPageSource,
+  /narratorBinding/,
+  'character voice settings page should configure the work narrator voice',
+)
+
+assert.match(
+  characterVoicesPageSource,
+  /characterBindings/,
+  'character voice settings page should load work characters for voice and prompt settings',
 )
 
 assert.match(
