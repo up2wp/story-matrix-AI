@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import type { Request, Response as ExpressResponse } from 'express'
 import db from '../db.js'
+import type { AuthenticatedRequest } from '../middleware/auth.js'
 
 const router = Router()
 
@@ -11,6 +12,12 @@ interface VoiceboxConfigPayload {
   apiKey?: string
   customHeaderName?: string
   customHeaderValue?: string
+  profileOwners?: Record<string, string>
+}
+
+interface VoiceboxProfilePayload {
+  id?: string
+  profile_id?: string
 }
 
 function defaultVoiceboxConfig() {
@@ -69,6 +76,37 @@ async function proxyJson(path: string, init?: RequestInit) {
   return { ok: true as const, status: response.status, data: await response.json() }
 }
 
+function profileId(profile: VoiceboxProfilePayload) {
+  return profile.id || profile.profile_id || ''
+}
+
+function filterVisibleProfiles(data: unknown, userId: string) {
+  if (!Array.isArray(data)) return data
+  const profileOwners = loadVoiceboxConfig().profileOwners || {}
+  return data.filter((profile) => {
+    const id = profileId(profile as VoiceboxProfilePayload)
+    const ownerId = id ? profileOwners[id] : undefined
+    return !ownerId || ownerId === userId
+  })
+}
+
+function canUseProfile(profileId: string, userId: string) {
+  const ownerId = loadVoiceboxConfig().profileOwners?.[profileId]
+  return !ownerId || ownerId === userId
+}
+
+function canUploadSample(profileId: string, userId: string) {
+  return loadVoiceboxConfig().profileOwners?.[profileId] === userId
+}
+
+function saveProfileOwner(profile: VoiceboxProfilePayload, userId: string) {
+  const id = profileId(profile)
+  if (!id) return
+  const config = loadVoiceboxConfig()
+  const profileOwners = { ...(config.profileOwners || {}), [id]: userId }
+  db.prepare('UPDATE systemConfig SET voiceboxConfig = ? WHERE id = ?').run(JSON.stringify({ ...config, profileOwners }), 'singleton')
+}
+
 async function collectRequestBody(req: Request) {
   const chunks: Buffer[] = []
   for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
@@ -89,9 +127,12 @@ router.get('/health', async (_req, res) => {
   }
 })
 
-router.get('/profiles', async (_req, res) => {
+router.get('/profiles', async (req, res) => {
   try {
-    sendProxyResult(res, await proxyJson('/profiles'))
+    const result = await proxyJson('/profiles')
+    if (!result.ok) return res.status(result.status).json({ error: result.error })
+    const currentUser = (req as unknown as AuthenticatedRequest).currentUser
+    res.status(result.status).json(filterVisibleProfiles(result.data, currentUser.id))
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Voicebox profiles 获取失败'
     res.status(502).json({ error: message })
@@ -100,11 +141,15 @@ router.get('/profiles', async (_req, res) => {
 
 router.post('/profiles', async (req, res) => {
   try {
-    sendProxyResult(res, await proxyJson('/profiles', {
+    const result = await proxyJson('/profiles', {
       method: 'POST',
       headers: upstreamHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(req.body),
-    }))
+    })
+    if (!result.ok) return res.status(result.status).json({ error: result.error })
+    const currentUser = (req as unknown as AuthenticatedRequest).currentUser
+    saveProfileOwner(result.data as VoiceboxProfilePayload, currentUser.id)
+    res.status(result.status).json(result.data)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Voicebox profile 创建失败'
     res.status(502).json({ error: message })
@@ -134,6 +179,8 @@ router.get('/profiles/:profileId/samples', async (req, res) => {
 router.post('/profiles/:profileId/samples', async (req, res) => {
   try {
     assertSafeId(req.params.profileId)
+    const currentUser = (req as unknown as AuthenticatedRequest).currentUser
+    if (!canUploadSample(req.params.profileId, currentUser.id)) return res.status(403).json({ error: '无权上传该音色样本' })
     const contentType = req.headers['content-type']
     if (!contentType?.includes('multipart/form-data')) return res.status(400).json({ error: '需要 multipart/form-data' })
     const response = await fetch(`${baseUrl()}/profiles/${encodeURIComponent(req.params.profileId)}/samples`, {
@@ -151,10 +198,15 @@ router.post('/profiles/:profileId/samples', async (req, res) => {
 
 router.post('/generate', async (req, res) => {
   try {
+    const profileId = String(req.body?.profile_id || '')
+    assertSafeId(profileId)
+    const currentUser = (req as unknown as AuthenticatedRequest).currentUser
+    if (!canUseProfile(profileId, currentUser.id)) return res.status(403).json({ error: '无权使用该音色' })
+    const body = { ...req.body, engine: 'qwentts1.7b' }
     sendProxyResult(res, await proxyJson('/generate', {
       method: 'POST',
       headers: upstreamHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify(req.body),
+      body: JSON.stringify(body),
     }))
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Voicebox 生成请求失败'

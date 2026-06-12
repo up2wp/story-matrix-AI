@@ -92,9 +92,7 @@ export function useAudiobook() {
   }
 
   const uploadReference = async (binding: VoiceBinding, file: File, referenceText: string) => {
-    const profile = binding.profileId
-      ? { id: binding.profileId, name: binding.profileName }
-      : await voiceboxClient.createProfile({ name: binding.displayName, voice_type: 'cloned', description: binding.prompt })
+    const profile = await voiceboxClient.createProfile({ name: binding.displayName, voice_type: 'cloned', description: binding.prompt })
     const id = profileId(profile)
     if (!id) throw new Error('Voicebox 未返回 profile id')
     const sample = await voiceboxClient.uploadSample(id, file, referenceText)
@@ -214,7 +212,7 @@ export function useAudiobook() {
           const result = await voiceboxClient.generate({
             profile_id: binding.profileId,
             text: segment.text,
-            engine: voiceboxConfig.defaultEngine,
+            engine: 'qwentts1.7b',
             language: voiceboxConfig.defaultLanguage,
             instruct: segment.prompt.slice(0, 500),
             chunking: voiceboxConfig.defaultChunking,

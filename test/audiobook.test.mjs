@@ -97,6 +97,48 @@ assert.match(
 
 assert.match(
   voiceboxRouteSource,
+  /profileOwners/,
+  'Voicebox proxy should track locally-created profile owners in system config',
+)
+
+assert.match(
+  voiceboxRouteSource,
+  /filterVisibleProfiles/,
+  'Voicebox profile listing should filter user-created profiles by current user',
+)
+
+assert.match(
+  voiceboxRouteSource,
+  /function canUseProfile/,
+  'Voicebox generation should authorize profile usage against local ownership metadata',
+)
+
+assert.match(
+  voiceboxRouteSource,
+  /function canUploadSample/,
+  'Voicebox sample upload should only allow the owner of a locally-created profile',
+)
+
+assert.match(
+  voiceboxRouteSource,
+  /无权上传该音色样本/,
+  'Voicebox sample upload should reject writes to public or other-user profiles',
+)
+
+assert.match(
+  voiceboxRouteSource,
+  /无权使用该音色/,
+  'Voicebox generation should reject other-user private profiles',
+)
+
+assert.match(
+  voiceboxRouteSource,
+  /currentUser\.id/,
+  'Voicebox profile filtering should use the authenticated user id',
+)
+
+assert.match(
+  voiceboxRouteSource,
   /multipart\/form-data/,
   'reference uploads should forward multipart sample uploads to Voicebox semantics',
 )
@@ -147,6 +189,24 @@ assert.match(
   voiceboxClientSource,
   /fetch\(`\/api\/voicebox\$\{url\}`/,
   'browser Voicebox client should call same-origin backend proxy routes',
+)
+
+assert.match(
+  useAudiobookSource,
+  /voiceboxClient\.createProfile\(\{ name: binding\.displayName, voice_type: 'cloned', description: binding\.prompt \}\)/,
+  'reference audio uploads should always create a user-owned Voicebox profile instead of reusing shared profiles',
+)
+
+assert.doesNotMatch(
+  useAudiobookSource,
+  /engine: voiceboxConfig\.defaultEngine/,
+  'Voicebox generation should not use a configurable model for audiobook output',
+)
+
+assert.match(
+  useAudiobookSource,
+  /engine: 'qwentts1\.7b'/,
+  'Voicebox generation should always use the qwentts1.7b model',
 )
 
 assert.doesNotMatch(
