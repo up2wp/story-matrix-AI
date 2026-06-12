@@ -45,7 +45,7 @@ export interface VoiceboxGenerationResponse {
 export const voiceboxClient = {
   health: () => request<unknown>('/health', { headers: requestHeaders(false) }),
   profiles: () => request<VoiceboxProfile[]>('/profiles', { headers: requestHeaders(false) }),
-  createProfile: (body: { name: string; voice_type: 'cloned' | 'preset' | 'designed'; description?: string }) => request<VoiceboxProfile>('/profiles', {
+  createProfile: (body: { name: string; voice_type: 'cloned' | 'preset' | 'designed'; description?: string; language?: string }) => request<VoiceboxProfile>('/profiles', {
     method: 'POST',
     headers: requestHeaders(),
     body: JSON.stringify(body),

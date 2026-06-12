@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { message } from 'antd'
 import type { UserVoiceAsset } from '@/core/types'
+import { useSystemConfigStore } from '@/core/system-config-store'
 import { userVoicesClient, voiceboxClient } from './voiceboxClient'
 
 function profileId(profile: { id?: string; profile_id?: string }) {
@@ -12,6 +13,7 @@ function profileName(profile: { name?: string; display_name?: string; id?: strin
 }
 
 export function useUserVoices() {
+  const voiceboxConfig = useSystemConfigStore((state) => state.voiceboxConfig)
   const [voices, setVoices] = useState<UserVoiceAsset[]>([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -32,7 +34,7 @@ export function useUserVoices() {
     if (!input.consentConfirmed) throw new Error('请确认声音授权')
     setSaving(true)
     try {
-      const profile = await voiceboxClient.createProfile({ name: input.displayName.trim(), voice_type: 'cloned', description: input.referenceText.trim().slice(0, 200) })
+      const profile = await voiceboxClient.createProfile({ name: input.displayName.trim(), voice_type: 'cloned', description: input.referenceText.trim().slice(0, 200), language: voiceboxConfig.defaultLanguage })
       const id = profileId(profile)
       if (!id) throw new Error('Voicebox 未返回 profile id')
       const sample = await voiceboxClient.uploadSample(id, input.file, input.referenceText.trim())
