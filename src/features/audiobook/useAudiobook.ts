@@ -160,6 +160,19 @@ export function useAudiobook() {
     })
   }
 
+  const bindVoice = async (binding: VoiceBinding, voice: { id: string; displayName: string; profileId: string; profileName?: string; sampleId?: string; referenceText?: string }) => {
+    await saveBinding({
+      ...binding,
+      source: 'sample',
+      soundId: voice.id,
+      profileId: voice.profileId,
+      profileName: voice.profileName || voice.displayName,
+      sampleId: voice.sampleId,
+      referenceText: voice.referenceText,
+      updatedAt: now(),
+    })
+  }
+
   const bindChapterProfile = async (chapterId: string, binding: VoiceBinding, profile: VoiceboxProfile) => {
     await saveChapterBinding(chapterId, {
       ...binding,
@@ -395,6 +408,7 @@ export function useAudiobook() {
     generatingChapterId,
     refreshProfiles,
     bindProfile,
+    bindVoice,
     bindChapterProfile,
     bindChapterVoice,
     saveBinding,
