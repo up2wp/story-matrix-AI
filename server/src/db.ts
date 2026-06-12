@@ -44,6 +44,29 @@ db.exec(`
     aiConfig TEXT,
     voiceboxConfig TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS userVoices (
+    id TEXT PRIMARY KEY,
+    ownerId TEXT NOT NULL,
+    displayName TEXT NOT NULL,
+    profileId TEXT NOT NULL,
+    profileName TEXT,
+    sampleId TEXT,
+    referenceText TEXT NOT NULL,
+    consentConfirmedAt INTEGER NOT NULL,
+    createdAt INTEGER NOT NULL,
+    updatedAt INTEGER NOT NULL,
+    deletedAt INTEGER,
+    FOREIGN KEY (ownerId) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS voiceboxGenerations (
+    generationId TEXT PRIMARY KEY,
+    ownerId TEXT NOT NULL,
+    profileId TEXT NOT NULL,
+    createdAt INTEGER NOT NULL,
+    FOREIGN KEY (ownerId) REFERENCES users(id)
+  );
 `)
 
 function columnExists(database: DatabaseInstance, table: string, column: string): boolean {
@@ -60,6 +83,33 @@ export function migrateDatabase(database: DatabaseInstance = db) {
   if (!columnExists(database, 'systemConfig', 'voiceboxConfig')) {
     database.prepare('ALTER TABLE systemConfig ADD COLUMN voiceboxConfig TEXT').run()
   }
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS userVoices (
+      id TEXT PRIMARY KEY,
+      ownerId TEXT NOT NULL,
+      displayName TEXT NOT NULL,
+      profileId TEXT NOT NULL,
+      profileName TEXT,
+      sampleId TEXT,
+      referenceText TEXT NOT NULL,
+      consentConfirmedAt INTEGER NOT NULL,
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL,
+      deletedAt INTEGER,
+      FOREIGN KEY (ownerId) REFERENCES users(id)
+    )
+  `)
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS voiceboxGenerations (
+      generationId TEXT PRIMARY KEY,
+      ownerId TEXT NOT NULL,
+      profileId TEXT NOT NULL,
+      createdAt INTEGER NOT NULL,
+      FOREIGN KEY (ownerId) REFERENCES users(id)
+    )
+  `)
 
   database.prepare("UPDATE users SET role = 'owner' WHERE username = 'admin' AND role = 'admin'").run()
 }

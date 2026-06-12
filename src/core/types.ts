@@ -169,7 +169,21 @@ export interface VoiceboxConfig {
 
 export type VoiceBindingSource = 'profile' | 'sample' | 'pending'
 export type AudiobookSpeakerKind = 'narrator' | 'character'
-export type ChapterAudioStatus = 'pending' | 'generating' | 'completed' | 'failed'
+export type ChapterAudioStatus = 'pending' | 'generating' | 'completed' | 'failed' | 'stale'
+
+export interface UserVoiceAsset {
+  id: string
+  ownerId: string
+  displayName: string
+  profileId: string
+  profileName?: string
+  sampleId?: string
+  referenceText: string
+  consentConfirmedAt: number
+  createdAt: number
+  updatedAt: number
+  deletedAt?: number | null
+}
 
 export interface VoiceBinding {
   id: string
@@ -177,12 +191,15 @@ export interface VoiceBinding {
   characterId?: string
   displayName: string
   source: VoiceBindingSource
+  soundId?: string
   profileId?: string
   profileName?: string
   sampleId?: string
   prompt: string
+  promptTemplate?: string
   referenceText?: string
   updatedAt: number
+  promptUpdatedAt?: number
 }
 
 export interface AudiobookSegment {
@@ -195,9 +212,20 @@ export interface AudiobookSegment {
   text: string
   mood: string
   prompt: string
+  sourceStartOffset?: number
+  sourceParagraphIndex?: number
   generationId?: string
   status: ChapterAudioStatus
   error?: string
+  generatedWith?: SegmentGenerationSnapshot
+}
+
+export interface SegmentGenerationSnapshot {
+  bindingUpdatedAt?: number
+  promptUpdatedAt?: number
+  narratorUpdatedAt?: number
+  textHash: string
+  instructHash: string
 }
 
 export interface ChapterAudioState {
@@ -207,11 +235,20 @@ export interface ChapterAudioState {
   generationIds: string[]
   updatedAt: number
   error?: string
+  generatedWith?: ChapterGenerationSnapshot
+}
+
+export interface ChapterGenerationSnapshot {
+  narratorUpdatedAt?: number
+  narratorPromptUpdatedAt?: number
+  roleVersions: Record<string, number | undefined>
+  segmentVersion: string
 }
 
 export interface WorkAudiobookConfig {
   narratorBinding: VoiceBinding
   characterBindings: Record<string, VoiceBinding>
+  chapterBindings: Record<string, Record<string, VoiceBinding>>
   segmentsByChapter: Record<string, AudiobookSegment[]>
   chapterAudio: Record<string, ChapterAudioState>
 }
