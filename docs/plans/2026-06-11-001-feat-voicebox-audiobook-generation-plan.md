@@ -8,6 +8,8 @@ origin: docs/brainstorms/voicebox-audiobook-requirements.md
 
 # feat: Add Voicebox Audiobook Generation
 
+> Superseded note 2026-06-12: 该计划中的“全文预览入口”和“角色绑定卡片内上传参考音频”已被二期计划替换。当前实现以 `docs/plans/2026-06-12-001-feat-voicebox-user-sound-management-plan.md` 为准：声音上传在「声音管理」，章节音频生成在「章节丰盈」。
+
 ## Summary
 
 Implement the first stable audiobook workflow under full-text preview: connect to a local Voicebox service, bind narrator and character voices, generate editable AI speaker segments, and produce chapter-level audio with retryable status. The plan follows the existing React/Zustand + Express/SQLite shape: Story Matrix AI owns story context and synthesis prompts, while Voicebox remains the source of voice profiles, reference samples, generated audio, and TTS execution.

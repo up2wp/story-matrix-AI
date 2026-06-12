@@ -5,6 +5,8 @@ topic: voicebox-audiobook
 
 # Voicebox 有声读物生成需求
 
+> Superseded note 2026-06-12: 二期实现已将参考音频上传集中到「声音管理」，并将有声读物生成入口从「全文预览」迁移到「章节丰盈」单章面板。继续实现时以 `docs/plans/2026-06-12-001-feat-voicebox-user-sound-management-plan.md` 为准。
+
 ## Summary
 
 在全文预览下新增「有声读物」栏，把已成稿章节通过本机 Voicebox 服务生成章节音频。系统既能读取并试听 Voicebox 现有音色 profile，也能为作品角色向 Voicebox 创建音色并上传参考音频；作品内为旁白和角色绑定声音，并由 Story Matrix AI 基于角色设定与章节上下文生成语音合成提示词。
