@@ -620,6 +620,24 @@ assert.match(
 
 assert.match(
   useAudiobookSource,
+  /function toneText[\s\S]*result\.tone[\s\S]*result\.prompt[\s\S]*result\.description/,
+  'tone compression parser should tolerate common AI field-name drift instead of silently filling nothing',
+)
+
+assert.match(
+  useAudiobookSource,
+  /function toneSegmentId[\s\S]*result\.segmentId \|\| result\.id/,
+  'tone compression parser should tolerate id when the AI does not use segmentId',
+)
+
+assert.match(
+  useAudiobookSource,
+  /if \(!promptsBySegmentId\.size\) throw new Error\('AI 没有返回可用语气提示词'\)/,
+  'tone generation should fail visibly when AI returns no usable prompts',
+)
+
+assert.match(
+  useAudiobookSource,
   /approveReviewSegments[\s\S]*needsReview: false[\s\S]*attributionStatus: 'manual'/,
   'audiobook hook should expose a confirmation action for reviewed attribution results',
 )

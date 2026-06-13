@@ -122,7 +122,9 @@ ${JSON.stringify(items, null, 2)}
 
 输出 JSON 数组，每个对象必须包含：
 - segmentId: 输入中的 segmentId
-- tone: 50 字左右的中文语气描述`
+- tone: 50 字左右的中文语气描述
+
+必须为每个输入 segmentId 输出一条结果，segmentId 必须原样复制。不要把字段命名为 prompt、description 或 text。`
 }
 
 export function buildQwenTtsRoleTemplatePrompt(work: Work, characterId: string) {

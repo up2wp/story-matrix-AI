@@ -63,18 +63,36 @@ function bindingPromptTemplate(binding: VoiceBinding | undefined, work: NonNulla
 }
 
 interface ToneCompressionResult {
+  id?: string
   segmentId?: string
   tone?: string
+  prompt?: string
+  description?: string
 }
 
 function parseToneCompressionJson(text: string): ToneCompressionResult[] {
   const cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim()
   const start = cleaned.indexOf('[')
   const end = cleaned.lastIndexOf(']')
-  if (start === -1 || end <= start) throw new Error('AI 没有返回语气 JSON 数组')
-  const parsed = JSON.parse(cleaned.slice(start, end + 1))
-  if (!Array.isArray(parsed)) throw new Error('AI 语气结果不是数组')
-  return parsed as ToneCompressionResult[]
+  if (start >= 0 && end > start) {
+    const parsed = JSON.parse(cleaned.slice(start, end + 1))
+    if (!Array.isArray(parsed)) throw new Error('AI 语气结果不是数组')
+    return parsed as ToneCompressionResult[]
+  }
+  const objectStart = cleaned.indexOf('{')
+  const objectEnd = cleaned.lastIndexOf('}')
+  if (objectStart === -1 || objectEnd <= objectStart) throw new Error('AI 没有返回语气 JSON')
+  const parsed = JSON.parse(cleaned.slice(objectStart, objectEnd + 1)) as { results?: ToneCompressionResult[] } | ToneCompressionResult
+  if ('results' in parsed && Array.isArray(parsed.results)) return parsed.results
+  return [parsed as ToneCompressionResult]
+}
+
+function toneText(result: ToneCompressionResult) {
+  return result.tone?.trim() || result.prompt?.trim() || result.description?.trim() || ''
+}
+
+function toneSegmentId(result: ToneCompressionResult) {
+  return result.segmentId || result.id || ''
 }
 
 const ATTRIBUTION_BATCH_SIZE = 4
@@ -401,7 +419,8 @@ export function useAudiobook() {
       }
       const resultText = await generate(buildAudiobookToneCompressionPrompt(promptInputs), AUDIOBOOK_TONE_SYSTEM_PROMPT, { ...aiConfig, maxTokens: Math.min(aiConfig.maxTokens || 1200, 1600) })
       const tones = parseToneCompressionJson(resultText)
-      const promptsBySegmentId = new Map(tones.filter((item) => item.segmentId && item.tone?.trim()).map((item) => [item.segmentId!, item.tone!.trim()]))
+      const promptsBySegmentId = new Map(tones.filter((item) => toneSegmentId(item) && toneText(item)).map((item) => [toneSegmentId(item), toneText(item)]))
+      if (!promptsBySegmentId.size) throw new Error('AI 没有返回可用语气提示词')
       await saveSegments(chapterId, segments.map((segment) => ({ ...segment, prompt: promptsBySegmentId.get(segment.id) || segment.prompt })))
       message.success(`已生成 ${promptsBySegmentId.size} 条语气提示词`)
     } catch (error) {
