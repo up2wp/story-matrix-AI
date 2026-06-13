@@ -120,6 +120,38 @@ export function markAttributionFailed(segments: AudiobookSegment[], segmentIds: 
     : segment)
 }
 
+export function mergeConsecutiveSegments(segments: AudiobookSegment[], segmentIds: string[], editedAt: number): AudiobookSegment[] {
+  const selected = segments.filter((segment) => segmentIds.includes(segment.id)).sort((first, second) => first.order - second.order)
+  if (selected.length < 2) throw new Error('请至少选择两个连续分段')
+  for (let index = 1; index < selected.length; index += 1) {
+    if (selected[index].order !== selected[index - 1].order + 1) throw new Error('只能合并连续分段')
+  }
+
+  const [first] = selected
+  const sameSpeaker = selected.every((segment) => segment.speakerKind === first.speakerKind && segment.characterId === first.characterId)
+  const merged: AudiobookSegment = {
+    ...first,
+    text: selected.map((segment) => segment.text).join(''),
+    mood: sameSpeaker ? first.mood : '合并分段，需复核语气',
+    sourceEndOffset: selected[selected.length - 1].sourceEndOffset,
+    attributionSource: sameSpeaker ? first.attributionSource : 'manual',
+    attributionStatus: sameSpeaker ? first.attributionStatus : 'manual',
+    attributionConfidence: sameSpeaker ? Math.min(...selected.map((segment) => segment.attributionConfidence ?? 1)) : 0.5,
+    needsReview: !sameSpeaker || selected.some((segment) => segment.needsReview),
+    retryable: !sameSpeaker || selected.some((segment) => segment.retryable),
+    generationId: undefined,
+    generatedWith: undefined,
+    status: 'pending',
+    textEditedAt: editedAt,
+    speakerEditedAt: sameSpeaker ? first.speakerEditedAt : editedAt,
+  }
+  const selectedIds = new Set(segmentIds)
+  return segments
+    .filter((segment) => !selectedIds.has(segment.id) || segment.id === first.id)
+    .map((segment) => segment.id === first.id ? merged : segment)
+    .map((segment, order) => ({ ...segment, order }))
+}
+
 export function segmentSpeakerKey(segment: Pick<AudiobookSegment, 'speakerKind' | 'characterId'>) {
   return segment.speakerKind === 'narrator' ? 'narrator' : segment.characterId || 'unknown'
 }

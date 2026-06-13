@@ -7,7 +7,7 @@ import { useStore } from '@/core/store'
 import { useSystemConfigStore } from '@/core/system-config-store'
 import { generate } from '@/ai/client'
 import { AUDIOBOOK_ATTRIBUTION_SYSTEM_PROMPT, AUDIOBOOK_TEMPLATE_SYSTEM_PROMPT, buildAudiobookAttributionPrompt, buildQwenTtsRoleTemplatePrompt } from '@/ai/prompts/audiobook'
-import { applyAttributionResults, markAttributionFailed, parseAttributionJson, segmentSpeakerKey } from './segmentUtils'
+import { applyAttributionResults, markAttributionFailed, mergeConsecutiveSegments, parseAttributionJson, segmentSpeakerKey } from './segmentUtils'
 import { createRuleBasedSegments, segmentsNeedingAttribution } from './segmentRules'
 import { voiceboxClient } from './voiceboxClient'
 import { fillPromptTemplate, textHash, validatePromptTemplate } from './promptTemplateUtils'
@@ -355,6 +355,17 @@ export function useAudiobook() {
     setSegmentingChapterId(null)
   }
 
+  const mergeSegments = async (chapterId: string, segmentIds: string[]) => {
+    if (!audiobook) return
+    try {
+      const segments = audiobook.segmentsByChapter[chapterId] || []
+      await saveSegments(chapterId, mergeConsecutiveSegments(segments, segmentIds, now()))
+      message.success(`已合并 ${segmentIds.length} 个分段`)
+    } catch (error) {
+      message.warning(error instanceof Error ? error.message : '合并分段失败')
+    }
+  }
+
   const generateChapterAudio = async (chapter: Chapter, retryFailedOnly = false) => {
     if (!audiobook) return
     const segments = audiobook.segmentsByChapter[chapter.id] || []
@@ -503,6 +514,7 @@ export function useAudiobook() {
     uploadReference,
     segmentChapter,
     updateSegment,
+    mergeSegments,
     retrySegmentAttribution,
     generateChapterAudio,
     generatePromptTemplate,

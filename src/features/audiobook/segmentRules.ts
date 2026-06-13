@@ -9,7 +9,7 @@ interface TextUnit {
 }
 
 const SPEECH_VERBS = '(?:说|道|问|答|喊|叫|低声说|轻声说|喃喃|笑道|叹道|怒道|解释|提醒|嘀咕)'
-const QUOTE_PATTERN = /[“\"]([^”\"]+)[”\"]/g
+const QUOTE_PATTERN = /[“"]([^”"]+)[”"]/g
 
 function paragraphUnits(content: string): TextUnit[] {
   const units: TextUnit[] = []
@@ -40,6 +40,12 @@ function detectSpeaker(work: Work, fullText: string, quoteStart: number, quoteEn
   const postposed = new RegExp(`^[，,。.!！?？、\\s]*([\\p{Script=Han}A-Za-z0-9_·]{1,12})\\s*${SPEECH_VERBS}`, 'u').exec(after)
   const character = characterByName(work, preposed?.[1] || postposed?.[1])
   return character
+}
+
+function shouldSplitQuote(fullText: string, quoteStart: number, speaker: ReturnType<typeof characterByName>) {
+  if (speaker || quoteStart === 0) return true
+  const before = fullText.slice(0, quoteStart)
+  return /[。.!！?？]\s*$/.test(before)
 }
 
 function createSegment(chapter: Chapter, unit: TextUnit, order: number, text: string, start: number, speaker: ReturnType<typeof characterByName>, needsReview: boolean): AudiobookSegment {
@@ -79,14 +85,20 @@ export function createRuleBasedSegments(work: Work, chapter: Chapter): Audiobook
       continue
     }
 
+    if (!matches.some((match) => shouldSplitQuote(unit.text, match.index || 0, detectSpeaker(work, unit.text, match.index || 0, (match.index || 0) + match[0].length)))) {
+      segments.push(createSegment(chapter, unit, segments.length, unit.text, unit.start, undefined, false))
+      continue
+    }
+
     for (const match of matches) {
       const quoteStart = match.index || 0
       const quoteText = match[1]?.trim() || ''
+      const speaker = detectSpeaker(work, unit.text, quoteStart, quoteStart + match[0].length)
+      if (!shouldSplitQuote(unit.text, quoteStart, speaker)) continue
       if (quoteStart > cursor) {
         const narrator = unit.text.slice(cursor, quoteStart).replace(/[：:，,。\s]+$/g, '').trim()
         if (narrator) segments.push(createSegment(chapter, unit, segments.length, narrator, unit.start + cursor, undefined, false))
       }
-      const speaker = detectSpeaker(work, unit.text, quoteStart, quoteStart + match[0].length)
       segments.push(createSegment(chapter, unit, segments.length, quoteText, unit.start + quoteStart + 1, speaker, !speaker))
       cursor = quoteStart + match[0].length
     }

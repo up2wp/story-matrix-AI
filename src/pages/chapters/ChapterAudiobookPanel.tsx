@@ -20,6 +20,7 @@ export default function ChapterAudiobookPanel({ work, chapter, writing }: Props)
     audiobook,
     segmentChapter,
     updateSegment,
+    mergeSegments,
     generateChapterAudio,
     missingBindings,
     narratorBinding,
@@ -40,7 +41,12 @@ export default function ChapterAudiobookPanel({ work, chapter, writing }: Props)
   }
 
   return (
-    <Card size="small" style={{ marginTop: 16 }} title={<><CustomerServiceOutlined /> 有声读物</>}>
+    <Card
+      size="small"
+      style={{ marginTop: 16, flexShrink: 0, maxHeight: 'min(42vh, 560px)', display: 'flex', flexDirection: 'column' }}
+      styles={{ body: { overflowY: 'auto', overflowX: 'hidden', minHeight: 0 } }}
+      title={<><CustomerServiceOutlined /> 有声读物</>}
+    >
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
         <Space wrap>
           <Button onClick={() => navigate('/character-voices')}>配置角色声音</Button>
@@ -58,7 +64,7 @@ export default function ChapterAudiobookPanel({ work, chapter, writing }: Props)
         {writing && <Alert type="warning" showIcon message="正文生成中，音频操作暂时锁定" />}
         {missing.length > 0 && <Alert type="warning" showIcon message={`缺少音色绑定：${missing.join('、')}`} description="请先到「角色声音」配置旁白和角色音色。" />}
         {unresolvedCount > 0 && <Alert type="info" showIcon message={`${unresolvedCount} 个分段需要复核或重试归因`} description="低置信度不会丢失原文；修正说话人后即可继续生成音频。" />}
-        {segments.length ? <SegmentReviewTable segments={segments} characters={work.characters} onUpdate={(segmentId, changes) => updateSegment(chapter.id, segmentId, changes)} onRetryAttribution={(segmentId) => retrySegmentAttribution(chapter, segmentId)} /> : <Empty description="先点击 AI 分段" />}
+        {segments.length ? <SegmentReviewTable segments={segments} characters={work.characters} onUpdate={(segmentId, changes) => updateSegment(chapter.id, segmentId, changes)} onMergeSegments={(segmentIds) => mergeSegments(chapter.id, segmentIds)} onRetryAttribution={(segmentId) => retrySegmentAttribution(chapter, segmentId)} scrollY={280} /> : <Empty description="先点击 AI 分段" />}
         <ChapterAudioPlayer chapter={chapter} segments={segments} />
       </Space>
     </Card>

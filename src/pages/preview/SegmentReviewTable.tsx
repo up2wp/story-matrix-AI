@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Button, Input, Select, Space, Table, Tag, Tooltip } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import type { AudiobookSegment, Character } from '@/core/types'
@@ -6,10 +7,13 @@ interface Props {
   segments: AudiobookSegment[]
   characters: Character[]
   onUpdate: (segmentId: string, changes: Partial<AudiobookSegment>) => Promise<void>
+  onMergeSegments?: (segmentIds: string[]) => Promise<void>
   onRetryAttribution?: (segmentId: string) => Promise<void>
+  scrollY?: number
 }
 
-export default function SegmentReviewTable({ segments, characters, onUpdate, onRetryAttribution }: Props) {
+export default function SegmentReviewTable({ segments, characters, onUpdate, onMergeSegments, onRetryAttribution, scrollY }: Props) {
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
   const speakerOptions = [
     { value: 'narrator', label: '旁白' },
     ...characters.map((character) => ({ value: character.id, label: character.name })),
@@ -68,5 +72,16 @@ export default function SegmentReviewTable({ segments, characters, onUpdate, onR
     },
   ]
 
-  return <Table size="small" rowKey="id" columns={columns} dataSource={segments} pagination={{ pageSize: 20, showSizeChanger: true }} scroll={{ x: 1100 }} />
+  return <Space direction="vertical" style={{ width: '100%' }}>
+    {onMergeSegments && <Button size="small" disabled={selectedIds.length < 2} onClick={() => void onMergeSegments(selectedIds).then(() => setSelectedIds([]))}>合并选中连续分段</Button>}
+    <Table
+      size="small"
+      rowKey="id"
+      columns={columns}
+      dataSource={segments}
+      pagination={{ pageSize: 20, showSizeChanger: true }}
+      rowSelection={onMergeSegments ? { selectedRowKeys: selectedIds, onChange: (keys) => setSelectedIds(keys.map(String)) } : undefined}
+      scroll={{ x: 1100, y: scrollY }}
+    />
+  </Space>
 }

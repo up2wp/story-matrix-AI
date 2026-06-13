@@ -974,7 +974,7 @@ export default function ChaptersPage() {
 
             {/* 正文编辑器 */}
             <Card styles={{ body: { padding: 0, flex: 1, display: 'flex', flexDirection: 'column' } }}
-              style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}
+              style={{ flex: '1 1 320px', display: 'flex', flexDirection: 'column', minHeight: 240 }}
             >
               <RichEditor
                 content={writingChapterId === activeChapter.id ? (streamingContent ?? activeChapter.content) : activeChapter.content}

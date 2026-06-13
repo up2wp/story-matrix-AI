@@ -492,6 +492,18 @@ assert.match(
 )
 
 assert.match(
+  segmentRulesSource,
+  /shouldSplitQuote/,
+  'rule-based segmentation should avoid splitting quoted place names or terms inside one narrator sentence',
+)
+
+assert.match(
+  segmentRulesSource,
+  /if \(!matches\.some/,
+  'quoted terms without dialogue cues should remain in the original paragraph segment',
+)
+
+assert.match(
   audiobookPromptSource,
   /buildAudiobookAttributionPrompt/,
   'audiobook prompts should include a small-window speaker attribution prompt',
@@ -528,9 +540,39 @@ assert.match(
 )
 
 assert.match(
+  chapterAudiobookPanelSource,
+  /maxHeight: 'min\(42vh, 560px\)'/,
+  'chapter audiobook panel should keep a bounded height so the body editor remains visible',
+)
+
+assert.match(
+  chapterAudiobookPanelSource,
+  /overflowY: 'auto'/,
+  'chapter audiobook panel should scroll internally for long segment lists',
+)
+
+assert.match(
+  segmentReviewTableSource,
+  /scrollY\?: number/,
+  'segment review table should support a bounded vertical scroll area',
+)
+
+assert.match(
   segmentReviewTableSource,
   /重试归因/,
   'segment review table should expose per-segment attribution retry',
+)
+
+assert.match(
+  segmentReviewTableSource,
+  /合并选中连续分段/,
+  'segment review table should allow merging selected consecutive segments',
+)
+
+assert.match(
+  useAudiobookSource,
+  /mergeConsecutiveSegments/,
+  'audiobook hook should expose a persistent merge operation for selected segments',
 )
 
 assert.match(
