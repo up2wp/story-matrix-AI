@@ -27,6 +27,7 @@ const appSource = await readFile(new URL('../src/App.tsx', import.meta.url), 'ut
 const chapterAudioPlayerSource = await readFile(new URL('../src/pages/preview/ChapterAudioPlayer.tsx', import.meta.url), 'utf8')
 const segmentReviewTableSource = await readFile(new URL('../src/pages/preview/SegmentReviewTable.tsx', import.meta.url), 'utf8')
 const segmentRulesSource = await readFile(new URL('../src/features/audiobook/segmentRules.ts', import.meta.url), 'utf8')
+const segmentUtilsSource = await readFile(new URL('../src/features/audiobook/segmentUtils.ts', import.meta.url), 'utf8')
 const readmeSource = await readFile(new URL('../README.md', import.meta.url), 'utf8')
 
 assert.match(
@@ -537,6 +538,12 @@ assert.match(
   useAudiobookSource,
   /attributeSegmentBatch/,
   'segmentChapter should attribute low-confidence segments in retryable batches',
+)
+
+assert.doesNotMatch(
+  segmentUtilsSource,
+  /results\.length === 1 \? results\[0\]/,
+  'single attribution result should not be applied to every segment in the chapter',
 )
 
 assert.doesNotMatch(

@@ -87,7 +87,7 @@ export function parseAttributionJson(text: string): AttributionResult[] {
 
 export function applyAttributionResults(work: Work, segments: AudiobookSegment[], results: AttributionResult[], batchId: string): AudiobookSegment[] {
   return segments.map((segment) => {
-    const result = results.find((item) => item.segmentId === segment.id) || (results.length === 1 ? results[0] : undefined)
+    const result = results.find((item) => item.segmentId === segment.id)
     if (!result || segment.speakerEditedAt) return segment
 
     const character = result.characterId ? work.characters.find((item) => item.id === result.characterId) : undefined
