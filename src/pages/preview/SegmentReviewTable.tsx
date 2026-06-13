@@ -65,7 +65,10 @@ export default function SegmentReviewTable({ segments, characters, onUpdate, onG
     {
       title: '状态',
       width: 100,
-      render: (_, segment) => <Tag color={segment.status === 'completed' ? 'green' : segment.status === 'failed' ? 'red' : segment.status === 'generating' ? 'blue' : 'default'}>{segment.status}</Tag>,
+      render: (_, segment) => {
+        const status = segment.status !== 'pending' ? segment.status : segment.needsReview || segment.attributionStatus === 'needs_review' ? '待复核' : segment.attributionStatus === 'attributed' || segment.attributionStatus === 'manual' ? '已确认' : '待生成'
+        return <Tag color={segment.status === 'completed' ? 'green' : segment.status === 'failed' ? 'red' : segment.status === 'generating' ? 'blue' : status === '待复核' ? 'gold' : status === '已确认' ? 'green' : 'default'}>{status}</Tag>
+      },
     },
     {
       title: '操作',
@@ -91,7 +94,7 @@ export default function SegmentReviewTable({ segments, characters, onUpdate, onG
       rowKey="id"
       columns={columns}
       dataSource={segments}
-      pagination={{ pageSize: 20, showSizeChanger: true }}
+      pagination={{ defaultPageSize: 20, pageSizeOptions: [20, 50, 100], showSizeChanger: true }}
       rowSelection={onMergeSegments ? { selectedRowKeys: selectedIds, onChange: (keys) => setSelectedIds(keys.map(String)) } : undefined}
       scroll={{ x: 1100, y: scrollY }}
     />

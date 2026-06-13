@@ -20,6 +20,7 @@ export default function ChapterAudiobookPanel({ work, chapter, writing }: Props)
     audiobook,
     segmentChapter,
     updateSegment,
+    approveReviewSegments,
     generateSegmentTonePrompts,
     mergeSegments,
     generateChapterAudio,
@@ -52,6 +53,7 @@ export default function ChapterAudiobookPanel({ work, chapter, writing }: Props)
         <Space wrap>
           <Button onClick={() => navigate('/character-voices')}>配置角色声音</Button>
           <Button loading={segmentingChapterId === chapter.id} disabled={writing || generatingChapterId === chapter.id} onClick={() => segmentChapter(chapter)}>AI 分段</Button>
+          {unresolvedCount > 0 && <Button disabled={writing || segmentingChapterId === chapter.id || generatingChapterId === chapter.id} onClick={() => approveReviewSegments(chapter.id)}>确认复核无误</Button>}
           <Button type="primary" icon={<SoundOutlined />} loading={generatingChapterId === chapter.id} disabled={writing || segmentingChapterId === chapter.id || !segments.length || missing.length > 0 || segments.some((segment) => segment.attributionStatus === 'failed')} onClick={() => generateChapterAudio(chapter)}>生成章节音频</Button>
           {segments.some((segment) => segment.status === 'failed') && <Button loading={generatingChapterId === chapter.id} onClick={() => generateChapterAudio(chapter, true)}>重试失败片段</Button>}
         </Space>
