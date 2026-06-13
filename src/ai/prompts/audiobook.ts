@@ -1,4 +1,4 @@
-import type { Chapter, Work } from '@/core/types'
+import type { AudiobookSegment, Chapter, Work } from '@/core/types'
 import { charactersContext, outlineContext, seedContext, worldContext } from '@/ai/context'
 
 export const AUDIOBOOK_SEGMENT_SYSTEM_PROMPT = `你是小说有声读物分镜导演。
@@ -15,6 +15,11 @@ export const AUDIOBOOK_TEMPLATE_SYSTEM_PROMPT = `你是 QwenTTS 有声读物提�
 只输出 100-200 字中文朗读指导，不要 Markdown，不要解释。
 指导必须包含占位符【上下文】，只能描述角色音色、语气、节奏、情绪控制和朗读规则。
 不要包含待合成正文，不要包含【文本】占位符；正文会通过 Voicebox text 参数单独传入。`
+
+export const AUDIOBOOK_ATTRIBUTION_SYSTEM_PROMPT = `你是中文小说有声读物说话人归因助手。
+只输出 JSON 数组，不要 Markdown，不要解释。
+你只能从候选 speaker 中选择 speakerId；无法判断时选择 narrator 并标记 needsReview=true。
+不要改写 text，不要新增角色，不要输出候选列表之外的 characterId。`
 
 export function buildVoicePrompt(work: Work, characterId?: string, mood?: string) {
   if (!characterId) {
@@ -59,6 +64,49 @@ ${chapter.content}
 - speakerName: string
 - text: string
 - mood: string`
+}
+
+export function buildAudiobookAttributionPrompt(work: Work, chapter: Chapter, segments: AudiobookSegment[], contextSegments: AudiobookSegment[] = []) {
+  const outlineNode = work.outline.find((node) => node.id === chapter.outlineId)
+  const mentioned = new Set<string>()
+  const sourceText = [...segments, ...contextSegments].map((segment) => segment.text).join('\n')
+  for (const character of work.characters) {
+    if (sourceText.includes(character.name)) mentioned.add(character.id)
+  }
+  for (const segment of [...segments, ...contextSegments]) {
+    if (segment.characterId) mentioned.add(segment.characterId)
+  }
+  const candidates = [
+    { speakerId: 'narrator', speakerKind: 'narrator', name: '旁白' },
+    ...work.characters
+      .filter((character) => mentioned.has(character.id) || mentioned.size < 4)
+      .slice(0, 12)
+      .map((character) => ({ speakerId: character.id, speakerKind: 'character', name: character.name, role: character.role })),
+  ]
+
+  return `请为以下有声读物片段补全说话人归因。
+
+章节标题：${chapter.title}
+章节大纲摘要：${outlineNode?.summary || '无'}
+
+候选 speaker：
+${JSON.stringify(candidates, null, 2)}
+
+邻近上下文片段：
+${JSON.stringify(contextSegments.map((segment) => ({ id: segment.id, speakerName: segment.speakerName, text: segment.text.slice(0, 240) })), null, 2)}
+
+待归因片段：
+${JSON.stringify(segments.map((segment) => ({ id: segment.id, text: segment.text, ruleGuess: { speakerKind: segment.speakerKind, characterId: segment.characterId, speakerName: segment.speakerName, confidence: segment.attributionConfidence } })), null, 2)}
+
+输出 JSON 数组，每个对象必须包含：
+- segmentId: 对应待归因片段 id
+- speakerKind: "narrator" | "character"
+- characterId: 候选角色 id 或 null
+- speakerName: 候选 speaker 名称
+- mood: 适合 TTS 的短语气描述
+- confidence: 0 到 1
+- needsReview: boolean
+- reason: 简短原因`
 }
 
 export function buildQwenTtsRoleTemplatePrompt(work: Work, characterId: string) {

@@ -26,6 +26,8 @@ const sidebarSource = await readFile(new URL('../src/components/layout/Sidebar.t
 const appSource = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8')
 const chapterAudioPlayerSource = await readFile(new URL('../src/pages/preview/ChapterAudioPlayer.tsx', import.meta.url), 'utf8')
 const segmentReviewTableSource = await readFile(new URL('../src/pages/preview/SegmentReviewTable.tsx', import.meta.url), 'utf8')
+const segmentRulesSource = await readFile(new URL('../src/features/audiobook/segmentRules.ts', import.meta.url), 'utf8')
+const readmeSource = await readFile(new URL('../README.md', import.meta.url), 'utf8')
 
 assert.match(
   typesSource,
@@ -34,9 +36,27 @@ assert.match(
 )
 
 assert.match(
+  typesSource,
+  /AudiobookAttributionStatus/,
+  'audiobook segments should persist attribution state separately from audio generation status',
+)
+
+assert.match(
+  typesSource,
+  /segmentationSource\?: AudiobookSegmentationSource/,
+  'audiobook segments should record whether they came from legacy, AI, or rule segmentation',
+)
+
+assert.match(
   storeSource,
   /if \(!work\.audiobook\)/,
   'legacy works should receive audiobook defaults during client migration',
+)
+
+assert.match(
+  storeSource,
+  /segmentationSource: typeof record\.segmentationSource === 'string' \? record\.segmentationSource : 'legacy'/,
+  'legacy segments should migrate with explicit segmentation source metadata',
 )
 
 assert.match(
@@ -457,6 +477,66 @@ assert.match(
   useAudiobookSource,
   /retryFailedOnly/,
   'chapter generation should support retrying failed segments without duplicating completed work',
+)
+
+assert.match(
+  segmentRulesSource,
+  /createRuleBasedSegments/,
+  'audiobook segmentation should start with a local rule-based splitter',
+)
+
+assert.match(
+  segmentRulesSource,
+  /QUOTE_PATTERN/,
+  'rule-based segmentation should explicitly detect dialogue quote spans',
+)
+
+assert.match(
+  audiobookPromptSource,
+  /buildAudiobookAttributionPrompt/,
+  'audiobook prompts should include a small-window speaker attribution prompt',
+)
+
+assert.match(
+  audiobookPromptSource,
+  /候选 speaker/,
+  'small-window attribution prompt should constrain the model to candidate speakers',
+)
+
+assert.match(
+  useAudiobookSource,
+  /createRuleBasedSegments\(work, chapter\)/,
+  'segmentChapter should create a rule-based draft before calling LLM attribution',
+)
+
+assert.match(
+  useAudiobookSource,
+  /attributeSegmentBatch/,
+  'segmentChapter should attribute low-confidence segments in retryable batches',
+)
+
+assert.doesNotMatch(
+  useAudiobookSource,
+  /buildAudiobookSegmentationPrompt\(work, chapter\)/,
+  'segmentChapter should not use the old whole-chapter LLM segmentation prompt as the main path',
+)
+
+assert.match(
+  chapterAudiobookPanelSource,
+  /<Progress/,
+  'chapter audiobook panel should show segmentation batch progress',
+)
+
+assert.match(
+  segmentReviewTableSource,
+  /重试归因/,
+  'segment review table should expose per-segment attribution retry',
+)
+
+assert.match(
+  readmeSource,
+  /低置信度|失败片段可重试/,
+  'README should describe low-confidence review and retryable failed segmentation results',
 )
 
 assert.match(

@@ -6,8 +6,9 @@ import { db } from '@/core/db'
 import { useStore } from '@/core/store'
 import { useSystemConfigStore } from '@/core/system-config-store'
 import { generate } from '@/ai/client'
-import { AUDIOBOOK_SEGMENT_SYSTEM_PROMPT, AUDIOBOOK_TEMPLATE_SYSTEM_PROMPT, buildAudiobookSegmentationPrompt, buildQwenTtsRoleTemplatePrompt } from '@/ai/prompts/audiobook'
-import { normalizeSegments, parseSegmentJson, segmentSpeakerKey } from './segmentUtils'
+import { AUDIOBOOK_ATTRIBUTION_SYSTEM_PROMPT, AUDIOBOOK_TEMPLATE_SYSTEM_PROMPT, buildAudiobookAttributionPrompt, buildQwenTtsRoleTemplatePrompt } from '@/ai/prompts/audiobook'
+import { applyAttributionResults, markAttributionFailed, parseAttributionJson, segmentSpeakerKey } from './segmentUtils'
+import { createRuleBasedSegments, segmentsNeedingAttribution } from './segmentRules'
 import { voiceboxClient } from './voiceboxClient'
 import { fillPromptTemplate, textHash, validatePromptTemplate } from './promptTemplateUtils'
 
@@ -51,6 +52,17 @@ function isBindingReady(binding?: VoiceBinding) {
   return Boolean(binding?.profileId && binding.source !== 'pending')
 }
 
+const ATTRIBUTION_BATCH_SIZE = 4
+
+interface SegmentationProgress {
+  chapterId: string
+  stage: 'rule_splitting' | 'attributing_batches' | 'completed' | 'partial_failed' | 'failed'
+  total: number
+  completed: number
+  failed: number
+  message: string
+}
+
 function invalidateAllAudio(config: WorkAudiobookConfig): WorkAudiobookConfig {
   return {
     ...config,
@@ -88,6 +100,7 @@ export function useAudiobook() {
   const [loadingProfiles, setLoadingProfiles] = useState(false)
   const [segmentingChapterId, setSegmentingChapterId] = useState<string | null>(null)
   const [generatingChapterId, setGeneratingChapterId] = useState<string | null>(null)
+  const [segmentationProgress, setSegmentationProgress] = useState<SegmentationProgress | null>(null)
 
   const audiobook = useMemo(() => currentWork ? ensureAudiobook(currentWork) : null, [currentWork])
 
@@ -227,6 +240,35 @@ export function useAudiobook() {
     })
   }
 
+  const attributeSegmentBatch = async (work: NonNullable<ReturnType<typeof useStore.getState>['currentWork']>, chapter: Chapter, batch: AudiobookSegment[], batchIndex: number) => {
+    const latest = ensureAudiobook(useStore.getState().currentWork!)
+    const currentSegments = latest.segmentsByChapter[chapter.id] || []
+    const batchId = `${chapter.id}-attr-${batchIndex + 1}`
+    const contextSegments = currentSegments
+      .filter((segment) => typeof segment.sourceStartOffset === 'number' && batch.some((item) => Math.abs((item.sourceStartOffset || 0) - (segment.sourceStartOffset || 0)) < 600))
+      .slice(0, 8)
+    const marking = currentSegments.map((segment) => batch.some((item) => item.id === segment.id)
+      ? { ...segment, attributionStatus: 'attributing' as const, attributionBatchId: batchId, attributionError: undefined }
+      : segment)
+    await persistAudiobook({ ...latest, segmentsByChapter: { ...latest.segmentsByChapter, [chapter.id]: marking } })
+
+    try {
+      const prompt = buildAudiobookAttributionPrompt(work, chapter, batch, contextSegments)
+      const text = await generate(prompt, AUDIOBOOK_ATTRIBUTION_SYSTEM_PROMPT, { ...aiConfig, maxTokens: Math.min(aiConfig.maxTokens || 1200, 1200) })
+      const results = parseAttributionJson(text)
+      const afterGenerate = ensureAudiobook(useStore.getState().currentWork!)
+      const applied = applyAttributionResults(work, afterGenerate.segmentsByChapter[chapter.id] || [], results, batchId)
+      await persistAudiobook({ ...afterGenerate, segmentsByChapter: { ...afterGenerate.segmentsByChapter, [chapter.id]: applied } })
+      return true
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : '归因失败'
+      const afterError = ensureAudiobook(useStore.getState().currentWork!)
+      const failed = markAttributionFailed(afterError.segmentsByChapter[chapter.id] || [], batch.map((segment) => segment.id), batchId, errMsg)
+      await persistAudiobook({ ...afterError, segmentsByChapter: { ...afterError.segmentsByChapter, [chapter.id]: failed } })
+      return false
+    }
+  }
+
   const segmentChapter = async (chapter: Chapter) => {
     const work = useStore.getState().currentWork
     if (!work || !audiobook) return
@@ -254,14 +296,31 @@ export function useAudiobook() {
     }
     setSegmentingChapterId(chapter.id)
     try {
-      const prompt = buildAudiobookSegmentationPrompt(work, chapter)
-      const text = await generate(prompt, AUDIOBOOK_SEGMENT_SYSTEM_PROMPT, aiConfig)
-      const segments = normalizeSegments(work, chapter, parseSegmentJson(text))
-      if (!segments.length) throw new Error('AI 未返回可用分段')
+      setSegmentationProgress({ chapterId: chapter.id, stage: 'rule_splitting', total: 0, completed: 0, failed: 0, message: '正在规则切段' })
+      const segments = createRuleBasedSegments(work, chapter)
+      if (!segments.length) throw new Error('未生成可用分段')
       await saveSegments(chapter.id, segments)
-      message.success('章节分段已生成，可先检查并编辑后再生成音频')
+      const pendingAttribution = segmentsNeedingAttribution(segments)
+      if (!pendingAttribution.length) {
+        setSegmentationProgress({ chapterId: chapter.id, stage: 'completed', total: 0, completed: 0, failed: 0, message: '规则分段已完成' })
+        message.success('章节分段已生成，可先检查并编辑后再生成音频')
+        return
+      }
+
+      const batches: AudiobookSegment[][] = []
+      for (let index = 0; index < pendingAttribution.length; index += ATTRIBUTION_BATCH_SIZE) batches.push(pendingAttribution.slice(index, index + ATTRIBUTION_BATCH_SIZE))
+      let failed = 0
+      for (const [index, batch] of batches.entries()) {
+        setSegmentationProgress({ chapterId: chapter.id, stage: 'attributing_batches', total: batches.length, completed: index, failed, message: `正在归因 ${index}/${batches.length}` })
+        const ok = await attributeSegmentBatch(work, chapter, batch, index)
+        if (!ok) failed += 1
+      }
+      setSegmentationProgress({ chapterId: chapter.id, stage: failed ? 'partial_failed' : 'completed', total: batches.length, completed: batches.length, failed, message: failed ? `${failed} 个批次归因失败，可重试片段` : '分段归因已完成' })
+      if (failed) message.warning(`${failed} 个归因批次失败，已保留可用分段`)
+      else message.success('章节分段已生成，可先检查并编辑后再生成音频')
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : '未知错误'
+      setSegmentationProgress({ chapterId: chapter.id, stage: 'failed', total: 0, completed: 0, failed: 1, message: errMsg })
       message.error(`分段失败：${errMsg}`)
     } finally {
       setSegmentingChapterId(null)
@@ -271,7 +330,29 @@ export function useAudiobook() {
   const updateSegment = async (chapterId: string, segmentId: string, changes: Partial<AudiobookSegment>) => {
     if (!audiobook) return
     const segments = audiobook.segmentsByChapter[chapterId] || []
-    await saveSegments(chapterId, segments.map((segment) => segment.id === segmentId ? { ...segment, ...changes } : segment))
+    const editedAt = now()
+    await saveSegments(chapterId, segments.map((segment) => segment.id === segmentId ? {
+      ...segment,
+      ...changes,
+      ...(typeof changes.text === 'string' ? { textEditedAt: editedAt, status: 'stale' as const } : {}),
+      ...(changes.speakerKind || changes.characterId || changes.speakerName ? { speakerEditedAt: editedAt, attributionSource: 'manual' as const, attributionStatus: 'manual' as const, needsReview: false, retryable: false, status: 'stale' as const } : {}),
+    } : segment))
+  }
+
+  const retrySegmentAttribution = async (chapter: Chapter, segmentId: string) => {
+    const work = useStore.getState().currentWork
+    if (!work || !audiobook) return
+    if (!aiConfig.apiKey) {
+      message.warning('请先在系统管理中配置 AI')
+      return
+    }
+    const segment = audiobook.segmentsByChapter[chapter.id]?.find((item) => item.id === segmentId)
+    if (!segment) return
+    setSegmentingChapterId(chapter.id)
+    setSegmentationProgress({ chapterId: chapter.id, stage: 'attributing_batches', total: 1, completed: 0, failed: 0, message: '正在重试片段归因' })
+    const ok = await attributeSegmentBatch(work, chapter, [segment], 0)
+    setSegmentationProgress({ chapterId: chapter.id, stage: ok ? 'completed' : 'partial_failed', total: 1, completed: 1, failed: ok ? 0 : 1, message: ok ? '片段归因已完成' : '片段归因失败' })
+    setSegmentingChapterId(null)
   }
 
   const generateChapterAudio = async (chapter: Chapter, retryFailedOnly = false) => {
@@ -284,6 +365,11 @@ export function useAudiobook() {
     const missing = missingBindings(segments, chapter.id)
     if (missing.length) {
       message.error(`以下说话人未配置完整：${missing.join('、')}`)
+      return
+    }
+    const unresolved = segments.filter((segment) => segment.attributionStatus === 'failed' || (segment.needsReview && segment.speakerKind === 'narrator' && (segment.attributionConfidence || 0) < 0.6))
+    if (unresolved.length) {
+      message.error(`还有 ${unresolved.length} 个分段需要复核或重试归因`)
       return
     }
 
@@ -406,6 +492,7 @@ export function useAudiobook() {
     loadingProfiles,
     segmentingChapterId,
     generatingChapterId,
+    segmentationProgress,
     refreshProfiles,
     bindProfile,
     bindVoice,
@@ -416,6 +503,7 @@ export function useAudiobook() {
     uploadReference,
     segmentChapter,
     updateSegment,
+    retrySegmentAttribution,
     generateChapterAudio,
     generatePromptTemplate,
     missingBindings,
