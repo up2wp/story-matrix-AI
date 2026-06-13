@@ -18,7 +18,12 @@ interface ChatCompletionPayload {
   config?: AIConfigPayload
   messages?: ChatMessage[]
   stream?: boolean
+  max_tokens?: number
+  temperature?: number
+  top_p?: number
 }
+
+const AI_UPSTREAM_TIMEOUT_MS = 360000
 
 function normalizeBaseUrl(baseUrl?: string) {
   return (baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '')
@@ -33,6 +38,14 @@ function providerHeaders(apiKey?: string) {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`
   return headers
+}
+
+function safeGenerationParams(payload: ChatCompletionPayload) {
+  const params: Record<string, number> = {}
+  if (typeof payload.max_tokens === 'number' && payload.max_tokens > 0) params.max_tokens = Math.floor(payload.max_tokens)
+  if (typeof payload.temperature === 'number' && payload.temperature >= 0) params.temperature = payload.temperature
+  if (typeof payload.top_p === 'number' && payload.top_p > 0 && payload.top_p <= 1) params.top_p = payload.top_p
+  return params
 }
 
 async function readProviderError(response: Response) {
@@ -69,7 +82,8 @@ router.post('/models', async (req, res) => {
 })
 
 router.post('/chat-completions', async (req, res) => {
-  const { config, messages, stream } = req.body as ChatCompletionPayload
+  const payload = req.body as ChatCompletionPayload
+  const { config, messages, stream } = payload
   const aiConfig = config?.apiKey && config.apiKey !== '__server_configured__' ? config : loadSystemAIConfig()
 
   if (!aiConfig?.model || !messages?.length) {
@@ -79,11 +93,15 @@ router.post('/chat-completions', async (req, res) => {
     return res.status(400).json({ error: '请先在系统管理中配置 AI API Key' })
   }
 
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), AI_UPSTREAM_TIMEOUT_MS)
+
   try {
     const response = await fetch(`${normalizeBaseUrl(aiConfig.baseUrl)}/chat/completions`, {
       method: 'POST',
       headers: providerHeaders(aiConfig.apiKey),
-      body: JSON.stringify({ model: aiConfig.model, messages, stream: Boolean(stream) }),
+      body: JSON.stringify({ model: aiConfig.model, messages, stream: Boolean(stream), ...safeGenerationParams(payload) }),
+      signal: controller.signal,
     })
 
     if (!response.ok) {
@@ -104,8 +122,10 @@ router.post('/chat-completions', async (req, res) => {
 
     res.status(response.status).json(await response.json())
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'AI 请求失败'
+    const message = error instanceof Error && error.name === 'AbortError' ? 'AI 上游请求超时' : error instanceof Error ? error.message : 'AI 请求失败'
     res.status(502).json({ error: message })
+  } finally {
+    clearTimeout(timeoutId)
   }
 })
 
