@@ -10,7 +10,7 @@ import { AUDIOBOOK_ATTRIBUTION_SYSTEM_PROMPT, AUDIOBOOK_TEMPLATE_SYSTEM_PROMPT, 
 import { applyAttributionResults, markAttributionFailed, mergeConsecutiveSegments, parseAttributionJson, segmentSpeakerKey } from './segmentUtils'
 import { createRuleBasedSegments, segmentsNeedingAttribution } from './segmentRules'
 import { voiceboxClient } from './voiceboxClient'
-import { fillPromptTemplate, textHash, validatePromptTemplate } from './promptTemplateUtils'
+import { buildSegmentTonePrompt, fillPromptTemplate, textHash, validatePromptTemplate } from './promptTemplateUtils'
 
 function now() {
   return Date.now()
@@ -339,6 +339,28 @@ export function useAudiobook() {
     } : segment))
   }
 
+  const generateSegmentTonePrompts = async (chapterId: string) => {
+    const latest = ensureAudiobook(useStore.getState().currentWork!)
+    const segments = latest.segmentsByChapter[chapterId] || []
+    if (!segments.length) return
+    try {
+      const orderedSegments = [...segments].sort((a, b) => a.order - b.order)
+      const promptsBySegmentId = new Map<string, string>()
+      for (const [index, segment] of orderedSegments.entries()) {
+        const binding = segment.speakerKind === 'narrator'
+          ? latest.narratorBinding
+          : latest.chapterBindings[chapterId]?.[segment.characterId || ''] || latest.characterBindings[segment.characterId || '']
+        if (!binding) throw new Error(`${segment.speakerName} 缺少声音提示词配置`)
+        const previousSegments = orderedSegments.slice(Math.max(0, index - 2), index)
+        promptsBySegmentId.set(segment.id, buildSegmentTonePrompt(binding, previousSegments))
+      }
+      await saveSegments(chapterId, segments.map((segment) => ({ ...segment, prompt: promptsBySegmentId.get(segment.id) || segment.prompt })))
+      message.success(`已生成 ${promptsBySegmentId.size} 条语气提示词`)
+    } catch (error) {
+      message.warning(error instanceof Error ? error.message : '生成语气提示词失败')
+    }
+  }
+
   const retrySegmentAttribution = async (chapter: Chapter, segmentId: string) => {
     const work = useStore.getState().currentWork
     if (!work || !audiobook) return
@@ -514,6 +536,7 @@ export function useAudiobook() {
     uploadReference,
     segmentChapter,
     updateSegment,
+    generateSegmentTonePrompts,
     mergeSegments,
     retrySegmentAttribution,
     generateChapterAudio,

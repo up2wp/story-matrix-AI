@@ -450,6 +450,18 @@ assert.match(
 )
 
 assert.match(
+  promptTemplateUtilsSource,
+  /buildSegmentTonePrompt[\s\S]*binding\.speakerKind === 'narrator'[\s\S]*return template\.trim\(\)/,
+  'one-click tone prompt should apply narrator voice prompt directly without context replacement',
+)
+
+assert.match(
+  promptTemplateUtilsSource,
+  /buildSegmentTonePrompt[\s\S]*previousSegments[\s\S]*replaceAll\(CONTEXT_PLACEHOLDER, context\)/,
+  'one-click tone prompt should fill character context from previous segments',
+)
+
+assert.match(
   audiobookPanelSource,
   /有声读物生成已迁移到章节丰盈/,
   'legacy preview audiobook panel should only point users to chapter enrichment',
@@ -567,6 +579,24 @@ assert.match(
   segmentReviewTableSource,
   /合并选中连续分段/,
   'segment review table should allow merging selected consecutive segments',
+)
+
+assert.match(
+  segmentReviewTableSource,
+  /一键生成语气/,
+  'segment review table should expose one-click batch tone prompt generation',
+)
+
+assert.match(
+  useAudiobookSource,
+  /generateSegmentTonePrompts[\s\S]*for \(const \[index, segment\] of orderedSegments\.entries\(\)\)[\s\S]*slice\(Math\.max\(0, index - 2\), index\)/,
+  'audiobook hook should batch-generate segment tone prompts from the previous two segments',
+)
+
+assert.doesNotMatch(
+  segmentReviewTableSource,
+  /onGenerateTonePrompt\?\./,
+  'segment review table should not require users to generate tone prompts row by row',
 )
 
 assert.match(
