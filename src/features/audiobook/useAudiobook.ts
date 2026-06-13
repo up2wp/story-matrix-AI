@@ -6,7 +6,7 @@ import { db } from '@/core/db'
 import { useStore } from '@/core/store'
 import { useSystemConfigStore } from '@/core/system-config-store'
 import { generate } from '@/ai/client'
-import { AUDIOBOOK_ATTRIBUTION_SYSTEM_PROMPT, AUDIOBOOK_TEMPLATE_SYSTEM_PROMPT, buildAudiobookAttributionPrompt, buildQwenTtsRoleTemplatePrompt } from '@/ai/prompts/audiobook'
+import { AUDIOBOOK_ATTRIBUTION_SYSTEM_PROMPT, AUDIOBOOK_TEMPLATE_SYSTEM_PROMPT, AUDIOBOOK_TONE_SYSTEM_PROMPT, buildAudiobookAttributionPrompt, buildAudiobookToneCompressionPrompt, buildQwenTtsRoleTemplatePrompt } from '@/ai/prompts/audiobook'
 import { applyAttributionResults, markAttributionFailed, mergeConsecutiveSegments, parseAttributionJson, segmentSpeakerKey } from './segmentUtils'
 import { createRuleBasedSegments, segmentsNeedingAttribution } from './segmentRules'
 import { voiceboxClient } from './voiceboxClient'
@@ -18,13 +18,14 @@ function now() {
 
 function defaultNarratorBinding(): VoiceBinding {
   const timestamp = now()
+  const prompt = '自然、清晰、克制，适合长篇小说旁白。当前语境：【上下文】'
   return {
     id: 'narrator',
     speakerKind: 'narrator',
     displayName: '旁白',
     source: 'pending',
-    prompt: '',
-    promptTemplate: '',
+    prompt,
+    promptTemplate: prompt,
     updatedAt: timestamp,
     promptUpdatedAt: timestamp,
   }
@@ -50,6 +51,30 @@ function profileName(profile: VoiceboxProfile) {
 
 function isBindingReady(binding?: VoiceBinding) {
   return Boolean(binding?.profileId && binding.source !== 'pending')
+}
+
+function defaultNarratorPrompt(work: NonNullable<ReturnType<typeof useStore.getState>['currentWork']>) {
+  return `${work.seed.tone || '自然'}、清晰、克制，适合长篇小说旁白。当前语境：【上下文】`
+}
+
+function bindingPromptTemplate(binding: VoiceBinding | undefined, work: NonNullable<ReturnType<typeof useStore.getState>['currentWork']>) {
+  if (!binding) return ''
+  return binding.promptTemplate || binding.prompt || (binding.speakerKind === 'narrator' ? defaultNarratorPrompt(work) : '')
+}
+
+interface ToneCompressionResult {
+  segmentId?: string
+  tone?: string
+}
+
+function parseToneCompressionJson(text: string): ToneCompressionResult[] {
+  const cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim()
+  const start = cleaned.indexOf('[')
+  const end = cleaned.lastIndexOf(']')
+  if (start === -1 || end <= start) throw new Error('AI 没有返回语气 JSON 数组')
+  const parsed = JSON.parse(cleaned.slice(start, end + 1))
+  if (!Array.isArray(parsed)) throw new Error('AI 语气结果不是数组')
+  return parsed as ToneCompressionResult[]
 }
 
 const ATTRIBUTION_BATCH_SIZE = 4
@@ -223,11 +248,13 @@ export function useAudiobook() {
   }
 
   const missingBindings = (segments: AudiobookSegment[], chapterId?: string) => {
+    const work = useStore.getState().currentWork
+    if (!work) return []
     const missing = new Set<string>()
     for (const segment of segments) {
       const binding = bindingForSegment(segment, chapterId)
       if (!isBindingReady(binding)) missing.add(segmentSpeakerKey(segment) === 'narrator' ? '旁白' : segment.speakerName)
-      else if (!validatePromptTemplate(binding?.promptTemplate || binding?.prompt || '')) missing.add(`${segment.speakerName}提示词`)
+      else if (!validatePromptTemplate(bindingPromptTemplate(binding, work))) missing.add(`${segment.speakerName}提示词`)
     }
     return [...missing]
   }
@@ -335,25 +362,46 @@ export function useAudiobook() {
       ...segment,
       ...changes,
       ...(typeof changes.text === 'string' ? { textEditedAt: editedAt, status: 'stale' as const } : {}),
-      ...(changes.speakerKind || changes.characterId || changes.speakerName ? { speakerEditedAt: editedAt, attributionSource: 'manual' as const, attributionStatus: 'manual' as const, needsReview: false, retryable: false, status: 'stale' as const } : {}),
+      ...(changes.speakerKind || changes.characterId || changes.speakerName ? { speakerEditedAt: editedAt, attributionSource: 'manual' as const, attributionStatus: 'manual' as const, needsReview: false, retryable: false } : {}),
     } : segment))
   }
 
+  const approveReviewSegments = async (chapterId: string) => {
+    const latest = ensureAudiobook(useStore.getState().currentWork!)
+    const segments = latest.segmentsByChapter[chapterId] || []
+    const reviewed = segments.filter((segment) => segment.needsReview || segment.attributionStatus === 'needs_review')
+    if (!reviewed.length) return
+    await saveSegments(chapterId, segments.map((segment) => reviewed.some((item) => item.id === segment.id)
+      ? { ...segment, needsReview: false, retryable: false, attributionStatus: 'manual' as const, attributionSource: 'manual' as const, speakerEditedAt: now() }
+      : segment))
+    message.success(`已确认 ${reviewed.length} 个待复核分段`)
+  }
+
   const generateSegmentTonePrompts = async (chapterId: string) => {
+    const work = useStore.getState().currentWork
+    if (!work) return
+    if (!aiConfig.apiKey) {
+      message.warning('请先在系统管理中配置 AI')
+      return
+    }
     const latest = ensureAudiobook(useStore.getState().currentWork!)
     const segments = latest.segmentsByChapter[chapterId] || []
     if (!segments.length) return
     try {
       const orderedSegments = [...segments].sort((a, b) => a.order - b.order)
-      const promptsBySegmentId = new Map<string, string>()
+      const promptInputs: { segmentId: string; speakerName: string; text: string; expandedPrompt: string }[] = []
       for (const [index, segment] of orderedSegments.entries()) {
         const binding = segment.speakerKind === 'narrator'
           ? latest.narratorBinding
           : latest.chapterBindings[chapterId]?.[segment.characterId || ''] || latest.characterBindings[segment.characterId || '']
         if (!binding) throw new Error(`${segment.speakerName} 缺少声音提示词配置`)
         const previousSegments = orderedSegments.slice(Math.max(0, index - 2), index)
-        promptsBySegmentId.set(segment.id, buildSegmentTonePrompt(binding, previousSegments))
+        const effectiveBinding = { ...binding, prompt: bindingPromptTemplate(binding, work), promptTemplate: bindingPromptTemplate(binding, work) }
+        promptInputs.push({ segmentId: segment.id, speakerName: segment.speakerName, text: segment.text, expandedPrompt: buildSegmentTonePrompt(effectiveBinding, previousSegments) })
       }
+      const resultText = await generate(buildAudiobookToneCompressionPrompt(promptInputs), AUDIOBOOK_TONE_SYSTEM_PROMPT, { ...aiConfig, maxTokens: Math.min(aiConfig.maxTokens || 1200, 1600) })
+      const tones = parseToneCompressionJson(resultText)
+      const promptsBySegmentId = new Map(tones.filter((item) => item.segmentId && item.tone?.trim()).map((item) => [item.segmentId!, item.tone!.trim()]))
       await saveSegments(chapterId, segments.map((segment) => ({ ...segment, prompt: promptsBySegmentId.get(segment.id) || segment.prompt })))
       message.success(`已生成 ${promptsBySegmentId.size} 条语气提示词`)
     } catch (error) {
@@ -426,7 +474,8 @@ export function useAudiobook() {
         nextSegments = nextSegments.map((item) => item.id === segment.id ? { ...item, status: 'generating' } : item)
         await saveSegments(chapter.id, nextSegments)
         try {
-          const { instruct, clipped, hash } = fillPromptTemplate(binding, chapter, segment)
+          const effectiveBinding = { ...binding, prompt: bindingPromptTemplate(binding, useStore.getState().currentWork!), promptTemplate: bindingPromptTemplate(binding, useStore.getState().currentWork!) }
+          const { instruct, clipped, hash } = fillPromptTemplate(effectiveBinding, chapter, segment)
           if (clipped) message.info('提示词已按 Voicebox 限制裁剪')
           const result = await voiceboxClient.generate({
             profile_id: binding.profileId,
@@ -536,6 +585,7 @@ export function useAudiobook() {
     uploadReference,
     segmentChapter,
     updateSegment,
+    approveReviewSegments,
     generateSegmentTonePrompts,
     mergeSegments,
     retrySegmentAttribution,

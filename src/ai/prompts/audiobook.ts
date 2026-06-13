@@ -21,6 +21,11 @@ export const AUDIOBOOK_ATTRIBUTION_SYSTEM_PROMPT = `你是中文小说有声读�
 你只能从候选 speaker 中选择 speakerId；无法判断时选择 narrator 并标记 needsReview=true。
 不要改写 text，不要新增角色，不要输出候选列表之外的 characterId。`
 
+export const AUDIOBOOK_TONE_SYSTEM_PROMPT = `你是 QwenTTS 有声读物语气编辑。
+只输出 JSON 数组，不要 Markdown，不要解释。
+每条 tone 控制在 50 字左右，描述当前分段的声音状态、情绪、节奏和重音倾向。
+不要复述待朗读正文，不要输出角色设定全文。`
+
 export function buildVoicePrompt(work: Work, characterId?: string, mood?: string) {
   if (!characterId) {
     return `${work.seed.tone || '自然'}、清晰、克制，适合长篇小说旁白${mood ? `，当前情绪：${mood}` : ''}`.slice(0, 180)
@@ -107,6 +112,17 @@ ${JSON.stringify(segments.map((segment) => ({ id: segment.id, text: segment.text
 - confidence: 0 到 1
 - needsReview: boolean
 - reason: 简短原因`
+}
+
+export function buildAudiobookToneCompressionPrompt(items: { segmentId: string; speakerName: string; text: string; expandedPrompt: string }[]) {
+  return `请把以下已展开的角色朗读指导压缩为适合单个 TTS 分段使用的简洁语气描述。
+
+输入：
+${JSON.stringify(items, null, 2)}
+
+输出 JSON 数组，每个对象必须包含：
+- segmentId: 输入中的 segmentId
+- tone: 50 字左右的中文语气描述`
 }
 
 export function buildQwenTtsRoleTemplatePrompt(work: Work, characterId: string) {

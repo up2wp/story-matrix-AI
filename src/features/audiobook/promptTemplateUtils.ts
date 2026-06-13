@@ -60,23 +60,13 @@ export function fillPromptTemplate(binding: VoiceBinding, chapter: Chapter, segm
   return { instruct: clipped, clipped: true, hash: stableHash(clipped) }
 }
 
-function compactTonePrompt(text: string, limit = 70) {
-  const normalized = text
-    .replace(/\s+/g, ' ')
-    .replace(/[。；;，,、]+/g, '，')
-    .trim()
-  if (normalized.length <= limit) return normalized
-  return normalized.slice(0, limit).replace(/[，,、。；;：:]*$/, '')
-}
-
-export function buildSegmentTonePrompt(binding: VoiceBinding, previousSegments: Pick<AudiobookSegment, 'text'>[], limit = 70) {
+export function buildSegmentTonePrompt(binding: VoiceBinding, previousSegments: Pick<AudiobookSegment, 'text'>[]) {
   const template = binding.promptTemplate || binding.prompt
   if (!template.trim()) throw new Error(`${binding.displayName} 缺少提示词模板`)
   if (binding.speakerKind === 'narrator') return template.trim()
   if (!validatePromptTemplate(template)) throw new Error(`${binding.displayName} 的提示词模板缺少占位符`)
   const context = previousSegments.map((segment) => segment.text.trim()).filter(Boolean).join('\n')
-  const filled = removeSpeechTextPlaceholder(template).replaceAll(CONTEXT_PLACEHOLDER, context)
-  return compactTonePrompt(filled, limit)
+  return removeSpeechTextPlaceholder(template).replaceAll(CONTEXT_PLACEHOLDER, context)
 }
 
 export function textHash(text: string) {

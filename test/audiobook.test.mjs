@@ -524,6 +524,12 @@ assert.match(
 
 assert.match(
   audiobookPromptSource,
+  /buildAudiobookToneCompressionPrompt/,
+  'audiobook prompts should include an AI tone compression prompt',
+)
+
+assert.match(
+  audiobookPromptSource,
   /候选 speaker/,
   'small-window attribution prompt should constrain the model to candidate speakers',
 )
@@ -595,9 +601,27 @@ assert.match(
 )
 
 assert.match(
+  segmentReviewTableSource,
+  /defaultPageSize: 20,[\s\S]*pageSizeOptions: \[20, 50, 100\]/,
+  'segment review table should let users switch to 100 rows per page without forcing pageSize back to 20',
+)
+
+assert.match(
+  segmentReviewTableSource,
+  /待复核[\s\S]*已确认[\s\S]*待生成/,
+  'segment review status should distinguish review and attribution states before audio generation',
+)
+
+assert.match(
   useAudiobookSource,
-  /generateSegmentTonePrompts[\s\S]*for \(const \[index, segment\] of orderedSegments\.entries\(\)\)[\s\S]*slice\(Math\.max\(0, index - 2\), index\)/,
-  'audiobook hook should batch-generate segment tone prompts from the previous two segments',
+  /generateSegmentTonePrompts[\s\S]*buildAudiobookToneCompressionPrompt[\s\S]*parseToneCompressionJson/,
+  'audiobook hook should use AI compression for batch tone prompts',
+)
+
+assert.match(
+  useAudiobookSource,
+  /approveReviewSegments[\s\S]*needsReview: false[\s\S]*attributionStatus: 'manual'/,
+  'audiobook hook should expose a confirmation action for reviewed attribution results',
 )
 
 assert.doesNotMatch(
@@ -654,10 +678,10 @@ assert.match(
   'chapter audio player should not start audio loading or state updates when no completed segments exist',
 )
 
-assert.match(
+assert.doesNotMatch(
   segmentReviewTableSource,
   /pagination=\{\{ pageSize: 20, showSizeChanger: true \}\}/,
-  'segment review table should paginate existing segments instead of rendering every textarea on panel expand',
+  'segment review table should not hard-control pageSize to 20 after user changes it',
 )
 
 console.log('audiobook behavior assertions passed')
