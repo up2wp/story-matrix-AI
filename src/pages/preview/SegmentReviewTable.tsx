@@ -7,13 +7,15 @@ interface Props {
   segments: AudiobookSegment[]
   characters: Character[]
   onUpdate: (segmentId: string, changes: Partial<AudiobookSegment>) => Promise<void>
+  onGenerateTonePrompts?: () => Promise<void>
   onMergeSegments?: (segmentIds: string[]) => Promise<void>
   onRetryAttribution?: (segmentId: string) => Promise<void>
   scrollY?: number
 }
 
-export default function SegmentReviewTable({ segments, characters, onUpdate, onMergeSegments, onRetryAttribution, scrollY }: Props) {
+export default function SegmentReviewTable({ segments, characters, onUpdate, onGenerateTonePrompts, onMergeSegments, onRetryAttribution, scrollY }: Props) {
   const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [generatingTonePrompts, setGeneratingTonePrompts] = useState(false)
   const speakerOptions = [
     { value: 'narrator', label: '旁白' },
     ...characters.map((character) => ({ value: character.id, label: character.name })),
@@ -73,7 +75,17 @@ export default function SegmentReviewTable({ segments, characters, onUpdate, onM
   ]
 
   return <Space direction="vertical" style={{ width: '100%' }}>
-    {onMergeSegments && <Button size="small" disabled={selectedIds.length < 2} onClick={() => void onMergeSegments(selectedIds).then(() => setSelectedIds([]))}>合并选中连续分段</Button>}
+    <Space wrap>
+      {onGenerateTonePrompts && <Button
+        size="small"
+        loading={generatingTonePrompts}
+        onClick={() => {
+          setGeneratingTonePrompts(true)
+          void onGenerateTonePrompts().finally(() => setGeneratingTonePrompts(false))
+        }}
+      >一键生成语气</Button>}
+      {onMergeSegments && <Button size="small" disabled={selectedIds.length < 2} onClick={() => void onMergeSegments(selectedIds).then(() => setSelectedIds([]))}>合并选中连续分段</Button>}
+    </Space>
     <Table
       size="small"
       rowKey="id"
