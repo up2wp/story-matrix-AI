@@ -50,7 +50,16 @@ function migrateWork(work: Work): Work {
       ...record,
       prompt: typeof record.prompt === 'string' ? record.prompt : '',
       sourceStartOffset: typeof sourceStartOffset === 'number' && sourceStartOffset >= 0 ? sourceStartOffset : undefined,
+      sourceEndOffset: typeof record.sourceEndOffset === 'number'
+        ? record.sourceEndOffset
+        : typeof sourceStartOffset === 'number' && sourceStartOffset >= 0 ? sourceStartOffset + text.length : undefined,
       sourceParagraphIndex: typeof record.sourceParagraphIndex === 'number' ? record.sourceParagraphIndex : undefined,
+      segmentationSource: typeof record.segmentationSource === 'string' ? record.segmentationSource : 'legacy',
+      attributionSource: typeof record.attributionSource === 'string' ? record.attributionSource : 'legacy',
+      attributionStatus: typeof record.attributionStatus === 'string' ? record.attributionStatus : 'attributed',
+      attributionConfidence: typeof record.attributionConfidence === 'number' ? record.attributionConfidence : 1,
+      needsReview: typeof record.needsReview === 'boolean' ? record.needsReview : false,
+      retryable: typeof record.retryable === 'boolean' ? record.retryable : false,
     } as unknown as AudiobookSegment
   }
   // 清理约束的 scope 和 relatedOutlineIds
@@ -100,7 +109,7 @@ function migrateWork(work: Work): Work {
       chapterAudio: asRecord(audiobook.chapterAudio) as WorkAudiobookConfig['chapterAudio'],
     }
     const narratorBinding = asRecord(audiobook.narratorBinding)
-    if (!audiobook.chapterBindings || !narratorBinding.promptTemplate || Object.values(segmentsByChapter).some((segments) => Array.isArray(segments) && segments.some((segment) => typeof asRecord(segment).sourceStartOffset !== 'number'))) {
+    if (!audiobook.chapterBindings || !narratorBinding.promptTemplate || Object.values(segmentsByChapter).some((segments) => Array.isArray(segments) && segments.some((segment) => typeof asRecord(segment).sourceStartOffset !== 'number' || typeof asRecord(segment).segmentationSource !== 'string'))) {
       work = { ...work, audiobook: nextAudiobook }
       changed = true
     }

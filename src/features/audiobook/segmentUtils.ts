@@ -10,6 +10,17 @@ interface RawSegment {
   prompt?: string
 }
 
+export interface AttributionResult {
+  segmentId?: string
+  speakerKind?: string
+  characterId?: string | null
+  speakerName?: string
+  mood?: string
+  confidence?: number
+  needsReview?: boolean
+  reason?: string
+}
+
 export function parseSegmentJson(text: string): RawSegment[] {
   const cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim()
   const start = cleaned.indexOf('[')
@@ -46,9 +57,67 @@ export function normalizeSegments(work: Work, chapter: Chapter, rawSegments: Raw
         mood,
         prompt: '',
         sourceStartOffset: sourceStartOffset >= 0 ? sourceStartOffset : undefined,
+        sourceEndOffset: sourceStartOffset >= 0 ? sourceStartOffset + text.length : undefined,
+        segmentationSource: 'ai',
+        attributionSource: character ? 'ai' : 'legacy',
+        attributionStatus: 'attributed',
+        attributionConfidence: character ? 0.85 : 0.7,
+        needsReview: false,
+        retryable: false,
         status: 'pending',
       }
     })
+}
+
+export function parseAttributionJson(text: string): AttributionResult[] {
+  const cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim()
+  const arrayStart = cleaned.indexOf('[')
+  const arrayEnd = cleaned.lastIndexOf(']')
+  if (arrayStart >= 0 && arrayEnd > arrayStart) {
+    const parsed = JSON.parse(cleaned.slice(arrayStart, arrayEnd + 1))
+    if (!Array.isArray(parsed)) throw new Error('AI 归因结果不是数组')
+    return parsed as AttributionResult[]
+  }
+
+  const objectStart = cleaned.indexOf('{')
+  const objectEnd = cleaned.lastIndexOf('}')
+  if (objectStart === -1 || objectEnd <= objectStart) throw new Error('AI 没有返回归因 JSON')
+  return [JSON.parse(cleaned.slice(objectStart, objectEnd + 1)) as AttributionResult]
+}
+
+export function applyAttributionResults(work: Work, segments: AudiobookSegment[], results: AttributionResult[], batchId: string): AudiobookSegment[] {
+  return segments.map((segment) => {
+    const result = results.find((item) => item.segmentId === segment.id) || (results.length === 1 ? results[0] : undefined)
+    if (!result || segment.speakerEditedAt) return segment
+
+    const character = result.characterId ? work.characters.find((item) => item.id === result.characterId) : undefined
+    const wantsCharacter = result.speakerKind === 'character'
+    const confidence = typeof result.confidence === 'number' ? Math.max(0, Math.min(1, result.confidence)) : 0.5
+    const validCharacter = wantsCharacter && character
+    const needsReview = Boolean(result.needsReview || (wantsCharacter && !character) || confidence < 0.72)
+
+    return {
+      ...segment,
+      speakerKind: validCharacter ? 'character' : 'narrator',
+      characterId: validCharacter ? character.id : undefined,
+      speakerName: validCharacter ? character.name : '旁白',
+      mood: result.mood?.trim() || segment.mood || '平稳叙述',
+      attributionSource: 'llm',
+      attributionStatus: needsReview ? 'needs_review' : 'attributed',
+      attributionConfidence: confidence,
+      attributionBatchId: batchId,
+      attributionError: result.reason,
+      needsReview,
+      retryable: needsReview,
+    }
+  })
+}
+
+export function markAttributionFailed(segments: AudiobookSegment[], segmentIds: string[], batchId: string, error: string): AudiobookSegment[] {
+  const failed = new Set(segmentIds)
+  return segments.map((segment) => failed.has(segment.id)
+    ? { ...segment, attributionStatus: 'failed', attributionBatchId: batchId, attributionError: error, needsReview: true, retryable: true }
+    : segment)
 }
 
 export function segmentSpeakerKey(segment: Pick<AudiobookSegment, 'speakerKind' | 'characterId'>) {

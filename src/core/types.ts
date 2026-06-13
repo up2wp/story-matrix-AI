@@ -170,6 +170,9 @@ export interface VoiceboxConfig {
 export type VoiceBindingSource = 'profile' | 'sample' | 'pending'
 export type AudiobookSpeakerKind = 'narrator' | 'character'
 export type ChapterAudioStatus = 'pending' | 'generating' | 'completed' | 'failed' | 'stale'
+export type AudiobookSegmentationSource = 'legacy' | 'ai' | 'rule'
+export type AudiobookAttributionSource = 'legacy' | 'ai' | 'rule' | 'llm' | 'manual'
+export type AudiobookAttributionStatus = 'pending' | 'attributing' | 'attributed' | 'needs_review' | 'failed' | 'manual'
 
 export interface UserVoiceAsset {
   id: string
@@ -213,7 +216,18 @@ export interface AudiobookSegment {
   mood: string
   prompt: string
   sourceStartOffset?: number
+  sourceEndOffset?: number
   sourceParagraphIndex?: number
+  segmentationSource?: AudiobookSegmentationSource
+  attributionSource?: AudiobookAttributionSource
+  attributionStatus?: AudiobookAttributionStatus
+  attributionConfidence?: number
+  attributionBatchId?: string
+  attributionError?: string
+  needsReview?: boolean
+  retryable?: boolean
+  textEditedAt?: number
+  speakerEditedAt?: number
   generationId?: string
   status: ChapterAudioStatus
   error?: string
