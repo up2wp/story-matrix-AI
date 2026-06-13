@@ -13,6 +13,8 @@ extends: docs/plans/2026-06-11-001-feat-voicebox-audiobook-generation-plan.md
 
 本计划在已完成的 VoiceBox 有声读物 v1 基础上做二期优化：把参考音频上传与音色命名集中到用户级「声音管理」，把有声读物工作流从全文预览迁移到「章节丰盈」的单章上下文，并将角色语音提示词改为可 AI 生成、可复用、生成时按上下文占位符替换的模板。
 
+**Extension note 2026-06-15:** `docs/plans/2026-06-15-002-feat-audiobook-segmentation-pipeline-plan.md` 已替换本计划中的一次性 AI 分段实现策略：章节入口、声音管理、VoiceBox 代理和提示词模板边界不变，但「AI 分段」改为规则切段、小窗口归因、批次进度和失败片段可重试。
+
 ---
 
 ## Problem Frame
