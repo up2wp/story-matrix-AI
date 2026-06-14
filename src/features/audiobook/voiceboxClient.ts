@@ -42,6 +42,11 @@ export interface VoiceboxGenerationResponse {
   status?: string
 }
 
+export interface VoiceboxGenerationStatus {
+  status?: string
+  error?: string
+}
+
 export const voiceboxClient = {
   health: () => request<unknown>('/health', { headers: requestHeaders(false) }),
   profiles: () => request<VoiceboxProfile[]>('/profiles', { headers: requestHeaders(false) }),
@@ -65,7 +70,7 @@ export const voiceboxClient = {
     headers: requestHeaders(),
     body: JSON.stringify(body),
   }),
-  status: (generationId: string) => request<Record<string, unknown>>(`/generate/${encodeURIComponent(generationId)}/status`, { headers: requestHeaders(false) }),
+  status: (generationId: string) => request<VoiceboxGenerationStatus>(`/generate/${encodeURIComponent(generationId)}/status`, { headers: requestHeaders(false) }),
   audioUrl: (generationId: string) => `/api/voicebox/audio/${encodeURIComponent(generationId)}`,
   sampleUrl: (sampleId: string) => `/api/voicebox/samples/${encodeURIComponent(sampleId)}`,
   fetchMediaUrl: async (url: string) => {

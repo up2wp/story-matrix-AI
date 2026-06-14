@@ -408,6 +408,12 @@ assert.match(
   'Voicebox status proxy should recognize Voicebox SSE responses',
 )
 
+assert.match(
+  voiceboxClientSource,
+  /export interface VoiceboxGenerationStatus[\s\S]*status\?: string/,
+  'voicebox client should expose a typed generation status response for polling audio readiness',
+)
+
 assert.doesNotMatch(
   voiceboxClientSource,
   /127\.0\.0\.1:17493|serviceUrl|bearerToken|apiKey|customHeaderValue/,
@@ -586,6 +592,18 @@ assert.match(
   useAudiobookSource,
   /fillPromptTemplate\(effectiveBinding, chapter, segment, segment\.prompt\)/,
   'chapter generation should pass the editable row prompt into Voicebox instruct filling',
+)
+
+assert.match(
+  useAudiobookSource,
+  /waitForVoiceboxGeneration\(generationId: string\)[\s\S]*voiceboxClient\.status\(generationId\)[\s\S]*VOICEBOX_COMPLETE_STATUSES\.has\(normalizedStatus\)/,
+  'chapter generation should poll Voicebox status and wait for completed before marking segment audio downloadable',
+)
+
+assert.match(
+  useAudiobookSource,
+  /await waitForVoiceboxGeneration\(generationId\)[\s\S]*status: 'completed'/,
+  'segment status should become completed only after Voicebox reports the audio generation completed',
 )
 
 assert.match(

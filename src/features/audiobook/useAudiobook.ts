@@ -106,6 +106,24 @@ interface SegmentationProgress {
   message: string
 }
 
+const VOICEBOX_COMPLETE_STATUSES = new Set(['completed', 'succeeded', 'success', 'done', 'finished'])
+const VOICEBOX_FAILED_STATUSES = new Set(['failed', 'error'])
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function waitForVoiceboxGeneration(generationId: string) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const { status, error } = await voiceboxClient.status(generationId)
+    const normalizedStatus = status?.toLowerCase()
+    if (normalizedStatus && VOICEBOX_COMPLETE_STATUSES.has(normalizedStatus)) return
+    if (normalizedStatus && VOICEBOX_FAILED_STATUSES.has(normalizedStatus)) throw new Error(error || 'Voicebox 音频生成失败')
+    await sleep(2000)
+  }
+  throw new Error('Voicebox 音频生成超时')
+}
+
 function invalidateAllAudio(config: WorkAudiobookConfig): WorkAudiobookConfig {
   return {
     ...config,
@@ -545,6 +563,7 @@ export function useAudiobook() {
           })
           const generationId = result.generation_id || result.id
           if (!generationId) throw new Error('Voicebox 未返回 generation_id')
+          await waitForVoiceboxGeneration(generationId)
           generationIds.push(generationId)
           nextSegments = nextSegments.map((item) => item.id === segment.id ? { ...item, status: 'completed', generationId, generatedWith: { bindingUpdatedAt: binding.updatedAt, promptUpdatedAt: binding.promptUpdatedAt, narratorUpdatedAt: audiobook.narratorBinding.updatedAt, textHash: textHash(segment.text), instructHash: hash } } : item)
           await saveSegments(chapter.id, nextSegments)
