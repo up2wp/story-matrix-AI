@@ -536,7 +536,8 @@ export function useAudiobook() {
         }
       }
 
-      const failed = nextSegments.filter((segment) => segment.status === 'failed')
+      const targetGenerationSegments = targetSegmentIds ? nextSegments.filter((segment) => targetSegmentIds.has(segment.id)) : nextSegments
+      const failed = targetGenerationSegments.filter((segment) => segment.status === 'failed')
       const completedIds = nextSegments.map((segment) => segment.generationId).filter((id): id is string => Boolean(id))
       const latest = ensureAudiobook(useStore.getState().currentWork!)
       await persistAudiobook({

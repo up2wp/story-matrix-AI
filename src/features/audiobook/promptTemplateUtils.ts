@@ -47,6 +47,10 @@ function stableHash(text: string) {
 }
 
 export function fillPromptTemplate(binding: VoiceBinding, chapter: Chapter, segment: AudiobookSegment, overridePrompt?: string, limit = 500) {
+  if (overridePrompt?.trim()) {
+    const prompt = removeSpeechTextPlaceholder(overridePrompt.trim())
+    return { instruct: prompt.slice(-limit), clipped: prompt.length > limit, hash: stableHash(prompt.slice(-limit)) }
+  }
   const template = overridePrompt || binding.promptTemplate || binding.prompt
   if (!template.trim()) throw new Error(`${binding.displayName} 缺少提示词模板`)
   if (!validatePromptTemplate(template)) throw new Error(`${binding.displayName} 的提示词模板缺少占位符`)

@@ -494,6 +494,12 @@ assert.match(
 
 assert.match(
   promptTemplateUtilsSource,
+  /if \(overridePrompt\?\.trim\(\)\)[\s\S]*return \{ instruct: prompt\.slice\(-limit\), clipped: prompt\.length > limit, hash: stableHash\(prompt\.slice\(-limit\)\) \}/,
+  'editable row prompt should be treated as a ready Voicebox instruct without requiring template placeholders',
+)
+
+assert.match(
+  promptTemplateUtilsSource,
   /buildSegmentTonePrompt[\s\S]*binding\.speakerKind === 'narrator'[\s\S]*return template\.trim\(\)/,
   'one-click tone prompt should apply narrator voice prompt directly without context replacement',
 )
@@ -544,6 +550,12 @@ assert.match(
   useAudiobookSource,
   /fillPromptTemplate\(effectiveBinding, chapter, segment, segment\.prompt\)/,
   'chapter generation should pass the editable row prompt into Voicebox instruct filling',
+)
+
+assert.match(
+  useAudiobookSource,
+  /const targetGenerationSegments = targetSegmentIds \? nextSegments\.filter\(\(segment\) => targetSegmentIds\.has\(segment\.id\)\) : nextSegments[\s\S]*const failed = targetGenerationSegments\.filter\(\(segment\) => segment\.status === 'failed'\)/,
+  'targeted segment regeneration should count failures only for the requested segment instead of the whole chapter',
 )
 
 assert.match(
