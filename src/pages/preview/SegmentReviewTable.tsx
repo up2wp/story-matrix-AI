@@ -10,10 +10,13 @@ interface Props {
   onGenerateTonePrompts?: () => Promise<void>
   onMergeSegments?: (segmentIds: string[]) => Promise<void>
   onRetryAttribution?: (segmentId: string) => Promise<void>
+  onRegenerateSegmentAudio?: (segmentId: string) => Promise<void>
+  onPlaySegmentAudio?: (segment: AudiobookSegment) => Promise<void>
+  onDownloadSegmentAudio?: (segment: AudiobookSegment) => Promise<void>
   scrollY?: number
 }
 
-export default function SegmentReviewTable({ segments, characters, onUpdate, onGenerateTonePrompts, onMergeSegments, onRetryAttribution, scrollY }: Props) {
+export default function SegmentReviewTable({ segments, characters, onUpdate, onGenerateTonePrompts, onMergeSegments, onRetryAttribution, onRegenerateSegmentAudio, onPlaySegmentAudio, onDownloadSegmentAudio, scrollY }: Props) {
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [generatingTonePrompts, setGeneratingTonePrompts] = useState(false)
   const speakerOptions = [
@@ -72,8 +75,13 @@ export default function SegmentReviewTable({ segments, characters, onUpdate, onG
     },
     {
       title: '操作',
-      width: 120,
-      render: (_, segment) => <Button size="small" disabled={!onRetryAttribution || (!segment.retryable && segment.attributionStatus !== 'failed' && !segment.needsReview)} onClick={() => void onRetryAttribution?.(segment.id)}>重试归因</Button>,
+      width: 260,
+      render: (_, segment) => <Space wrap size={4}>
+        <Button size="small" disabled={!onRetryAttribution || (!segment.retryable && segment.attributionStatus !== 'failed' && !segment.needsReview)} onClick={() => void onRetryAttribution?.(segment.id)}>重试归因</Button>
+        <Button size="small" disabled={!onRegenerateSegmentAudio} onClick={() => void onRegenerateSegmentAudio?.(segment.id)}>重新生成音频</Button>
+        <Button size="small" disabled={!segment.generationId || !onPlaySegmentAudio} onClick={() => void onPlaySegmentAudio?.(segment)}>播放</Button>
+        <Button size="small" disabled={!segment.generationId || !onDownloadSegmentAudio} onClick={() => void onDownloadSegmentAudio?.(segment)}>下载</Button>
+      </Space>,
     },
   ]
 
@@ -96,7 +104,7 @@ export default function SegmentReviewTable({ segments, characters, onUpdate, onG
       dataSource={segments}
       pagination={{ defaultPageSize: 20, pageSizeOptions: [20, 50, 100], showSizeChanger: true }}
       rowSelection={onMergeSegments ? { selectedRowKeys: selectedIds, onChange: (keys) => setSelectedIds(keys.map(String)) } : undefined}
-      scroll={{ x: 1100, y: scrollY }}
+      scroll={{ x: 1240, y: scrollY }}
     />
   </Space>
 }

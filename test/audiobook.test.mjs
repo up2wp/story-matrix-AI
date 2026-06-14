@@ -644,6 +644,18 @@ assert.match(
 
 assert.match(
   segmentReviewTableSource,
+  /重新生成音频[\s\S]*播放[\s\S]*下载/,
+  'segment review table should expose per-segment regenerate, play, and download audio actions',
+)
+
+assert.match(
+  segmentReviewTableSource,
+  /onRegenerateSegmentAudio\?\.\(segment\.id\)[\s\S]*onPlaySegmentAudio\?\.\(segment\)[\s\S]*onDownloadSegmentAudio\?\.\(segment\)/,
+  'segment review table row actions should call the supplied audio handlers with the current segment',
+)
+
+assert.match(
+  segmentReviewTableSource,
   /合并选中连续分段/,
   'segment review table should allow merging selected consecutive segments',
 )
@@ -727,9 +739,9 @@ assert.match(
 )
 
 assert.match(
-  chapterAudioPlayerSource,
+  chapterAudiobookPanelSource,
   /voiceboxClient\.fetchMediaUrl\(voiceboxClient\.audioUrl/,
-  'chapter audio playback should fetch proxied audio with authentication before rendering audio tags',
+  'segment audio playback should fetch proxied audio with authentication before playing row audio',
 )
 
 assert.match(
@@ -742,6 +754,12 @@ assert.match(
   voicesPageSource,
   /voiceboxClient\.fetchMediaUrl\(voiceboxClient\.sampleUrl/,
   'voice sample audition should fetch protected sample audio with authentication',
+)
+
+assert.match(
+  chapterAudiobookPanelSource,
+  /voiceboxClient\.fetchMediaUrl\(voiceboxClient\.audioUrl[\s\S]*anchor\.download/,
+  'segment audio download should fetch proxied audio before triggering the row download',
 )
 
 assert.match(
