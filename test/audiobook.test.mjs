@@ -61,6 +61,30 @@ assert.match(
 )
 
 assert.match(
+  storeSource,
+  /function ensurePromptTemplatePlaceholder[\s\S]*template\.includes\('【上下文】'\)[\s\S]*`\$\{template\}。当前语境：【上下文】`/,
+  'legacy narrator prompts should migrate to include the required context placeholder',
+)
+
+assert.match(
+  storeSource,
+  /function bindingNeedsPromptTemplateMigration[\s\S]*!record\.prompt\.includes\('【上下文】'\)[\s\S]*!record\.promptTemplate\.includes\('【上下文】'\)/,
+  'legacy non-empty prompt templates without the context placeholder should trigger audiobook migration',
+)
+
+assert.match(
+  storeSource,
+  /bindingNeedsPromptTemplateMigration\(audiobook\.narratorBinding\)[\s\S]*Object\.values\(characterBindings\)\.some\(bindingNeedsPromptTemplateMigration\)[\s\S]*Object\.values\(chapterBindings\)\.some/,
+  'audiobook migration should persist placeholder repairs for narrator, global character, and chapter bindings',
+)
+
+assert.match(
+  storeSource,
+  /prompt: `\$\{work\.seed\.tone \|\| '自然'\}、清晰、适合长篇小说旁白。当前语境：【上下文】`[\s\S]*promptTemplate: `\$\{work\.seed\.tone \|\| '自然'\}、清晰、适合长篇小说旁白。当前语境：【上下文】`/,
+  'new work audiobook defaults should include a valid narrator prompt template',
+)
+
+assert.match(
   worksRouteSource,
   /'audiobook'/,
   'work PATCH nested-key allowlist should persist audiobook state in works.data JSON',
@@ -426,11 +450,13 @@ assert.match(
   'character voice settings page should load work characters for voice and prompt settings',
 )
 
+
 assert.match(
   useAudiobookSource,
   /missingBindings/,
   'generation should block when a segment speaker has no ready voice binding',
 )
+
 
 assert.match(
   audiobookPromptSource,

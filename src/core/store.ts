@@ -8,6 +8,18 @@ function asRecord(value: unknown): LegacyRecord {
   return value && typeof value === 'object' ? value as LegacyRecord : {}
 }
 
+function ensurePromptTemplatePlaceholder(template: string) {
+  if (!template.trim()) return ''
+  if (template.includes('【上下文】')) return template
+  return `${template}。当前语境：【上下文】`
+}
+
+function bindingNeedsPromptTemplateMigration(binding: unknown) {
+  const record = asRecord(binding)
+  return (typeof record.prompt === 'string' && record.prompt.trim() && !record.prompt.includes('【上下文】'))
+    || (typeof record.promptTemplate === 'string' && record.promptTemplate.trim() && !record.promptTemplate.includes('【上下文】'))
+}
+
 /** 清理旧版本遗留字段，补充新字段默认值 */
 function migrateWork(work: Work): Work {
   let changed = false
@@ -18,8 +30,8 @@ function migrateWork(work: Work): Work {
       speakerKind: 'narrator',
       displayName: '旁白',
       source: 'pending',
-      prompt: `${work.seed.tone || '自然'}、清晰、适合长篇小说旁白`,
-      promptTemplate: '',
+      prompt: `${work.seed.tone || '自然'}、清晰、适合长篇小说旁白。当前语境：【上下文】`,
+      promptTemplate: `${work.seed.tone || '自然'}、清晰、适合长篇小说旁白。当前语境：【上下文】`,
       updatedAt: Date.now(),
       promptUpdatedAt: Date.now(),
     },
@@ -33,8 +45,8 @@ function migrateWork(work: Work): Work {
     const record = asRecord(binding)
     return {
       ...record,
-      prompt: typeof record.prompt === 'string' ? record.prompt : '',
-      promptTemplate: typeof record.promptTemplate === 'string' ? record.promptTemplate : '',
+      prompt: ensurePromptTemplatePlaceholder(typeof record.prompt === 'string' ? record.prompt : ''),
+      promptTemplate: ensurePromptTemplatePlaceholder(typeof record.promptTemplate === 'string' ? record.promptTemplate : typeof record.prompt === 'string' ? record.prompt : ''),
       updatedAt: typeof record.updatedAt === 'number' ? record.updatedAt : Date.now(),
       promptUpdatedAt: typeof record.promptUpdatedAt === 'number' ? record.promptUpdatedAt : typeof record.updatedAt === 'number' ? record.updatedAt : Date.now(),
     } as unknown as VoiceBinding
@@ -109,7 +121,7 @@ function migrateWork(work: Work): Work {
       chapterAudio: asRecord(audiobook.chapterAudio) as WorkAudiobookConfig['chapterAudio'],
     }
     const narratorBinding = asRecord(audiobook.narratorBinding)
-    if (!audiobook.chapterBindings || !narratorBinding.promptTemplate || Object.values(segmentsByChapter).some((segments) => Array.isArray(segments) && segments.some((segment) => typeof asRecord(segment).sourceStartOffset !== 'number' || typeof asRecord(segment).segmentationSource !== 'string'))) {
+    if (!audiobook.chapterBindings || !narratorBinding.promptTemplate || bindingNeedsPromptTemplateMigration(audiobook.narratorBinding) || Object.values(characterBindings).some(bindingNeedsPromptTemplateMigration) || Object.values(chapterBindings).some((bindings) => Object.values(asRecord(bindings)).some(bindingNeedsPromptTemplateMigration)) || Object.values(segmentsByChapter).some((segments) => Array.isArray(segments) && segments.some((segment) => typeof asRecord(segment).sourceStartOffset !== 'number' || typeof asRecord(segment).segmentationSource !== 'string'))) {
       work = { ...work, audiobook: nextAudiobook }
       changed = true
     }
