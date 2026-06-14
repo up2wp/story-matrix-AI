@@ -408,6 +408,7 @@ export function useAudiobook() {
     try {
       const orderedSegments = [...segments].sort((a, b) => a.order - b.order)
       const promptInputs: { segmentId: string; speakerName: string; text: string; expandedPrompt: string }[] = []
+      const directPromptsBySegmentId = new Map<string, string>()
       for (const [index, segment] of orderedSegments.entries()) {
         const binding = segment.speakerKind === 'narrator'
           ? latest.narratorBinding
@@ -415,11 +416,22 @@ export function useAudiobook() {
         if (!binding) throw new Error(`${segment.speakerName} 缺少声音提示词配置`)
         const previousSegments = orderedSegments.slice(Math.max(0, index - 2), index)
         const effectiveBinding = { ...binding, prompt: bindingPromptTemplate(binding, work), promptTemplate: bindingPromptTemplate(binding, work) }
+        if (segment.speakerKind === 'narrator') {
+          directPromptsBySegmentId.set(segment.id, buildSegmentTonePrompt(effectiveBinding, previousSegments))
+          continue
+        }
         promptInputs.push({ segmentId: segment.id, speakerName: segment.speakerName, text: segment.text, expandedPrompt: buildSegmentTonePrompt(effectiveBinding, previousSegments) })
       }
-      const resultText = await generate(buildAudiobookToneCompressionPrompt(promptInputs), AUDIOBOOK_TONE_SYSTEM_PROMPT, { ...aiConfig, maxTokens: Math.min(aiConfig.maxTokens || 1200, 1600) })
-      const tones = parseToneCompressionJson(resultText)
-      const promptsBySegmentId = new Map(tones.filter((item) => toneSegmentId(item) && toneText(item)).map((item) => [toneSegmentId(item), toneText(item)]))
+      const promptsBySegmentId = new Map(directPromptsBySegmentId)
+      if (promptInputs.length) {
+        const resultText = await generate(buildAudiobookToneCompressionPrompt(promptInputs), AUDIOBOOK_TONE_SYSTEM_PROMPT, { ...aiConfig, maxTokens: Math.min(aiConfig.maxTokens || 1200, 1600) })
+        const tones = parseToneCompressionJson(resultText)
+        for (const item of tones) {
+          const segmentId = toneSegmentId(item)
+          const prompt = toneText(item)
+          if (segmentId && prompt) promptsBySegmentId.set(segmentId, prompt)
+        }
+      }
       if (!promptsBySegmentId.size) throw new Error('AI 没有返回可用语气提示词')
       await saveSegments(chapterId, segments.map((segment) => ({ ...segment, prompt: promptsBySegmentId.get(segment.id) || segment.prompt })))
       message.success(`已生成 ${promptsBySegmentId.size} 条语气提示词`)

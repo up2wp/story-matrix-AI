@@ -620,6 +620,18 @@ assert.match(
 
 assert.match(
   useAudiobookSource,
+  /generateSegmentTonePrompts[\s\S]*directPromptsBySegmentId[\s\S]*segment\.speakerKind === 'narrator'[\s\S]*directPromptsBySegmentId\.set\(segment\.id, buildSegmentTonePrompt\(effectiveBinding, previousSegments\)\)[\s\S]*continue/,
+  'one-click tone generation should fill narrator prompts directly without waiting for AI compression',
+)
+
+assert.match(
+  useAudiobookSource,
+  /if \(promptInputs\.length\)[\s\S]*buildAudiobookToneCompressionPrompt\(promptInputs\)/,
+  'one-click tone generation should call AI compression only when character prompts need compression',
+)
+
+assert.match(
+  useAudiobookSource,
   /function toneText[\s\S]*result\.tone[\s\S]*result\.prompt[\s\S]*result\.description/,
   'tone compression parser should tolerate common AI field-name drift instead of silently filling nothing',
 )
