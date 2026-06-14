@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { Modal, message } from 'antd'
 import type { AudiobookSegment, Chapter, ChapterAudioState, VoiceBinding, WorkAudiobookConfig } from '@/core/types'
 import type { VoiceboxProfile } from './voiceboxClient'
@@ -154,7 +154,7 @@ export function useAudiobook() {
     setCurrentWork({ ...work, audiobook: nextAudiobook, updatedAt: now() })
   }
 
-  const refreshProfiles = async () => {
+  const refreshProfiles = useCallback(async () => {
     setLoadingProfiles(true)
     try {
       const result = await voiceboxClient.profiles()
@@ -163,7 +163,7 @@ export function useAudiobook() {
     } finally {
       setLoadingProfiles(false)
     }
-  }
+  }, [])
 
   const saveBinding = async (binding: VoiceBinding) => {
     if (!currentWork || !audiobook) return

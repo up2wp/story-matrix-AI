@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { Alert, Button, Card, Empty, Space, Typography } from 'antd'
 import { CustomerServiceOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router'
@@ -24,6 +25,11 @@ export default function CharacterVoicesPage() {
     characterBindings,
     isBindingReady,
   } = useAudiobook()
+
+  useEffect(() => {
+    if (!currentWork) return
+    void refreshProfiles()
+  }, [currentWork, refreshProfiles])
 
   if (!currentWork || !narratorBinding) {
     return <Empty description="请先选择作品" />

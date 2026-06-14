@@ -450,6 +450,11 @@ assert.match(
   'character voice settings page should load work characters for voice and prompt settings',
 )
 
+assert.match(
+  characterVoicesPageSource,
+  /useEffect\(\(\) => \{[\s\S]*if \(!currentWork\) return[\s\S]*void refreshProfiles\(\)[\s\S]*\}, \[currentWork, refreshProfiles\]\)/,
+  'character voice settings page should refresh Voicebox profiles on entry so bound profile names render without manual refresh',
+)
 
 assert.match(
   useAudiobookSource,
@@ -457,6 +462,11 @@ assert.match(
   'generation should block when a segment speaker has no ready voice binding',
 )
 
+assert.match(
+  useAudiobookSource,
+  /const refreshProfiles = useCallback\(async \(\) => \{[\s\S]*voiceboxClient\.profiles\(\)[\s\S]*\}, \[\]\)/,
+  'profile refresh callback should be stable so automatic refresh does not loop on every render',
+)
 
 assert.match(
   audiobookPromptSource,
