@@ -108,6 +108,7 @@ interface SegmentationProgress {
 
 const VOICEBOX_COMPLETE_STATUSES = new Set(['completed', 'succeeded', 'success', 'done', 'finished'])
 const VOICEBOX_FAILED_STATUSES = new Set(['failed', 'error'])
+const VOICEBOX_GENERATION_CONCURRENCY = 2
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -539,11 +540,15 @@ export function useAudiobook() {
     await persistAudiobook({ ...audiobook, segmentsByChapter: { ...audiobook.segmentsByChapter, [chapter.id]: nextSegments }, chapterAudio: { ...audiobook.chapterAudio, [chapter.id]: chapterAudio } })
 
     try {
-      for (const segment of nextSegments) {
-        if (retryFailedOnly && segment.status !== 'pending') continue
-        if (targetSegmentIds && !targetSegmentIds.has(segment.id)) continue
+      const segmentsToGenerate = nextSegments.filter((segment) => {
+        if (retryFailedOnly && segment.status !== 'pending') return false
+        if (targetSegmentIds && !targetSegmentIds.has(segment.id)) return false
+        return true
+      })
+      let nextSegmentIndex = 0
+      const generateSegmentAudio = async (segment: AudiobookSegment) => {
         const binding = bindingForSegment(segment, chapter.id)
-        if (!binding?.profileId) continue
+        if (!binding?.profileId) return
         nextSegments = nextSegments.map((item) => item.id === segment.id ? { ...item, status: 'generating' } : item)
         await saveSegments(chapter.id, nextSegments)
         try {
@@ -573,6 +578,13 @@ export function useAudiobook() {
           await saveSegments(chapter.id, nextSegments)
         }
       }
+      await Promise.all(Array.from({ length: Math.min(VOICEBOX_GENERATION_CONCURRENCY, segmentsToGenerate.length) }, async () => {
+        while (nextSegmentIndex < segmentsToGenerate.length) {
+          const segment = segmentsToGenerate[nextSegmentIndex]
+          nextSegmentIndex += 1
+          await generateSegmentAudio(segment)
+        }
+      }))
 
       const targetGenerationSegments = targetSegmentIds ? nextSegments.filter((segment) => targetSegmentIds.has(segment.id)) : nextSegments
       const failed = targetGenerationSegments.filter((segment) => segment.status === 'failed')

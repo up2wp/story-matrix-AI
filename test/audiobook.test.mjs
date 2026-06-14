@@ -608,6 +608,12 @@ assert.match(
 
 assert.match(
   useAudiobookSource,
+  /const VOICEBOX_GENERATION_CONCURRENCY = 2[\s\S]*Array\.from\(\{ length: Math\.min\(VOICEBOX_GENERATION_CONCURRENCY, segmentsToGenerate\.length\) \}/,
+  'chapter audio generation should cap concurrent Voicebox generation jobs at two segments',
+)
+
+assert.match(
+  useAudiobookSource,
   /const targetGenerationSegments = targetSegmentIds \? nextSegments\.filter\(\(segment\) => targetSegmentIds\.has\(segment\.id\)\) : nextSegments[\s\S]*const failed = targetGenerationSegments\.filter\(\(segment\) => segment\.status === 'failed'\)/,
   'targeted segment regeneration should count failures only for the requested segment instead of the whole chapter',
 )
