@@ -488,6 +488,12 @@ assert.match(
 
 assert.match(
   promptTemplateUtilsSource,
+  /fillPromptTemplate[\s\S]*overridePrompt\?: string[\s\S]*overridePrompt \|\| binding\.promptTemplate \|\| binding\.prompt/,
+  'Voicebox instruct filling should allow a segment-level prompt override from the editable row prompt',
+)
+
+assert.match(
+  promptTemplateUtilsSource,
   /buildSegmentTonePrompt[\s\S]*binding\.speakerKind === 'narrator'[\s\S]*return template\.trim\(\)/,
   'one-click tone prompt should apply narrator voice prompt directly without context replacement',
 )
@@ -526,6 +532,18 @@ assert.match(
   useAudiobookSource,
   /retryFailedOnly/,
   'chapter generation should support retrying failed segments without duplicating completed work',
+)
+
+assert.match(
+  useAudiobookSource,
+  /regenerateSegmentAudio[\s\S]*segmentId[\s\S]*generateChapterAudio\(chapter, \{ segmentIds: \[segmentId\] \}\)/,
+  'chapter generation should expose per-segment audio regeneration for edited tone prompts',
+)
+
+assert.match(
+  useAudiobookSource,
+  /fillPromptTemplate\(effectiveBinding, chapter, segment, segment\.prompt\)/,
+  'chapter generation should pass the editable row prompt into Voicebox instruct filling',
 )
 
 assert.match(

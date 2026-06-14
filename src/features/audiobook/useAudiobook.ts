@@ -467,26 +467,30 @@ export function useAudiobook() {
     }
   }
 
-  const generateChapterAudio = async (chapter: Chapter, retryFailedOnly = false) => {
+  const generateChapterAudio = async (chapter: Chapter, options: boolean | { segmentIds?: string[] } = false) => {
+    const retryFailedOnly = options === true
+    const targetSegmentIds = typeof options === 'object' ? new Set(options.segmentIds || []) : null
     if (!audiobook) return
     const segments = audiobook.segmentsByChapter[chapter.id] || []
     if (!segments.length) {
       message.warning('请先生成并确认分段')
       return
     }
-    const missing = missingBindings(segments, chapter.id)
+    const targetSegments = targetSegmentIds ? segments.filter((segment) => targetSegmentIds.has(segment.id)) : segments
+    if (!targetSegments.length) return
+    const missing = missingBindings(targetSegments, chapter.id)
     if (missing.length) {
       message.error(`以下说话人未配置完整：${missing.join('、')}`)
       return
     }
-    const unresolved = segments.filter((segment) => segment.attributionStatus === 'failed' || (segment.needsReview && segment.speakerKind === 'narrator' && (segment.attributionConfidence || 0) < 0.6))
+    const unresolved = targetSegments.filter((segment) => segment.attributionStatus === 'failed' || (segment.needsReview && segment.speakerKind === 'narrator' && (segment.attributionConfidence || 0) < 0.6))
     if (unresolved.length) {
       message.error(`还有 ${unresolved.length} 个分段需要复核或重试归因`)
       return
     }
 
     setGeneratingChapterId(chapter.id)
-    let nextSegments = segments.map((segment) => retryFailedOnly && segment.status !== 'failed' ? segment : { ...segment, status: 'pending' as const, error: undefined })
+    let nextSegments = segments.map((segment) => (retryFailedOnly && segment.status !== 'failed') || (targetSegmentIds && !targetSegmentIds.has(segment.id)) ? segment : { ...segment, status: 'pending' as const, error: undefined })
     const generationIds: string[] = []
     const chapterAudio: ChapterAudioState = {
       chapterId: chapter.id,
@@ -500,13 +504,14 @@ export function useAudiobook() {
     try {
       for (const segment of nextSegments) {
         if (retryFailedOnly && segment.status !== 'pending') continue
+        if (targetSegmentIds && !targetSegmentIds.has(segment.id)) continue
         const binding = bindingForSegment(segment, chapter.id)
         if (!binding?.profileId) continue
         nextSegments = nextSegments.map((item) => item.id === segment.id ? { ...item, status: 'generating' } : item)
         await saveSegments(chapter.id, nextSegments)
         try {
           const effectiveBinding = { ...binding, prompt: bindingPromptTemplate(binding, useStore.getState().currentWork!), promptTemplate: bindingPromptTemplate(binding, useStore.getState().currentWork!) }
-          const { instruct, clipped, hash } = fillPromptTemplate(effectiveBinding, chapter, segment)
+          const { instruct, clipped, hash } = fillPromptTemplate(effectiveBinding, chapter, segment, segment.prompt)
           if (clipped) message.info('提示词已按 Voicebox 限制裁剪')
           const result = await voiceboxClient.generate({
             profile_id: binding.profileId,
@@ -554,6 +559,10 @@ export function useAudiobook() {
     } finally {
       setGeneratingChapterId(null)
     }
+  }
+
+  const regenerateSegmentAudio = async (chapter: Chapter, segmentId: string) => {
+    await generateChapterAudio(chapter, { segmentIds: [segmentId] })
   }
 
   const characterBindings = useMemo(() => {
@@ -621,6 +630,7 @@ export function useAudiobook() {
     mergeSegments,
     retrySegmentAttribution,
     generateChapterAudio,
+    regenerateSegmentAudio,
     generatePromptTemplate,
     missingBindings,
     narratorBinding: audiobook?.narratorBinding,

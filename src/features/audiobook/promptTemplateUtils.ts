@@ -46,8 +46,8 @@ function stableHash(text: string) {
   return String(hash >>> 0)
 }
 
-export function fillPromptTemplate(binding: VoiceBinding, chapter: Chapter, segment: AudiobookSegment, limit = 500) {
-  const template = binding.promptTemplate || binding.prompt
+export function fillPromptTemplate(binding: VoiceBinding, chapter: Chapter, segment: AudiobookSegment, overridePrompt?: string, limit = 500) {
+  const template = overridePrompt || binding.promptTemplate || binding.prompt
   if (!template.trim()) throw new Error(`${binding.displayName} 缺少提示词模板`)
   if (!validatePromptTemplate(template)) throw new Error(`${binding.displayName} 的提示词模板缺少占位符`)
   const context = contextBeforeSegment(chapter, segment)
