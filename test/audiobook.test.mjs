@@ -770,8 +770,14 @@ assert.match(
 
 assert.match(
   chapterAudioPlayerSource,
-  /useMemo\(\(\) => completedAudioSegments\(segments\), \[segments\]\)/,
-  'chapter audio player should memoize completed segments so expanding the panel does not repeatedly refetch audio',
+  /downloadChapterAudioManifest\(chapter, segments\)[\s\S]*合并章节音频/,
+  'chapter audio surface should present the chapter-level merge/download action as 合并章节音频',
+)
+
+assert.doesNotMatch(
+  chapterAudioPlayerSource,
+  /<audio controls/,
+  'chapter audio surface should not duplicate per-segment players that now live in the segment table',
 )
 
 assert.match(
