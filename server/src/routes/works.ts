@@ -63,6 +63,23 @@ function workToRow(work: WorkInput): WorkRow {
   return { id, ownerId, shared: shared ? 1 : 0, title, createdAt, updatedAt, data: JSON.stringify(rest) }
 }
 
+function mergeRecord(current: unknown, patch: unknown) {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return current
+  return { ...((current && typeof current === 'object' && !Array.isArray(current)) ? current as Record<string, unknown> : {}), ...patch as Record<string, unknown> }
+}
+
+function mergeAudiobook(current: unknown, patch: Record<string, unknown>) {
+  const existing = current && typeof current === 'object' && !Array.isArray(current) ? current as Record<string, unknown> : {}
+  return {
+    ...existing,
+    ...patch,
+    segmentsByChapter: mergeRecord(existing.segmentsByChapter, patch.segmentsByChapter),
+    chapterAudio: mergeRecord(existing.chapterAudio, patch.chapterAudio),
+    characterBindings: mergeRecord(existing.characterBindings, patch.characterBindings),
+    chapterBindings: mergeRecord(existing.chapterBindings, patch.chapterBindings),
+  }
+}
+
 // GET /api/works — 列出自己的作品 + 他人分享作品摘要
 router.get('/', (req, res) => {
   const currentUser = getAuthenticatedUser(req as unknown as AuthenticatedRequest)
@@ -98,6 +115,19 @@ router.post('/', (req, res) => {
     'INSERT INTO works (id, ownerId, shared, title, createdAt, updatedAt, data) VALUES (?, ?, ?, ?, ?, ?, ?)'
   ).run(row.id, row.ownerId, row.shared, row.title, row.createdAt, row.updatedAt, row.data)
   res.status(201).json(rowToWork(row))
+})
+
+router.patch('/:id/audiobook', (req, res) => {
+  const currentUser = getAuthenticatedUser(req as unknown as AuthenticatedRequest)
+  const existing = db.prepare('SELECT * FROM works WHERE id = ?').get(req.params.id) as WorkRow | undefined
+  if (!existing) return res.status(404).json({ error: '作品不存在' })
+  if (existing.ownerId !== currentUser.id) return res.status(403).json({ error: '无权修改该作品' })
+  const existingData = JSON.parse(existing.data)
+  const audiobookChanges = req.body as Record<string, unknown>
+  const updatedAt = Date.now()
+  const merged = { ...existingData, audiobook: mergeAudiobook(existingData.audiobook, audiobookChanges) }
+  db.prepare('UPDATE works SET updatedAt = ?, data = ? WHERE id = ?').run(updatedAt, JSON.stringify(merged), req.params.id)
+  res.json({ audiobook: merged.audiobook, updatedAt })
 })
 
 // PATCH /api/works/:id — 部分更新

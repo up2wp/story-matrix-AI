@@ -61,6 +61,42 @@ assert.match(
 )
 
 assert.match(
+  worksRouteSource,
+  /router\.patch\('\/:id\/audiobook'[\s\S]*res\.json\(\{ audiobook: merged\.audiobook, updatedAt \}\)/,
+  'audiobook persistence should use a dedicated minimal endpoint that returns only audiobook state and updatedAt',
+)
+
+assert.match(
+  useAudiobookSource,
+  /db\.works\.updateAudiobook\(work\.id, audiobookChanges\)/,
+  'audiobook persistence should send audiobook deltas instead of PATCHing the whole audiobook through the generic work endpoint',
+)
+
+assert.match(
+  useAudiobookSource,
+  /function audiobookDelta\(current: WorkAudiobookConfig, next: WorkAudiobookConfig\)[\s\S]*const segmentsByChapter = changedRecordEntries\(current\.segmentsByChapter, next\.segmentsByChapter\)[\s\S]*const chapterAudio = changedRecordEntries\(current\.chapterAudio, next\.chapterAudio\)/,
+  'audiobook persistence should compute changed record entries so single-segment generation does not send unrelated audiobook state',
+)
+
+assert.match(
+  useAudiobookSource,
+  /const audiobookChanges = work\.audiobook \? audiobookDelta\(work\.audiobook, nextAudiobook\) : nextAudiobook/,
+  'audiobook persistence should send a full audiobook only for first-time initialization and deltas afterwards',
+)
+
+assert.doesNotMatch(
+  useAudiobookSource,
+  /const audiobookChanges = nextAudiobook/,
+  'audiobook persistence should not use the full nextAudiobook object as the network payload',
+)
+
+assert.doesNotMatch(
+  useAudiobookSource,
+  /db\.works\.update\(work\.id, \{ audiobook: nextAudiobook \}\)/,
+  'audiobook generation should not send the entire audiobook object through the generic work update endpoint',
+)
+
+assert.match(
   storeSource,
   /function ensurePromptTemplatePlaceholder[\s\S]*template\.includes\('【上下文】'\)[\s\S]*`\$\{template\}。当前语境：【上下文】`/,
   'legacy narrator prompts should migrate to include the required context placeholder',

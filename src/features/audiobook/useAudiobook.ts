@@ -134,6 +134,24 @@ function invalidateCharacterAudio(config: WorkAudiobookConfig, characterId: stri
   }
 }
 
+function changedRecordEntries<T>(current: Record<string, T>, next: Record<string, T>): Record<string, T> {
+  return Object.fromEntries(Object.entries(next).filter(([key, value]) => JSON.stringify(current[key]) !== JSON.stringify(value)))
+}
+
+function audiobookDelta(current: WorkAudiobookConfig, next: WorkAudiobookConfig) {
+  const changes: Partial<WorkAudiobookConfig> = {}
+  const segmentsByChapter = changedRecordEntries(current.segmentsByChapter, next.segmentsByChapter)
+  const chapterAudio = changedRecordEntries(current.chapterAudio, next.chapterAudio)
+  const characterBindings = changedRecordEntries(current.characterBindings, next.characterBindings)
+  const chapterBindings = changedRecordEntries(current.chapterBindings, next.chapterBindings)
+  if (Object.keys(segmentsByChapter).length) changes.segmentsByChapter = segmentsByChapter
+  if (Object.keys(chapterAudio).length) changes.chapterAudio = chapterAudio
+  if (Object.keys(characterBindings).length) changes.characterBindings = characterBindings
+  if (Object.keys(chapterBindings).length) changes.chapterBindings = chapterBindings
+  if (JSON.stringify(current.narratorBinding) !== JSON.stringify(next.narratorBinding)) changes.narratorBinding = next.narratorBinding
+  return changes
+}
+
 export function useAudiobook() {
   const currentWork = useStore((state) => state.currentWork)
   const setCurrentWork = useStore((state) => state.setCurrentWork)
@@ -150,8 +168,9 @@ export function useAudiobook() {
   const persistAudiobook = async (nextAudiobook: WorkAudiobookConfig) => {
     const work = useStore.getState().currentWork
     if (!work) return
-    await db.works.update(work.id, { audiobook: nextAudiobook })
-    setCurrentWork({ ...work, audiobook: nextAudiobook, updatedAt: now() })
+    const audiobookChanges = work.audiobook ? audiobookDelta(work.audiobook, nextAudiobook) : nextAudiobook
+    const result = await db.works.updateAudiobook(work.id, audiobookChanges)
+    setCurrentWork({ ...work, audiobook: result.audiobook, updatedAt: result.updatedAt })
   }
 
   const refreshProfiles = useCallback(async () => {
