@@ -614,7 +614,7 @@ assert.match(
 
 assert.match(
   useAudiobookSource,
-  /const targetGenerationSegments = targetSegmentIds \? nextSegments\.filter\(\(segment\) => targetSegmentIds\.has\(segment\.id\)\) : nextSegments[\s\S]*const failed = targetGenerationSegments\.filter\(\(segment\) => segment\.status === 'failed'\)/,
+  /const targetGenerationSegments = targetSegmentIds \? (nextSegments|latestSegments)\.filter\(\(segment\) => targetSegmentIds\.has\(segment\.id\)\) : (nextSegments|latestSegments)[\s\S]*const failed = targetGenerationSegments\.filter\(\(segment\) => segment\.status === 'failed'\)/,
   'targeted segment regeneration should count failures only for the requested segment instead of the whole chapter',
 )
 
@@ -736,6 +736,102 @@ assert.match(
   segmentReviewTableSource,
   /一键生成语气/,
   'segment review table should expose one-click batch tone prompt generation',
+)
+
+assert.match(
+  segmentReviewTableSource,
+  /draftsBySegmentId/,
+  'segment review table should keep row edits in local drafts before persistence',
+)
+
+assert.doesNotMatch(
+  segmentReviewTableSource,
+  /onChange=\{\(event\) => void onUpdate\(segment\.id, \{ text: event\.target\.value \}\)\}/,
+  'text editing should not persist on every keystroke',
+)
+
+assert.doesNotMatch(
+  segmentReviewTableSource,
+  /onChange=\{\(event\) => void onUpdate\(segment\.id, \{ prompt: event\.target\.value \}\)\}/,
+  'prompt editing should not persist on every keystroke',
+)
+
+assert.match(
+  segmentReviewTableSource,
+  /保存修改/,
+  'segment review table should expose an explicit save action for dirty row drafts',
+)
+
+assert.match(
+  chapterAudiobookPanelSource,
+  /hasDirtySegments/,
+  'chapter audiobook panel should know when segment row drafts are dirty',
+)
+
+assert.match(
+  chapterAudiobookPanelSource,
+  /请先保存分段修改/,
+  'chapter audio generation should block when local row drafts are unsaved',
+)
+
+assert.match(
+  typesSource,
+  /segmentVersion\?: number/,
+  'audiobook segments should carry a row-level version for conflict detection',
+)
+
+assert.match(
+  voiceboxClientSource + worksRouteSource,
+  /patchAudiobookSegment|segmentPatch/,
+  'audiobook persistence should expose a row-level segment patch boundary',
+)
+
+assert.match(
+  worksRouteSource,
+  /const \{ segmentPatch, \.\.\.audiobookPatch \} = audiobookChanges[\s\S]*mergeAudiobook\(existingData\.audiobook, audiobookPatch\)/,
+  'segment patch envelope fields should not be persisted into audiobook JSON',
+)
+
+assert.match(
+  useAudiobookSource,
+  /patchSegmentFields/,
+  'audiobook hook should persist routine row edits through field-level segment patches',
+)
+
+assert.match(
+  useAudiobookSource,
+  /promptEditedAt/,
+  'manual prompt edits should be timestamped so batch tone generation can avoid overwriting them',
+)
+
+assert.match(
+  useAudiobookSource,
+  /generationStatusPatch|patchSegmentFields\(chapter\.id, segment\.id, \{ status:/,
+  'audio generation progress should patch only generation-owned fields for the target segment',
+)
+
+assert.match(
+  useAudiobookSource,
+  /latestSegment\?\.segmentVersion[\s\S]*resultSegment\.segmentVersion[\s\S]*return/,
+  'older row patch responses should not overwrite newer local audiobook state',
+)
+
+assert.match(
+  chapterAudiobookPanelSource,
+  /disabled=\{writing \|\| hasDirtySegments \|\| generatingChapterId === chapter\.id\}/,
+  'AI segmentation should be blocked while row drafts are unsaved',
+)
+
+assert.match(
+  segmentReviewTableSource,
+  /disabled=\{hasDirtySegments \|\| !onRetryAttribution/,
+  'attribution retry should be blocked while row drafts are unsaved',
+)
+
+assert.match(
+  segmentReviewTableSource,
+  /segment\.status !== 'completed'[\s\S]*播放[\s\S]*segment\.status !== 'completed'[\s\S]*下载/,
+  'stale or failed segment audio should not remain playable after saved row edits',
 )
 
 assert.match(
