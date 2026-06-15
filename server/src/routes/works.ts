@@ -68,7 +68,7 @@ function mergeRecord(current: unknown, patch: unknown) {
   return { ...((current && typeof current === 'object' && !Array.isArray(current)) ? current as Record<string, unknown> : {}), ...patch as Record<string, unknown> }
 }
 
-function mergeAudiobook(current: unknown, patch: Record<string, unknown>) {
+function mergeAudiobook(current: unknown, patch: Record<string, unknown>): Record<string, unknown> {
   const existing = current && typeof current === 'object' && !Array.isArray(current) ? current as Record<string, unknown> : {}
   return {
     ...existing,
@@ -77,6 +77,54 @@ function mergeAudiobook(current: unknown, patch: Record<string, unknown>) {
     chapterAudio: mergeRecord(existing.chapterAudio, patch.chapterAudio),
     characterBindings: mergeRecord(existing.characterBindings, patch.characterBindings),
     chapterBindings: mergeRecord(existing.chapterBindings, patch.chapterBindings),
+  }
+}
+
+const SEGMENT_PATCH_FIELDS = new Set([
+  'speakerKind',
+  'characterId',
+  'speakerName',
+  'text',
+  'mood',
+  'prompt',
+  'attributionSource',
+  'attributionStatus',
+  'attributionConfidence',
+  'attributionBatchId',
+  'attributionError',
+  'needsReview',
+  'retryable',
+  'textEditedAt',
+  'speakerEditedAt',
+  'promptEditedAt',
+  'generationId',
+  'status',
+  'error',
+  'generatedWith',
+])
+
+function applySegmentPatch(audiobook: Record<string, unknown>, segmentPatch: Record<string, unknown>): Record<string, unknown> {
+  const chapterId = typeof segmentPatch.chapterId === 'string' ? segmentPatch.chapterId : ''
+  const segmentId = typeof segmentPatch.segmentId === 'string' ? segmentPatch.segmentId : ''
+  const fields = segmentPatch.fields && typeof segmentPatch.fields === 'object' && !Array.isArray(segmentPatch.fields) ? segmentPatch.fields as Record<string, unknown> : {}
+  const baseVersion = typeof segmentPatch.baseVersion === 'number' ? segmentPatch.baseVersion : undefined
+  if (!chapterId || !segmentId || !Object.keys(fields).length) throw new Error('缺少分段 patch 参数')
+  const segmentsByChapter = mergeRecord(audiobook.segmentsByChapter, {}) as Record<string, unknown>
+  const chapterSegments = Array.isArray(segmentsByChapter[chapterId]) ? segmentsByChapter[chapterId] as Record<string, unknown>[] : []
+  const targetIndex = chapterSegments.findIndex((segment) => segment.id === segmentId)
+  if (targetIndex < 0) throw new Error('分段不存在')
+  const target = chapterSegments[targetIndex]
+  const currentVersion = typeof target.segmentVersion === 'number' ? target.segmentVersion : 0
+  if (typeof baseVersion === 'number' && baseVersion !== currentVersion) throw new Error('分段已更新，请刷新后重试')
+  const allowedFields = Object.fromEntries(Object.entries(fields).filter(([key]) => SEGMENT_PATCH_FIELDS.has(key)))
+  if (!Object.keys(allowedFields).length) throw new Error('无有效分段字段')
+  const updatedSegment = { ...target, ...allowedFields, segmentVersion: currentVersion + 1 }
+  return {
+    ...audiobook,
+    segmentsByChapter: {
+      ...segmentsByChapter,
+      [chapterId]: chapterSegments.map((segment, index) => index === targetIndex ? updatedSegment : segment),
+    },
   }
 }
 
@@ -125,7 +173,16 @@ router.patch('/:id/audiobook', (req, res) => {
   const existingData = JSON.parse(existing.data)
   const audiobookChanges = req.body as Record<string, unknown>
   const updatedAt = Date.now()
-  const merged = { ...existingData, audiobook: mergeAudiobook(existingData.audiobook, audiobookChanges) }
+  const { segmentPatch, ...audiobookPatch } = audiobookChanges
+  let nextAudiobook = mergeAudiobook(existingData.audiobook, audiobookPatch)
+  if (segmentPatch && typeof segmentPatch === 'object' && !Array.isArray(segmentPatch)) {
+    try {
+      nextAudiobook = applySegmentPatch(nextAudiobook, segmentPatch as Record<string, unknown>)
+    } catch (error) {
+      return res.status(error instanceof Error && error.message.includes('已更新') ? 409 : 400).json({ error: error instanceof Error ? error.message : '分段保存失败' })
+    }
+  }
+  const merged = { ...existingData, audiobook: nextAudiobook }
   db.prepare('UPDATE works SET updatedAt = ?, data = ? WHERE id = ?').run(updatedAt, JSON.stringify(merged), req.params.id)
   res.json({ audiobook: merged.audiobook, updatedAt })
 })

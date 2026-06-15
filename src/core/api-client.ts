@@ -90,6 +90,10 @@ export const db = {
       method: 'PATCH',
       body: JSON.stringify(audiobookChanges),
     }),
+    patchAudiobookSegment: (id: string, segmentPatch: any) => request<any>(`/works/${id}/audiobook`, {
+      method: 'PATCH',
+      body: JSON.stringify({ segmentPatch }),
+    }),
   },
 
   systemConfig: {

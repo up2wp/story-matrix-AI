@@ -228,6 +228,8 @@ export interface AudiobookSegment {
   retryable?: boolean
   textEditedAt?: number
   speakerEditedAt?: number
+  promptEditedAt?: number
+  segmentVersion?: number
   generationId?: string
   status: ChapterAudioStatus
   error?: string
