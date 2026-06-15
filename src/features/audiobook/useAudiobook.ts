@@ -323,6 +323,36 @@ export function useAudiobook() {
     })
   }
 
+  const patchSegmentFields = async (chapterId: string, segmentId: string, fields: Partial<AudiobookSegment>, baseVersion?: number) => {
+    const work = useStore.getState().currentWork
+    if (!work) return
+    const result = await db.works.patchAudiobookSegment(work.id, {
+      chapterId,
+      segmentId,
+      baseVersion,
+      fields,
+    })
+    const resultSegments = result.audiobook?.segmentsByChapter?.[chapterId] as AudiobookSegment[] | undefined
+    const resultSegment = resultSegments?.find((segment) => segment.id === segmentId)
+    const latestWork = useStore.getState().currentWork
+    if (!latestWork || !resultSegment) return
+    const latestAudiobook = ensureAudiobook(latestWork)
+    const latestSegments = latestAudiobook.segmentsByChapter[chapterId] || []
+    const latestSegment = latestSegments.find((segment) => segment.id === segmentId)
+    if ((latestSegment?.segmentVersion || 0) > (resultSegment.segmentVersion || 0)) return
+    setCurrentWork({
+      ...latestWork,
+      audiobook: {
+        ...latestAudiobook,
+        segmentsByChapter: {
+          ...latestAudiobook.segmentsByChapter,
+          [chapterId]: latestSegments.map((segment) => segment.id === segmentId ? resultSegment : segment),
+        },
+      },
+      updatedAt: Math.max(latestWork.updatedAt, result.updatedAt),
+    })
+  }
+
   const attributeSegmentBatch = async (work: NonNullable<ReturnType<typeof useStore.getState>['currentWork']>, chapter: Chapter, batch: AudiobookSegment[], batchIndex: number) => {
     const latest = ensureAudiobook(useStore.getState().currentWork!)
     const currentSegments = latest.segmentsByChapter[chapter.id] || []
@@ -410,16 +440,15 @@ export function useAudiobook() {
     }
   }
 
-  const updateSegment = async (chapterId: string, segmentId: string, changes: Partial<AudiobookSegment>) => {
+  const updateSegment = async (chapterId: string, segmentId: string, changes: Partial<AudiobookSegment>, baseVersion?: number) => {
     if (!audiobook) return
-    const segments = audiobook.segmentsByChapter[chapterId] || []
     const editedAt = now()
-    await saveSegments(chapterId, segments.map((segment) => segment.id === segmentId ? {
-      ...segment,
+    await patchSegmentFields(chapterId, segmentId, {
       ...changes,
       ...(typeof changes.text === 'string' ? { textEditedAt: editedAt, status: 'stale' as const } : {}),
+      ...(typeof changes.prompt === 'string' ? { promptEditedAt: editedAt, status: 'stale' as const } : {}),
       ...(changes.speakerKind || changes.characterId || changes.speakerName ? { speakerEditedAt: editedAt, attributionSource: 'manual' as const, attributionStatus: 'manual' as const, needsReview: false, retryable: false } : {}),
-    } : segment))
+    }, baseVersion)
   }
 
   const approveReviewSegments = async (chapterId: string) => {
@@ -448,6 +477,7 @@ export function useAudiobook() {
       const promptInputs: { segmentId: string; speakerName: string; text: string; expandedPrompt: string }[] = []
       const directPromptsBySegmentId = new Map<string, string>()
       for (const [index, segment] of orderedSegments.entries()) {
+        if (segment.prompt?.trim() || segment.promptEditedAt) continue
         const binding = segment.speakerKind === 'narrator'
           ? latest.narratorBinding
           : latest.chapterBindings[chapterId]?.[segment.characterId || ''] || latest.characterBindings[segment.characterId || '']
@@ -471,7 +501,9 @@ export function useAudiobook() {
         }
       }
       if (!promptsBySegmentId.size) throw new Error('AI 没有返回可用语气提示词')
-      await saveSegments(chapterId, segments.map((segment) => ({ ...segment, prompt: promptsBySegmentId.get(segment.id) || segment.prompt })))
+      for (const [segmentId, prompt] of promptsBySegmentId.entries()) {
+        await patchSegmentFields(chapterId, segmentId, { prompt })
+      }
       message.success(`已生成 ${promptsBySegmentId.size} 条语气提示词`)
     } catch (error) {
       message.warning(error instanceof Error ? error.message : '生成语气提示词失败')
@@ -537,7 +569,7 @@ export function useAudiobook() {
       generationIds,
       updatedAt: now(),
     }
-    await persistAudiobook({ ...audiobook, segmentsByChapter: { ...audiobook.segmentsByChapter, [chapter.id]: nextSegments }, chapterAudio: { ...audiobook.chapterAudio, [chapter.id]: chapterAudio } })
+    await persistAudiobook({ ...audiobook, chapterAudio: { ...audiobook.chapterAudio, [chapter.id]: chapterAudio } })
 
     try {
       const segmentsToGenerate = nextSegments.filter((segment) => {
@@ -550,7 +582,7 @@ export function useAudiobook() {
         const binding = bindingForSegment(segment, chapter.id)
         if (!binding?.profileId) return
         nextSegments = nextSegments.map((item) => item.id === segment.id ? { ...item, status: 'generating' } : item)
-        await saveSegments(chapter.id, nextSegments)
+        await patchSegmentFields(chapter.id, segment.id, { status: 'generating', error: undefined })
         try {
           const effectiveBinding = { ...binding, prompt: bindingPromptTemplate(binding, useStore.getState().currentWork!), promptTemplate: bindingPromptTemplate(binding, useStore.getState().currentWork!) }
           const { instruct, clipped, hash } = fillPromptTemplate(effectiveBinding, chapter, segment, segment.prompt)
@@ -570,12 +602,13 @@ export function useAudiobook() {
           if (!generationId) throw new Error('Voicebox 未返回 generation_id')
           await waitForVoiceboxGeneration(generationId)
           generationIds.push(generationId)
-          nextSegments = nextSegments.map((item) => item.id === segment.id ? { ...item, status: 'completed', generationId, generatedWith: { bindingUpdatedAt: binding.updatedAt, promptUpdatedAt: binding.promptUpdatedAt, narratorUpdatedAt: audiobook.narratorBinding.updatedAt, textHash: textHash(segment.text), instructHash: hash } } : item)
-          await saveSegments(chapter.id, nextSegments)
+          const generationStatusPatch = { status: 'completed' as const, generationId, generatedWith: { bindingUpdatedAt: binding.updatedAt, promptUpdatedAt: binding.promptUpdatedAt, narratorUpdatedAt: audiobook.narratorBinding.updatedAt, textHash: textHash(segment.text), instructHash: hash } }
+          nextSegments = nextSegments.map((item) => item.id === segment.id ? { ...item, ...generationStatusPatch } : item)
+          await patchSegmentFields(chapter.id, segment.id, generationStatusPatch)
         } catch (error) {
           const errMsg = error instanceof Error ? error.message : '生成失败'
           nextSegments = nextSegments.map((item) => item.id === segment.id ? { ...item, status: 'failed', error: errMsg } : item)
-          await saveSegments(chapter.id, nextSegments)
+          await patchSegmentFields(chapter.id, segment.id, { status: 'failed', error: errMsg })
         }
       }
       await Promise.all(Array.from({ length: Math.min(VOICEBOX_GENERATION_CONCURRENCY, segmentsToGenerate.length) }, async () => {
@@ -586,19 +619,19 @@ export function useAudiobook() {
         }
       }))
 
-      const targetGenerationSegments = targetSegmentIds ? nextSegments.filter((segment) => targetSegmentIds.has(segment.id)) : nextSegments
-      const failed = targetGenerationSegments.filter((segment) => segment.status === 'failed')
-      const completedIds = nextSegments.map((segment) => segment.generationId).filter((id): id is string => Boolean(id))
       const latest = ensureAudiobook(useStore.getState().currentWork!)
+      const latestSegments = latest.segmentsByChapter[chapter.id] || []
+      const targetGenerationSegments = targetSegmentIds ? latestSegments.filter((segment) => targetSegmentIds.has(segment.id)) : latestSegments
+      const failed = targetGenerationSegments.filter((segment) => segment.status === 'failed')
+      const completedIds = latestSegments.map((segment) => segment.generationId).filter((id): id is string => Boolean(id))
       await persistAudiobook({
         ...latest,
-        segmentsByChapter: { ...latest.segmentsByChapter, [chapter.id]: nextSegments },
         chapterAudio: {
           ...latest.chapterAudio,
           [chapter.id]: {
             chapterId: chapter.id,
             status: failed.length ? 'failed' : 'completed',
-            segmentIds: nextSegments.map((segment) => segment.id),
+            segmentIds: latestSegments.map((segment) => segment.id),
             generationIds: completedIds,
             updatedAt: now(),
             error: failed.length ? `${failed.length} 个片段生成失败，可重试` : undefined,
