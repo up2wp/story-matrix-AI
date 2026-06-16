@@ -1019,6 +1019,12 @@ assert.match(
 
 assert.match(
   useAudiobookSource,
+  /if \(!aiConfig\.apiKey && promptInputs\.length\)[\s\S]*请先在系统管理中配置 AI/,
+  'one-click tone generation should require AI only when character prompt compression is needed',
+)
+
+assert.match(
+  useAudiobookSource,
   /generateSegmentTonePrompts[\s\S]*directPromptsBySegmentId[\s\S]*segment\.speakerKind === 'narrator'[\s\S]*directPromptsBySegmentId\.set\(segment\.id, buildSegmentTonePrompt\(effectiveBinding, previousSegments\)\)[\s\S]*continue/,
   'one-click tone generation should fill narrator prompts directly without waiting for AI compression',
 )

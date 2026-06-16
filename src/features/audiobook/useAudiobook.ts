@@ -18,7 +18,7 @@ function now() {
 
 function defaultNarratorBinding(): VoiceBinding {
   const timestamp = now()
-  const prompt = '自然、清晰、克制，适合长篇小说旁白。当前语境：【上下文】'
+  const prompt = '自然、清晰、克制，适合长篇小说旁白。'
   return {
     id: 'narrator',
     speakerKind: 'narrator',
@@ -54,7 +54,7 @@ function isBindingReady(binding?: VoiceBinding) {
 }
 
 function defaultNarratorPrompt(work: NonNullable<ReturnType<typeof useStore.getState>['currentWork']>) {
-  return `${work.seed.tone || '自然'}、清晰、克制，适合长篇小说旁白。当前语境：【上下文】`
+  return `${work.seed.tone || '自然'}、清晰、克制，适合长篇小说旁白。`
 }
 
 function bindingPromptTemplate(binding: VoiceBinding | undefined, work: NonNullable<ReturnType<typeof useStore.getState>['currentWork']>) {
@@ -310,7 +310,7 @@ export function useAudiobook() {
     for (const segment of segments) {
       const binding = bindingForSegment(segment, chapterId)
       if (!isBindingReady(binding)) missing.add(segmentSpeakerKey(segment) === 'narrator' ? '旁白' : segment.speakerName)
-      else if (!validatePromptTemplate(bindingPromptTemplate(binding, work))) missing.add(`${segment.speakerName}提示词`)
+      else if (segment.speakerKind !== 'narrator' && !validatePromptTemplate(bindingPromptTemplate(binding, work))) missing.add(`${segment.speakerName}提示词`)
     }
     return [...missing]
   }
@@ -501,10 +501,6 @@ export function useAudiobook() {
   const generateSegmentTonePrompts = async (chapterId: string) => {
     const work = useStore.getState().currentWork
     if (!work) return
-    if (!aiConfig.apiKey) {
-      message.warning('请先在系统管理中配置 AI')
-      return
-    }
     const latest = ensureAudiobook(useStore.getState().currentWork!)
     const segments = latest.segmentsByChapter[chapterId] || []
     if (!segments.length) return
@@ -527,6 +523,10 @@ export function useAudiobook() {
         promptInputs.push({ segmentId: segment.id, speakerName: segment.speakerName, text: segment.text, expandedPrompt: buildSegmentTonePrompt(effectiveBinding, previousSegments) })
       }
       const promptsBySegmentId = new Map(directPromptsBySegmentId)
+      if (!aiConfig.apiKey && promptInputs.length) {
+        message.warning('请先在系统管理中配置 AI')
+        return
+      }
       if (promptInputs.length) {
         const resultText = await generate(buildAudiobookToneCompressionPrompt(promptInputs), AUDIOBOOK_TONE_SYSTEM_PROMPT, { ...aiConfig, maxTokens: Math.min(aiConfig.maxTokens || 1200, 1600) })
         const tones = parseToneCompressionJson(resultText)
