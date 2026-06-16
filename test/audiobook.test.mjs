@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import ts from 'typescript'
 
 const typesSource = await readFile(new URL('../src/core/types.ts', import.meta.url), 'utf8')
 const storeSource = await readFile(new URL('../src/core/store.ts', import.meta.url), 'utf8')
@@ -29,6 +30,35 @@ const segmentReviewTableSource = await readFile(new URL('../src/pages/preview/Se
 const segmentRulesSource = await readFile(new URL('../src/features/audiobook/segmentRules.ts', import.meta.url), 'utf8')
 const segmentUtilsSource = await readFile(new URL('../src/features/audiobook/segmentUtils.ts', import.meta.url), 'utf8')
 const readmeSource = await readFile(new URL('../README.md', import.meta.url), 'utf8')
+
+function loadSegmentRulesForTest() {
+  let nextId = 0
+  const executableSource = segmentRulesSource
+    .replace(/^import type .*$/m, '')
+    .replace(/^import \{ generateId \}.*$/m, 'const generateId = () => `test-segment-${nextId += 1}`')
+    .replace('export function createRuleBasedSegments', 'function createRuleBasedSegments')
+    .replace('export function segmentsNeedingAttribution', 'function segmentsNeedingAttribution')
+  const { outputText } = ts.transpileModule(executableSource, {
+    compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2023 },
+  })
+  return Function('nextId', `${outputText}; return { createRuleBasedSegments, segmentsNeedingAttribution }`)(nextId)
+}
+
+const { createRuleBasedSegments: createRuleBasedSegmentsForTest, segmentsNeedingAttribution: segmentsNeedingAttributionForTest } = loadSegmentRulesForTest()
+
+function workForSegmentRules() {
+  return {
+    id: 'work-1',
+    characters: [
+      { id: 'character-kamishiro', name: '神代司', role: 'major', bio: '', personality: { traits: [], habits: [], arc: [] }, relations: [], tags: [] },
+      { id: 'character-chiba', name: '千叶雏', role: 'major', bio: '', personality: { traits: [], habits: [], arc: [] }, relations: [], tags: [] },
+    ],
+  }
+}
+
+function chapterForSegmentRules(content) {
+  return { id: 'chapter-1', outlineId: 'outline-1', title: '测试章节', content, wordCount: content.length, scenes: [], versions: [] }
+}
 
 assert.match(
   typesSource,
@@ -542,8 +572,14 @@ assert.match(
 
 assert.match(
   promptTemplateUtilsSource,
-  /buildSegmentTonePrompt[\s\S]*binding\.speakerKind === 'narrator'[\s\S]*return template\.trim\(\)/,
-  'one-click tone prompt should apply narrator voice prompt directly without context replacement',
+  /buildSegmentTonePrompt[\s\S]*binding\.speakerKind === 'narrator'[\s\S]*return narratorTonePrompt\(template\)/,
+  'one-click tone prompt should apply the narrator prompt body directly without context replacement',
+)
+
+assert.match(
+  promptTemplateUtilsSource,
+  /function narratorTonePrompt[\s\S]*当前语境\[:：\][\s\S]*CONTEXT_PLACEHOLDER/,
+  'one-click narrator tone prompt should strip the context placeholder suffix from narrator prompts',
 )
 
 assert.match(
@@ -641,6 +677,51 @@ assert.match(
   /if \(!matches\.some/,
   'quoted terms without dialogue cues should remain in the original paragraph segment',
 )
+
+const kamishiroSample = '神代司的声音温和得像是在读一份医学报告，没有任何起伏，“在真田那个粗鲁的屠夫手下待了三天，竟然还能保持这种眼神。真是令人赞叹的……伦理坚守。”'
+const kamishiroSegments = createRuleBasedSegmentsForTest(workForSegmentRules(), chapterForSegmentRules(kamishiroSample))
+assert.deepEqual(
+  kamishiroSegments.map((segment) => segment.text),
+  [
+    '神代司的声音温和得像是在读一份医学报告，没有任何起伏',
+    '在真田那个粗鲁的屠夫手下待了三天，竟然还能保持这种眼神。真是令人赞叹的……伦理坚守。',
+  ],
+  'voice-cue narration before a Chinese quote should split into narrator cue and reviewable dialogue text',
+)
+assert.equal(kamishiroSegments[1].needsReview, true, 'unknown speaker dialogue should be marked for review')
+assert.equal(kamishiroSegments[1].retryable, true, 'unknown speaker dialogue should be retryable for attribution')
+assert.equal(kamishiroSegments[1].sourceStartOffset, kamishiroSample.indexOf('在真田'), 'dialogue offset should point at the first character inside the quote')
+
+const chibaSample = '千叶雏死死地盯着他，嘴唇颤抖着，声音虽轻却带着一种刻在骨子里的矜持：“杀了我……或者救我。但请你，不要用那种看牲口一样的眼神看着我。”'
+const chibaSegments = createRuleBasedSegmentsForTest(workForSegmentRules(), chapterForSegmentRules(chibaSample))
+assert.deepEqual(
+  chibaSegments.map((segment) => segment.text),
+  [
+    '千叶雏死死地盯着他，嘴唇颤抖着，声音虽轻却带着一种刻在骨子里的矜持',
+    '杀了我……或者救我。但请你，不要用那种看牲口一样的眼神看着我。',
+  ],
+  'colon-led voice/action narration before a Chinese quote should split into narrator cue and reviewable dialogue text',
+)
+assert.equal(chibaSegments[1].needsReview, true, 'colon-led unknown speaker dialogue should be marked for review')
+assert.equal(chibaSegments[1].sourceStartOffset, chibaSample.indexOf('杀了我'), 'colon-led dialogue offset should point inside the quote')
+
+const quotedTermSample = '他把这称为“伦理坚守”。'
+assert.deepEqual(
+  createRuleBasedSegmentsForTest(workForSegmentRules(), chapterForSegmentRules(quotedTermSample)).map((segment) => segment.text),
+  [quotedTermSample],
+  'non-dialogue quoted terms should stay in the narrator segment',
+)
+
+const descriptiveQuotedTermSample = '他的态度很温和，“伦理坚守”这个词用得很准确。'
+assert.deepEqual(
+  createRuleBasedSegmentsForTest(workForSegmentRules(), chapterForSegmentRules(descriptiveQuotedTermSample)).map((segment) => segment.text),
+  [descriptiveQuotedTermSample],
+  'descriptive cue words before a quoted term should not split the quote as dialogue',
+)
+
+const reviewableSegments = segmentsNeedingAttributionForTest(kamishiroSegments)
+assert.equal(reviewableSegments.length, 1, 'newly split unknown speaker dialogue should enter attribution')
+assert.equal(reviewableSegments[0].text, kamishiroSegments[1].text, 'attribution should target the dialogue text, not the narrator cue')
 
 assert.match(
   audiobookPromptSource,

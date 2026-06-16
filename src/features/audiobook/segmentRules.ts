@@ -10,6 +10,7 @@ interface TextUnit {
 
 const SPEECH_VERBS = '(?:说|道|问|答|喊|叫|低声说|轻声说|喃喃|笑道|叹道|怒道|解释|提醒|嘀咕)'
 const QUOTE_PATTERN = /[“"]([^”"]+)[”"]/g
+const DIALOGUE_CUE_PATTERN = /(?:声音|嗓音|语气|口吻|声线|嘴唇|嘴角|喉咙|低声|轻声|柔声|冷声|盯着|看着|望着|凝视|瞪着|注视|笑|叹|颤抖|矜持|沙哑|愤怒|哽咽|开口|出声|回答|质问|命令)/u
 
 function paragraphUnits(content: string): TextUnit[] {
   const units: TextUnit[] = []
@@ -42,10 +43,25 @@ function detectSpeaker(work: Work, fullText: string, quoteStart: number, quoteEn
   return character
 }
 
+function followsSentenceBoundary(before: string) {
+  return /[。.!！?？]\s*$/.test(before)
+}
+
+function followsDialogueColon(before: string) {
+  return /[：:]\s*$/.test(before)
+}
+
+function followsDialogueCue(before: string) {
+  const context = before.slice(Math.max(0, before.length - 48)).trim()
+  if (!context) return false
+  if (!/[，,：:]\s*$/.test(context)) return false
+  return DIALOGUE_CUE_PATTERN.test(context)
+}
+
 function shouldSplitQuote(fullText: string, quoteStart: number, speaker: ReturnType<typeof characterByName>) {
   if (speaker || quoteStart === 0) return true
   const before = fullText.slice(0, quoteStart)
-  return /[。.!！?？]\s*$/.test(before)
+  return followsSentenceBoundary(before) || followsDialogueColon(before) || followsDialogueCue(before)
 }
 
 function createSegment(chapter: Chapter, unit: TextUnit, order: number, text: string, start: number, speaker: ReturnType<typeof characterByName>, needsReview: boolean): AudiobookSegment {
