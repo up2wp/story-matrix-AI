@@ -155,6 +155,10 @@ function sourceOffset(parent: AudiobookSegment, text: string, searchFrom: number
   return { start, end: start + text.length, nextSearchFrom: index + text.length }
 }
 
+function trimWrappingQuotes(text: string) {
+  return text.trim().replace(/^[“"'‘](.*)[”"'’]$/u, '$1').trim()
+}
+
 export function segmentContainsQuotes(segment: Pick<AudiobookSegment, 'text'>) {
   return /[“”"'‘’]/u.test(segment.text)
 }
@@ -168,8 +172,9 @@ export function applySegmentRefinementResults(work: Work, segments: AudiobookSeg
 
     let searchFrom = 0
     return children.map((child, index) => {
-      const text = child.text?.trim() || ''
-      const offset = sourceOffset(segment, text, searchFrom)
+      const rawText = child.text?.trim() || ''
+      const text = trimWrappingQuotes(rawText)
+      const offset = sourceOffset(segment, rawText, searchFrom)
       searchFrom = offset.nextSearchFrom
       return applySpeaker(work, {
         ...segment,

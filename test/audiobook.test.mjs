@@ -768,7 +768,7 @@ const refinedSegments = applySegmentRefinementResultsForTest(workForSegmentRules
   segmentId: 'source-segment',
   segments: [
     { text: '千叶雏抬头，', speakerKind: 'narrator', speakerName: '旁白', mood: '动作描写', confidence: 0.9, needsReview: false },
-    { text: '我会继续。', speakerKind: 'character', characterId: 'character-chiba', speakerName: '千叶雏', mood: '坚定对白', confidence: 0.88, needsReview: false },
+    { text: '“我会继续。”', speakerKind: 'character', characterId: 'character-chiba', speakerName: '千叶雏', mood: '坚定对白', confidence: 0.88, needsReview: false },
     { text: '神代司点头。', speakerKind: 'narrator', speakerName: '旁白', mood: '动作描写', confidence: 0.9, needsReview: false },
   ],
 }], 'chapter-1-refine-1')
@@ -780,7 +780,7 @@ assert.deepEqual(
     { text: '我会继续。', speakerName: '千叶雏', order: 1, source: 'ai' },
     { text: '神代司点头。', speakerName: '旁白', order: 2, source: 'ai' },
   ],
-  'AI refinement results should replace one quoted rule segment with ordered speaker-attributed subsegments',
+  'AI refinement results should replace one quoted rule segment with ordered speaker-attributed subsegments and trim wrapping quotes',
 )
 
 assert.match(
