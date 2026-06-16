@@ -19,6 +19,17 @@ export interface AttributionResult {
   confidence?: number
   needsReview?: boolean
   reason?: string
+  segments?: AttributionChildResult[]
+}
+
+export interface AttributionChildResult {
+  text?: string
+  speakerKind?: string
+  characterId?: string | null
+  speakerName?: string
+  mood?: string
+  confidence?: number
+  needsReview?: boolean
 }
 
 export function parseSegmentJson(text: string): RawSegment[] {
@@ -111,6 +122,72 @@ export function applyAttributionResults(work: Work, segments: AudiobookSegment[]
       retryable: needsReview,
     }
   })
+}
+
+function applySpeaker(work: Work, segment: AudiobookSegment, result: AttributionChildResult | AttributionResult, batchId: string): AudiobookSegment {
+  const character = result.characterId ? work.characters.find((item) => item.id === result.characterId) : undefined
+  const wantsCharacter = result.speakerKind === 'character'
+  const confidence = typeof result.confidence === 'number' ? Math.max(0, Math.min(1, result.confidence)) : 0.5
+  const validCharacter = wantsCharacter && character
+  const needsReview = Boolean(result.needsReview || (wantsCharacter && !character) || confidence < 0.72)
+
+  return {
+    ...segment,
+    speakerKind: validCharacter ? 'character' : 'narrator',
+    characterId: validCharacter ? character.id : undefined,
+    speakerName: validCharacter ? character.name : '旁白',
+    mood: result.mood?.trim() || segment.mood || '平稳叙述',
+    attributionSource: 'llm',
+    attributionStatus: needsReview ? 'needs_review' : 'attributed',
+    attributionConfidence: confidence,
+    attributionBatchId: batchId,
+    attributionError: 'reason' in result ? result.reason : undefined,
+    needsReview,
+    retryable: needsReview,
+  }
+}
+
+function sourceOffset(parent: AudiobookSegment, text: string, searchFrom: number) {
+  const parentText = parent.text || ''
+  const index = parentText.indexOf(text, searchFrom)
+  if (index < 0 || typeof parent.sourceStartOffset !== 'number') return { start: undefined, end: undefined, nextSearchFrom: searchFrom }
+  const start = parent.sourceStartOffset + index
+  return { start, end: start + text.length, nextSearchFrom: index + text.length }
+}
+
+export function segmentContainsQuotes(segment: Pick<AudiobookSegment, 'text'>) {
+  return /[“”"'‘’]/u.test(segment.text)
+}
+
+export function applySegmentRefinementResults(work: Work, segments: AudiobookSegment[], results: AttributionResult[], batchId: string): AudiobookSegment[] {
+  const refined = segments.flatMap((segment) => {
+    const result = results.find((item) => item.segmentId === segment.id)
+    if (!result || segment.speakerEditedAt) return [segment]
+    const children = result.segments?.filter((item) => item.text?.trim()) || []
+    if (!children.length) return [applySpeaker(work, segment, result, batchId)]
+
+    let searchFrom = 0
+    return children.map((child, index) => {
+      const text = child.text?.trim() || ''
+      const offset = sourceOffset(segment, text, searchFrom)
+      searchFrom = offset.nextSearchFrom
+      return applySpeaker(work, {
+        ...segment,
+        id: index === 0 ? segment.id : generateId(),
+        text,
+        prompt: '',
+        sourceStartOffset: offset.start,
+        sourceEndOffset: offset.end,
+        segmentationSource: 'ai',
+        generationId: undefined,
+        generatedWith: undefined,
+        status: 'pending',
+        textEditedAt: undefined,
+        promptEditedAt: undefined,
+      }, child, batchId)
+    })
+  })
+  return refined.map((segment, order) => ({ ...segment, order }))
 }
 
 export function markAttributionFailed(segments: AudiobookSegment[], segmentIds: string[], batchId: string, error: string): AudiobookSegment[] {

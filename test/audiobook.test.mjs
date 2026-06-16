@@ -46,6 +46,30 @@ function loadSegmentRulesForTest() {
 
 const { createRuleBasedSegments: createRuleBasedSegmentsForTest, segmentsNeedingAttribution: segmentsNeedingAttributionForTest } = loadSegmentRulesForTest()
 
+function loadSegmentUtilsForTest() {
+  let nextId = 0
+  const executableSource = segmentUtilsSource
+    .replace(/^import type .*$/m, '')
+    .replace(/^import \{ generateId \}.*$/m, 'const generateId = () => `test-refined-${nextId += 1}`')
+    .replace('export interface AttributionResult', 'interface AttributionResult')
+    .replace('export interface AttributionChildResult', 'interface AttributionChildResult')
+    .replace('export function parseSegmentJson', 'function parseSegmentJson')
+    .replace('export function normalizeSegments', 'function normalizeSegments')
+    .replace('export function parseAttributionJson', 'function parseAttributionJson')
+    .replace('export function applyAttributionResults', 'function applyAttributionResults')
+    .replace('export function segmentContainsQuotes', 'function segmentContainsQuotes')
+    .replace('export function applySegmentRefinementResults', 'function applySegmentRefinementResults')
+    .replace('export function markAttributionFailed', 'function markAttributionFailed')
+    .replace('export function mergeConsecutiveSegments', 'function mergeConsecutiveSegments')
+    .replace('export function segmentSpeakerKey', 'function segmentSpeakerKey')
+  const { outputText } = ts.transpileModule(executableSource, {
+    compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2023 },
+  })
+  return Function('nextId', `${outputText}; return { segmentContainsQuotes, applySegmentRefinementResults }`)(nextId)
+}
+
+const { segmentContainsQuotes: segmentContainsQuotesForTest, applySegmentRefinementResults: applySegmentRefinementResultsForTest } = loadSegmentUtilsForTest()
+
 function workForSegmentRules() {
   return {
     id: 'work-1',
@@ -723,6 +747,48 @@ const reviewableSegments = segmentsNeedingAttributionForTest(kamishiroSegments)
 assert.equal(reviewableSegments.length, 1, 'newly split unknown speaker dialogue should enter attribution')
 assert.equal(reviewableSegments[0].text, kamishiroSegments[1].text, 'attribution should target the dialogue text, not the narrator cue')
 
+assert.equal(segmentContainsQuotesForTest({ text: '她停顿片刻，“继续。”' }), true, 'Chinese quotes should trigger AI refinement')
+assert.equal(segmentContainsQuotesForTest({ text: 'She said "continue" quietly.' }), true, 'straight double quotes should trigger AI refinement')
+assert.equal(segmentContainsQuotesForTest({ text: 'She called it ‘protocol’.' }), true, 'English single quotes should trigger AI refinement')
+assert.equal(segmentContainsQuotesForTest({ text: '没有引号的旁白' }), false, 'plain narration should not trigger AI refinement')
+
+const refinedSegments = applySegmentRefinementResultsForTest(workForSegmentRules(), [{
+  id: 'source-segment',
+  chapterId: 'chapter-1',
+  order: 0,
+  speakerKind: 'narrator',
+  speakerName: '旁白',
+  text: '千叶雏抬头，“我会继续。”神代司点头。',
+  mood: '平稳叙述',
+  prompt: '',
+  sourceStartOffset: 10,
+  sourceEndOffset: 32,
+  segmentationSource: 'rule',
+  attributionSource: 'rule',
+  attributionStatus: 'attributed',
+  attributionConfidence: 0.82,
+  needsReview: false,
+  retryable: false,
+  status: 'pending',
+}], [{
+  segmentId: 'source-segment',
+  segments: [
+    { text: '千叶雏抬头，', speakerKind: 'narrator', speakerName: '旁白', mood: '动作描写', confidence: 0.9, needsReview: false },
+    { text: '我会继续。', speakerKind: 'character', characterId: 'character-chiba', speakerName: '千叶雏', mood: '坚定对白', confidence: 0.88, needsReview: false },
+    { text: '神代司点头。', speakerKind: 'narrator', speakerName: '旁白', mood: '动作描写', confidence: 0.9, needsReview: false },
+  ],
+}], 'chapter-1-refine-1')
+
+assert.deepEqual(
+  refinedSegments.map((segment) => ({ text: segment.text, speakerName: segment.speakerName, order: segment.order, source: segment.segmentationSource })),
+  [
+    { text: '千叶雏抬头，', speakerName: '旁白', order: 0, source: 'ai' },
+    { text: '我会继续。', speakerName: '千叶雏', order: 1, source: 'ai' },
+    { text: '神代司点头。', speakerName: '旁白', order: 2, source: 'ai' },
+  ],
+  'AI refinement results should replace one quoted rule segment with ordered speaker-attributed subsegments',
+)
+
 assert.match(
   audiobookPromptSource,
   /buildAudiobookAttributionPrompt/,
@@ -793,6 +859,18 @@ assert.match(
   segmentReviewTableSource,
   /重试归因/,
   'segment review table should expose per-segment attribution retry',
+)
+
+assert.match(
+  segmentReviewTableSource,
+  /AI 细分/,
+  'segment review table should expose per-segment AI refinement for manual splitting',
+)
+
+assert.match(
+  segmentReviewTableSource,
+  /onRefineSegment\?\.\(segment\.id\)/,
+  'segment review table row AI refinement should call the supplied handler with the current segment id',
 )
 
 assert.match(
@@ -904,6 +982,12 @@ assert.match(
 )
 
 assert.match(
+  chapterAudiobookPanelSource,
+  /refineSegment\(chapter, segmentId\)/,
+  'chapter audiobook panel should wire row AI refinement to the audiobook hook with the current chapter',
+)
+
+assert.match(
   segmentReviewTableSource,
   /disabled=\{hasDirtySegments \|\| !onRetryAttribution/,
   'attribution retry should be blocked while row drafts are unsaved',
@@ -979,6 +1063,36 @@ assert.match(
   useAudiobookSource,
   /mergeConsecutiveSegments/,
   'audiobook hook should expose a persistent merge operation for selected segments',
+)
+
+assert.match(
+  audiobookPromptSource,
+  /需要继续细分[\s\S]*segments[\s\S]*text[\s\S]*speakerKind[\s\S]*characterId/,
+  'AI attribution prompt should allow each result to return replacement subsegments with speaker fields',
+)
+
+assert.match(
+  segmentUtilsSource,
+  /export function segmentContainsQuotes[\s\S]*[“”"'‘’]/,
+  'audiobook utilities should detect Chinese, English, and double quotes before AI refinement',
+)
+
+assert.match(
+  segmentUtilsSource,
+  /export function applySegmentRefinementResults[\s\S]*result\.segments[\s\S]*segmentationSource: 'ai'[\s\S]*\.map\(\(segment, order\)/,
+  'AI refinement results should replace a source segment with ordered AI subsegments',
+)
+
+assert.match(
+  useAudiobookSource,
+  /segments\.filter\(segmentContainsQuotes\)[\s\S]*refineSegmentBatch\(work, chapter, quoteSegments/,
+  'rule segmentation should send quote-containing segments through AI refinement before attribution completes',
+)
+
+assert.match(
+  useAudiobookSource,
+  /const refineSegment = async \(chapter: Chapter, segmentId: string\)[\s\S]*refineSegmentBatch\(work, chapter, \[segment\]/,
+  'audiobook hook should expose manual single-segment AI refinement',
 )
 
 assert.match(

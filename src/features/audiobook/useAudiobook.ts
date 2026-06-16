@@ -7,7 +7,7 @@ import { useStore } from '@/core/store'
 import { useSystemConfigStore } from '@/core/system-config-store'
 import { generate } from '@/ai/client'
 import { AUDIOBOOK_ATTRIBUTION_SYSTEM_PROMPT, AUDIOBOOK_TEMPLATE_SYSTEM_PROMPT, AUDIOBOOK_TONE_SYSTEM_PROMPT, buildAudiobookAttributionPrompt, buildAudiobookToneCompressionPrompt, buildQwenTtsRoleTemplatePrompt } from '@/ai/prompts/audiobook'
-import { applyAttributionResults, markAttributionFailed, mergeConsecutiveSegments, parseAttributionJson, segmentSpeakerKey } from './segmentUtils'
+import { applyAttributionResults, applySegmentRefinementResults, markAttributionFailed, mergeConsecutiveSegments, parseAttributionJson, segmentContainsQuotes, segmentSpeakerKey } from './segmentUtils'
 import { createRuleBasedSegments, segmentsNeedingAttribution } from './segmentRules'
 import { voiceboxClient } from './voiceboxClient'
 import { buildSegmentTonePrompt, fillPromptTemplate, textHash, validatePromptTemplate } from './promptTemplateUtils'
@@ -382,6 +382,35 @@ export function useAudiobook() {
     }
   }
 
+  const refineSegmentBatch = async (work: NonNullable<ReturnType<typeof useStore.getState>['currentWork']>, chapter: Chapter, batch: AudiobookSegment[], batchIndex: number) => {
+    const latest = ensureAudiobook(useStore.getState().currentWork!)
+    const currentSegments = latest.segmentsByChapter[chapter.id] || []
+    const batchId = `${chapter.id}-refine-${batchIndex + 1}`
+    const contextSegments = currentSegments
+      .filter((segment) => typeof segment.sourceStartOffset === 'number' && batch.some((item) => Math.abs((item.sourceStartOffset || 0) - (segment.sourceStartOffset || 0)) < 600))
+      .slice(0, 8)
+    const marking = currentSegments.map((segment) => batch.some((item) => item.id === segment.id)
+      ? { ...segment, attributionStatus: 'attributing' as const, attributionBatchId: batchId, attributionError: undefined }
+      : segment)
+    await persistAudiobook({ ...latest, segmentsByChapter: { ...latest.segmentsByChapter, [chapter.id]: marking } })
+
+    try {
+      const prompt = buildAudiobookAttributionPrompt(work, chapter, batch, contextSegments)
+      const text = await generate(prompt, AUDIOBOOK_ATTRIBUTION_SYSTEM_PROMPT, { ...aiConfig, maxTokens: Math.min(aiConfig.maxTokens || 1200, 1600) })
+      const results = parseAttributionJson(text)
+      const afterGenerate = ensureAudiobook(useStore.getState().currentWork!)
+      const applied = applySegmentRefinementResults(work, afterGenerate.segmentsByChapter[chapter.id] || [], results, batchId)
+      await persistAudiobook({ ...afterGenerate, segmentsByChapter: { ...afterGenerate.segmentsByChapter, [chapter.id]: applied } })
+      return true
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : '细分失败'
+      const afterError = ensureAudiobook(useStore.getState().currentWork!)
+      const failed = markAttributionFailed(afterError.segmentsByChapter[chapter.id] || [], batch.map((segment) => segment.id), batchId, errMsg)
+      await persistAudiobook({ ...afterError, segmentsByChapter: { ...afterError.segmentsByChapter, [chapter.id]: failed } })
+      return false
+    }
+  }
+
   const segmentChapter = async (chapter: Chapter) => {
     const work = useStore.getState().currentWork
     if (!work || !audiobook) return
@@ -413,7 +442,14 @@ export function useAudiobook() {
       const segments = createRuleBasedSegments(work, chapter)
       if (!segments.length) throw new Error('未生成可用分段')
       await saveSegments(chapter.id, segments)
-      const pendingAttribution = segmentsNeedingAttribution(segments)
+      const quoteSegments = segments.filter(segmentContainsQuotes)
+      if (quoteSegments.length) {
+        setSegmentationProgress({ chapterId: chapter.id, stage: 'attributing_batches', total: 1, completed: 0, failed: 0, message: '正在细分引号片段' })
+        await refineSegmentBatch(work, chapter, quoteSegments, 0)
+      }
+      const latestAfterRefine = ensureAudiobook(useStore.getState().currentWork!)
+      const refinedSegments = latestAfterRefine.segmentsByChapter[chapter.id] || segments
+      const pendingAttribution = segmentsNeedingAttribution(refinedSegments)
       if (!pendingAttribution.length) {
         setSegmentationProgress({ chapterId: chapter.id, stage: 'completed', total: 0, completed: 0, failed: 0, message: '规则分段已完成' })
         message.success('章节分段已生成，可先检查并编辑后再生成音频')
@@ -523,6 +559,22 @@ export function useAudiobook() {
     setSegmentationProgress({ chapterId: chapter.id, stage: 'attributing_batches', total: 1, completed: 0, failed: 0, message: '正在重试片段归因' })
     const ok = await attributeSegmentBatch(work, chapter, [segment], 0)
     setSegmentationProgress({ chapterId: chapter.id, stage: ok ? 'completed' : 'partial_failed', total: 1, completed: 1, failed: ok ? 0 : 1, message: ok ? '片段归因已完成' : '片段归因失败' })
+    setSegmentingChapterId(null)
+  }
+
+  const refineSegment = async (chapter: Chapter, segmentId: string) => {
+    const work = useStore.getState().currentWork
+    if (!work || !audiobook) return
+    if (!aiConfig.apiKey) {
+      message.warning('请先在系统管理中配置 AI')
+      return
+    }
+    const segment = audiobook.segmentsByChapter[chapter.id]?.find((item) => item.id === segmentId)
+    if (!segment) return
+    setSegmentingChapterId(chapter.id)
+    setSegmentationProgress({ chapterId: chapter.id, stage: 'attributing_batches', total: 1, completed: 0, failed: 0, message: '正在 AI 细分片段' })
+    const ok = await refineSegmentBatch(work, chapter, [segment], 0)
+    setSegmentationProgress({ chapterId: chapter.id, stage: ok ? 'completed' : 'partial_failed', total: 1, completed: 1, failed: ok ? 0 : 1, message: ok ? '片段细分已完成' : '片段细分失败' })
     setSegmentingChapterId(null)
   }
 
@@ -713,6 +765,7 @@ export function useAudiobook() {
     generateSegmentTonePrompts,
     mergeSegments,
     retrySegmentAttribution,
+    refineSegment,
     generateChapterAudio,
     regenerateSegmentAudio,
     generatePromptTemplate,

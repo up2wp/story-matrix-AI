@@ -19,7 +19,8 @@ export const AUDIOBOOK_TEMPLATE_SYSTEM_PROMPT = `你是 QwenTTS 有声读物提�
 export const AUDIOBOOK_ATTRIBUTION_SYSTEM_PROMPT = `你是中文小说有声读物说话人归因助手。
 只输出 JSON 数组，不要 Markdown，不要解释。
 你只能从候选 speaker 中选择 speakerId；无法判断时选择 narrator 并标记 needsReview=true。
-不要改写 text，不要新增角色，不要输出候选列表之外的 characterId。`
+不要改写 text，不要新增角色，不要输出候选列表之外的 characterId。
+当一个待归因片段内部仍包含多个旁白/对白/说话人时，必须在该条结果的 segments 字段中按原文顺序继续细分。`
 
 export const AUDIOBOOK_TONE_SYSTEM_PROMPT = `你是 QwenTTS 有声读物语气编辑。
 只输出 JSON 数组，不要 Markdown，不要解释。
@@ -111,7 +112,8 @@ ${JSON.stringify(segments.map((segment) => ({ id: segment.id, text: segment.text
 - mood: 适合 TTS 的短语气描述
 - confidence: 0 到 1
 - needsReview: boolean
-- reason: 简短原因`
+- reason: 简短原因
+- segments: 可选；当该片段需要继续细分时输出 segments 数组，每个子项包含 text、speakerKind、characterId、speakerName、mood、confidence、needsReview；不需要细分时省略或输出空数组`
 }
 
 export function buildAudiobookToneCompressionPrompt(items: { segmentId: string; speakerName: string; text: string; expandedPrompt: string }[]) {
