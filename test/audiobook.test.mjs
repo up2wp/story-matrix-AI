@@ -596,14 +596,8 @@ assert.match(
 
 assert.match(
   promptTemplateUtilsSource,
-  /buildSegmentTonePrompt[\s\S]*binding\.speakerKind === 'narrator'[\s\S]*return narratorTonePrompt\(template\)/,
+  /buildSegmentTonePrompt[\s\S]*binding\.speakerKind === 'narrator'[\s\S]*removeSpeechTextPlaceholder\(template\)[\s\S]*当前语境\[:：\][\s\S]*CONTEXT_PLACEHOLDER/,
   'one-click tone prompt should apply the narrator prompt body directly without context replacement',
-)
-
-assert.match(
-  promptTemplateUtilsSource,
-  /function narratorTonePrompt[\s\S]*当前语境\[:：\][\s\S]*CONTEXT_PLACEHOLDER/,
-  'one-click narrator tone prompt should strip the context placeholder suffix from narrator prompts',
 )
 
 assert.match(
