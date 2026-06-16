@@ -10,6 +10,7 @@ interface Props {
   onDirtyChange?: (dirty: boolean) => void
   onGenerateTonePrompts?: () => Promise<void>
   onMergeSegments?: (segmentIds: string[]) => Promise<void>
+  onRefineSegment?: (segmentId: string) => Promise<void>
   onRetryAttribution?: (segmentId: string) => Promise<void>
   onRegenerateSegmentAudio?: (segmentId: string) => Promise<void>
   onPlaySegmentAudio?: (segment: AudiobookSegment) => Promise<void>
@@ -17,7 +18,7 @@ interface Props {
   scrollY?: number
 }
 
-export default function SegmentReviewTable({ segments, characters, onUpdate, onDirtyChange, onGenerateTonePrompts, onMergeSegments, onRetryAttribution, onRegenerateSegmentAudio, onPlaySegmentAudio, onDownloadSegmentAudio, scrollY }: Props) {
+export default function SegmentReviewTable({ segments, characters, onUpdate, onDirtyChange, onGenerateTonePrompts, onMergeSegments, onRefineSegment, onRetryAttribution, onRegenerateSegmentAudio, onPlaySegmentAudio, onDownloadSegmentAudio, scrollY }: Props) {
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [generatingTonePrompts, setGeneratingTonePrompts] = useState(false)
   const [savingDrafts, setSavingDrafts] = useState(false)
@@ -113,8 +114,9 @@ export default function SegmentReviewTable({ segments, characters, onUpdate, onD
     },
     {
       title: '操作',
-      width: 260,
+      width: 320,
       render: (_, segment) => <Space wrap size={4}>
+        <Button size="small" disabled={hasDirtySegments || !onRefineSegment} onClick={() => void onRefineSegment?.(segment.id)}>AI 细分</Button>
         <Button size="small" disabled={hasDirtySegments || !onRetryAttribution || (!segment.retryable && segment.attributionStatus !== 'failed' && !segment.needsReview)} onClick={() => void onRetryAttribution?.(segment.id)}>重试归因</Button>
         <Button size="small" disabled={!onRegenerateSegmentAudio || hasDirtySegments} onClick={() => void onRegenerateSegmentAudio?.(segment.id)}>重新生成音频</Button>
         <Button size="small" disabled={segment.status !== 'completed' || !segment.generationId || !onPlaySegmentAudio} onClick={() => void onPlaySegmentAudio?.(segment)}>播放</Button>
