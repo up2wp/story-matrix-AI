@@ -1013,26 +1013,62 @@ assert.match(
 
 assert.match(
   useAudiobookSource,
-  /generateSegmentTonePrompts[\s\S]*buildAudiobookToneCompressionPrompt[\s\S]*parseToneCompressionJson/,
-  'audiobook hook should use AI compression for batch tone prompts',
+  /generateSegmentTonePrompt[\s\S]*buildAudiobookToneCompressionPrompt[\s\S]*parseToneCompressionJson/,
+  'audiobook hook should use AI compression for row-level tone prompts',
 )
 
 assert.match(
   useAudiobookSource,
-  /if \(!aiConfig\.apiKey && promptInputs\.length\)[\s\S]*请先在系统管理中配置 AI/,
-  'one-click tone generation should require AI only when character prompt compression is needed',
+  /const generateSegmentTonePrompt = async \(chapterId: string, segmentId: string, options: \{ overwrite\?: boolean \} = \{\}\)[\s\S]*buildAudiobookToneCompressionPrompt\(\[promptInput\]\)[\s\S]*await patchSegmentFields\(chapterId, segment\.id, \{ prompt \}\)/,
+  'single tone generation should request and patch exactly one segment at a time',
 )
 
 assert.match(
   useAudiobookSource,
-  /generateSegmentTonePrompts[\s\S]*directPromptsBySegmentId[\s\S]*segment\.speakerKind === 'narrator'[\s\S]*directPromptsBySegmentId\.set\(segment\.id, buildSegmentTonePrompt\(effectiveBinding, previousSegments\)\)[\s\S]*continue/,
-  'one-click tone generation should fill narrator prompts directly without waiting for AI compression',
+  /for \(const segment of orderedSegments\)[\s\S]*await generateSegmentTonePrompt\(chapterId, segment\.id\)[\s\S]*generatedCount \+= 1/,
+  'one-click tone generation should await sequential per-segment prompt generation instead of one whole-chapter AI request',
+)
+
+assert.doesNotMatch(
+  useAudiobookSource,
+  /const promptInputs: \{ segmentId: string; speakerName: string; text: string; expandedPrompt: string \}\[\] = \[\][\s\S]*buildAudiobookToneCompressionPrompt\(promptInputs\)/,
+  'one-click tone generation should not batch all segment prompt inputs into one AI request',
+)
+
+assert.match(
+  segmentReviewTableSource,
+  /onGenerateTonePrompt\?: \(segmentId: string\) => Promise<void>/,
+  'segment review table should accept a single-row tone prompt generator',
+)
+
+assert.match(
+  segmentReviewTableSource,
+  /onGenerateTonePrompt\?\.\(segment\.id\)[\s\S]*重新生成语气提示词/,
+  'segment review table should expose per-row tone prompt regeneration with the current segment id',
+)
+
+assert.match(
+  chapterAudiobookPanelSource,
+  /onGenerateTonePrompt=\{async \(segmentId\) => \{ await generateSegmentTonePrompt\(chapter\.id, segmentId, \{ overwrite: true \}\) \}\}/,
+  'chapter audiobook panel should wire row tone prompt regeneration to overwrite only the selected segment',
 )
 
 assert.match(
   useAudiobookSource,
-  /if \(promptInputs\.length\)[\s\S]*buildAudiobookToneCompressionPrompt\(promptInputs\)/,
-  'one-click tone generation should call AI compression only when character prompts need compression',
+  /if \(segment\.speakerKind !== 'narrator'\)[\s\S]*if \(!aiConfig\.apiKey\) throw new Error\('请先在系统管理中配置 AI'\)/,
+  'tone generation should require AI only when a character segment needs compression',
+)
+
+assert.match(
+  useAudiobookSource,
+  /let prompt = buildSegmentTonePrompt\(effectiveBinding, previousSegments\)[\s\S]*if \(segment\.speakerKind !== 'narrator'\)/,
+  'tone generation should fill narrator prompts directly without waiting for AI compression',
+)
+
+assert.match(
+  useAudiobookSource,
+  /if \(segment\.speakerKind !== 'narrator'\)[\s\S]*buildAudiobookToneCompressionPrompt\(\[promptInput\]\)/,
+  'tone generation should call AI compression only for the current character segment',
 )
 
 assert.match(
@@ -1049,7 +1085,7 @@ assert.match(
 
 assert.match(
   useAudiobookSource,
-  /if \(!promptsBySegmentId\.size\) throw new Error\('AI 没有返回可用语气提示词'\)/,
+  /if \(!prompt\) throw new Error\('AI 没有返回可用语气提示词'\)/,
   'tone generation should fail visibly when AI returns no usable prompts',
 )
 
@@ -1059,10 +1095,10 @@ assert.match(
   'audiobook hook should expose a confirmation action for reviewed attribution results',
 )
 
-assert.doesNotMatch(
+assert.match(
   segmentReviewTableSource,
-  /onGenerateTonePrompt\?\./,
-  'segment review table should not require users to generate tone prompts row by row',
+  /onGenerateTonePrompts[\s\S]*一键生成语气/,
+  'segment review table should keep one-click tone generation while also supporting row regeneration',
 )
 
 assert.match(

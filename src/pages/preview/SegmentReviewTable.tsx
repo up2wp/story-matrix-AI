@@ -8,6 +8,7 @@ interface Props {
   characters: Character[]
   onUpdate: (segmentId: string, changes: Partial<AudiobookSegment>, baseVersion?: number) => Promise<void>
   onDirtyChange?: (dirty: boolean) => void
+  onGenerateTonePrompt?: (segmentId: string) => Promise<void>
   onGenerateTonePrompts?: () => Promise<void>
   onMergeSegments?: (segmentIds: string[]) => Promise<void>
   onRefineSegment?: (segmentId: string) => Promise<void>
@@ -18,9 +19,10 @@ interface Props {
   scrollY?: number
 }
 
-export default function SegmentReviewTable({ segments, characters, onUpdate, onDirtyChange, onGenerateTonePrompts, onMergeSegments, onRefineSegment, onRetryAttribution, onRegenerateSegmentAudio, onPlaySegmentAudio, onDownloadSegmentAudio, scrollY }: Props) {
+export default function SegmentReviewTable({ segments, characters, onUpdate, onDirtyChange, onGenerateTonePrompt, onGenerateTonePrompts, onMergeSegments, onRefineSegment, onRetryAttribution, onRegenerateSegmentAudio, onPlaySegmentAudio, onDownloadSegmentAudio, scrollY }: Props) {
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [generatingTonePrompts, setGeneratingTonePrompts] = useState(false)
+  const [generatingTonePromptSegmentId, setGeneratingTonePromptSegmentId] = useState<string | null>(null)
   const [savingDrafts, setSavingDrafts] = useState(false)
   const [draftsBySegmentId, setDraftsBySegmentId] = useState<Record<string, Partial<AudiobookSegment>>>({})
   const dirtyIds = useMemo(() => Object.keys(draftsBySegmentId), [draftsBySegmentId])
@@ -118,6 +120,10 @@ export default function SegmentReviewTable({ segments, characters, onUpdate, onD
       render: (_, segment) => <Space wrap size={4}>
         <Button size="small" disabled={hasDirtySegments || !onRefineSegment} onClick={() => void onRefineSegment?.(segment.id)}>AI 细分</Button>
         <Button size="small" disabled={hasDirtySegments || !onRetryAttribution || (!segment.retryable && segment.attributionStatus !== 'failed' && !segment.needsReview)} onClick={() => void onRetryAttribution?.(segment.id)}>重试归因</Button>
+        <Button size="small" loading={generatingTonePromptSegmentId === segment.id} disabled={hasDirtySegments || !onGenerateTonePrompt} onClick={() => {
+          setGeneratingTonePromptSegmentId(segment.id)
+          void onGenerateTonePrompt?.(segment.id).finally(() => setGeneratingTonePromptSegmentId(null))
+        }}>重新生成语气提示词</Button>
         <Button size="small" disabled={!onRegenerateSegmentAudio || hasDirtySegments} onClick={() => void onRegenerateSegmentAudio?.(segment.id)}>重新生成音频</Button>
         <Button size="small" disabled={segment.status !== 'completed' || !segment.generationId || !onPlaySegmentAudio} onClick={() => void onPlaySegmentAudio?.(segment)}>播放</Button>
         <Button size="small" disabled={segment.status !== 'completed' || !segment.generationId || !onDownloadSegmentAudio} onClick={() => void onDownloadSegmentAudio?.(segment)}>下载</Button>

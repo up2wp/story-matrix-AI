@@ -498,6 +498,36 @@ export function useAudiobook() {
     message.success(`已确认 ${reviewed.length} 个待复核分段`)
   }
 
+  const generateSegmentTonePrompt = async (chapterId: string, segmentId: string, options: { overwrite?: boolean } = {}) => {
+    const work = useStore.getState().currentWork
+    if (!work) return false
+    const latest = ensureAudiobook(useStore.getState().currentWork!)
+    const segments = latest.segmentsByChapter[chapterId] || []
+    const orderedSegments = [...segments].sort((a, b) => a.order - b.order)
+    const segmentIndex = orderedSegments.findIndex((item) => item.id === segmentId)
+    const segment = orderedSegments[segmentIndex]
+    if (!segment) return false
+    if (!options.overwrite && (segment.prompt?.trim() || segment.promptEditedAt)) return false
+    const binding = segment.speakerKind === 'narrator'
+      ? latest.narratorBinding
+      : latest.chapterBindings[chapterId]?.[segment.characterId || ''] || latest.characterBindings[segment.characterId || '']
+    if (!binding) throw new Error(`${segment.speakerName} 缺少声音提示词配置`)
+    const previousSegments = orderedSegments.slice(Math.max(0, segmentIndex - 2), segmentIndex)
+    const effectiveBinding = { ...binding, prompt: bindingPromptTemplate(binding, work), promptTemplate: bindingPromptTemplate(binding, work) }
+    let prompt = buildSegmentTonePrompt(effectiveBinding, previousSegments)
+    if (segment.speakerKind !== 'narrator') {
+      if (!aiConfig.apiKey) throw new Error('请先在系统管理中配置 AI')
+      const promptInput = { segmentId: segment.id, speakerName: segment.speakerName, text: segment.text, expandedPrompt: prompt }
+      const resultText = await generate(buildAudiobookToneCompressionPrompt([promptInput]), AUDIOBOOK_TONE_SYSTEM_PROMPT, { ...aiConfig, maxTokens: Math.min(aiConfig.maxTokens || 1200, 800) })
+      const tones = parseToneCompressionJson(resultText)
+      const matchedTone = tones.find((item) => toneSegmentId(item) === segment.id) || tones[0]
+      prompt = matchedTone ? toneText(matchedTone) : ''
+    }
+    if (!prompt) throw new Error('AI 没有返回可用语气提示词')
+    await patchSegmentFields(chapterId, segment.id, { prompt })
+    return true
+  }
+
   const generateSegmentTonePrompts = async (chapterId: string) => {
     const work = useStore.getState().currentWork
     if (!work) return
@@ -506,41 +536,13 @@ export function useAudiobook() {
     if (!segments.length) return
     try {
       const orderedSegments = [...segments].sort((a, b) => a.order - b.order)
-      const promptInputs: { segmentId: string; speakerName: string; text: string; expandedPrompt: string }[] = []
-      const directPromptsBySegmentId = new Map<string, string>()
-      for (const [index, segment] of orderedSegments.entries()) {
+      let generatedCount = 0
+      for (const segment of orderedSegments) {
         if (segment.prompt?.trim() || segment.promptEditedAt) continue
-        const binding = segment.speakerKind === 'narrator'
-          ? latest.narratorBinding
-          : latest.chapterBindings[chapterId]?.[segment.characterId || ''] || latest.characterBindings[segment.characterId || '']
-        if (!binding) throw new Error(`${segment.speakerName} 缺少声音提示词配置`)
-        const previousSegments = orderedSegments.slice(Math.max(0, index - 2), index)
-        const effectiveBinding = { ...binding, prompt: bindingPromptTemplate(binding, work), promptTemplate: bindingPromptTemplate(binding, work) }
-        if (segment.speakerKind === 'narrator') {
-          directPromptsBySegmentId.set(segment.id, buildSegmentTonePrompt(effectiveBinding, previousSegments))
-          continue
-        }
-        promptInputs.push({ segmentId: segment.id, speakerName: segment.speakerName, text: segment.text, expandedPrompt: buildSegmentTonePrompt(effectiveBinding, previousSegments) })
+        if (await generateSegmentTonePrompt(chapterId, segment.id)) generatedCount += 1
       }
-      const promptsBySegmentId = new Map(directPromptsBySegmentId)
-      if (!aiConfig.apiKey && promptInputs.length) {
-        message.warning('请先在系统管理中配置 AI')
-        return
-      }
-      if (promptInputs.length) {
-        const resultText = await generate(buildAudiobookToneCompressionPrompt(promptInputs), AUDIOBOOK_TONE_SYSTEM_PROMPT, { ...aiConfig, maxTokens: Math.min(aiConfig.maxTokens || 1200, 1600) })
-        const tones = parseToneCompressionJson(resultText)
-        for (const item of tones) {
-          const segmentId = toneSegmentId(item)
-          const prompt = toneText(item)
-          if (segmentId && prompt) promptsBySegmentId.set(segmentId, prompt)
-        }
-      }
-      if (!promptsBySegmentId.size) throw new Error('AI 没有返回可用语气提示词')
-      for (const [segmentId, prompt] of promptsBySegmentId.entries()) {
-        await patchSegmentFields(chapterId, segmentId, { prompt })
-      }
-      message.success(`已生成 ${promptsBySegmentId.size} 条语气提示词`)
+      if (!generatedCount) throw new Error('没有可生成的语气提示词')
+      message.success(`已生成 ${generatedCount} 条语气提示词`)
     } catch (error) {
       message.warning(error instanceof Error ? error.message : '生成语气提示词失败')
     }
@@ -762,6 +764,7 @@ export function useAudiobook() {
     segmentChapter,
     updateSegment,
     approveReviewSegments,
+    generateSegmentTonePrompt,
     generateSegmentTonePrompts,
     mergeSegments,
     retrySegmentAttribution,
