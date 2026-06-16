@@ -7,10 +7,10 @@ import { useStore } from '@/core/store'
 import { useSystemConfigStore } from '@/core/system-config-store'
 import { generate } from '@/ai/client'
 import { AUDIOBOOK_ATTRIBUTION_SYSTEM_PROMPT, AUDIOBOOK_TEMPLATE_SYSTEM_PROMPT, AUDIOBOOK_TONE_SYSTEM_PROMPT, buildAudiobookAttributionPrompt, buildAudiobookToneCompressionPrompt, buildQwenTtsRoleTemplatePrompt } from '@/ai/prompts/audiobook'
-import { applyAttributionResults, applySegmentRefinementResults, markAttributionFailed, mergeConsecutiveSegments, parseAttributionJson, segmentContainsQuotes, segmentSpeakerKey } from './segmentUtils'
+import { applyAttributionResults, applySegmentRefinementResults, markAttributionFailed, mergeConsecutiveSegments, parseAttributionJson, segmentContainsQuotes } from './segmentUtils'
 import { createRuleBasedSegments, segmentsNeedingAttribution } from './segmentRules'
 import { voiceboxClient } from './voiceboxClient'
-import { buildSegmentTonePrompt, fillPromptTemplate, textHash, validatePromptTemplate } from './promptTemplateUtils'
+import { BYSTANDER_PROMPT_TEMPLATE, buildSegmentTonePrompt, fillPromptTemplate, textHash, validatePromptTemplate } from './promptTemplateUtils'
 
 function now() {
   return Date.now()
@@ -31,14 +31,34 @@ function defaultNarratorBinding(): VoiceBinding {
   }
 }
 
+function defaultBystanderBinding(kind: 'male' | 'female'): VoiceBinding {
+  const timestamp = now()
+  const isMale = kind === 'male'
+  return {
+    id: isMale ? 'bystander-male' : 'bystander-female',
+    speakerKind: isMale ? 'bystanderMale' : 'bystanderFemale',
+    displayName: isMale ? '路人男声' : '路人女声',
+    source: 'pending',
+    prompt: BYSTANDER_PROMPT_TEMPLATE,
+    promptTemplate: BYSTANDER_PROMPT_TEMPLATE,
+    updatedAt: timestamp,
+    promptUpdatedAt: timestamp,
+  }
+}
+
 function ensureAudiobook(work: NonNullable<ReturnType<typeof useStore.getState>['currentWork']>): WorkAudiobookConfig {
   return work.audiobook || {
     narratorBinding: defaultNarratorBinding(),
+    bystanderBindings: { male: defaultBystanderBinding('male'), female: defaultBystanderBinding('female') },
     characterBindings: {},
     chapterBindings: {},
     segmentsByChapter: {},
     chapterAudio: {},
   }
+}
+
+function ensureBystanderBindings(config: WorkAudiobookConfig) {
+  return config.bystanderBindings || { male: defaultBystanderBinding('male'), female: defaultBystanderBinding('female') }
 }
 
 function profileId(profile: VoiceboxProfile) {
@@ -59,6 +79,7 @@ function defaultNarratorPrompt(work: NonNullable<ReturnType<typeof useStore.getS
 
 function bindingPromptTemplate(binding: VoiceBinding | undefined, work: NonNullable<ReturnType<typeof useStore.getState>['currentWork']>) {
   if (!binding) return ''
+  if (binding.speakerKind === 'bystanderMale' || binding.speakerKind === 'bystanderFemale') return BYSTANDER_PROMPT_TEMPLATE
   return binding.promptTemplate || binding.prompt || (binding.speakerKind === 'narrator' ? defaultNarratorPrompt(work) : '')
 }
 
@@ -153,6 +174,20 @@ function invalidateCharacterAudio(config: WorkAudiobookConfig, characterId: stri
   }
 }
 
+function invalidateSpeakerAudio(config: WorkAudiobookConfig, speakerKind: VoiceBinding['speakerKind']): WorkAudiobookConfig {
+  return {
+    ...config,
+    segmentsByChapter: Object.fromEntries(Object.entries(config.segmentsByChapter).map(([chapterId, segments]) => [
+      chapterId,
+      segments.map((segment) => segment.speakerKind === speakerKind && segment.generationId ? { ...segment, status: 'stale' as const, generationId: undefined } : segment),
+    ])),
+    chapterAudio: Object.fromEntries(Object.entries(config.chapterAudio).map(([chapterId, state]) => {
+      const affected = config.segmentsByChapter[chapterId]?.some((segment) => segment.speakerKind === speakerKind)
+      return [chapterId, affected ? { ...state, status: 'stale' as const, generationIds: [], error: '路人声音配置已变更，请重新生成' } : state]
+    })),
+  }
+}
+
 function changedRecordEntries<T>(current: Record<string, T>, next: Record<string, T>): Record<string, T> {
   return Object.fromEntries(Object.entries(next).filter(([key, value]) => JSON.stringify(current[key]) !== JSON.stringify(value)))
 }
@@ -162,10 +197,12 @@ function audiobookDelta(current: WorkAudiobookConfig, next: WorkAudiobookConfig)
   const segmentsByChapter = changedRecordEntries(current.segmentsByChapter, next.segmentsByChapter)
   const chapterAudio = changedRecordEntries(current.chapterAudio, next.chapterAudio)
   const characterBindings = changedRecordEntries(current.characterBindings, next.characterBindings)
+  const bystanderBindings = changedRecordEntries(current.bystanderBindings || {}, next.bystanderBindings || {})
   const chapterBindings = changedRecordEntries(current.chapterBindings, next.chapterBindings)
   if (Object.keys(segmentsByChapter).length) changes.segmentsByChapter = segmentsByChapter
   if (Object.keys(chapterAudio).length) changes.chapterAudio = chapterAudio
   if (Object.keys(characterBindings).length) changes.characterBindings = characterBindings
+  if (Object.keys(bystanderBindings).length) changes.bystanderBindings = bystanderBindings
   if (Object.keys(chapterBindings).length) changes.chapterBindings = chapterBindings
   if (JSON.stringify(current.narratorBinding) !== JSON.stringify(next.narratorBinding)) changes.narratorBinding = next.narratorBinding
   return changes
@@ -187,6 +224,7 @@ export function useAudiobook() {
   const persistAudiobook = async (nextAudiobook: WorkAudiobookConfig) => {
     const work = useStore.getState().currentWork
     if (!work) return
+    nextAudiobook = { ...nextAudiobook, bystanderBindings: ensureBystanderBindings(nextAudiobook) }
     const audiobookChanges = work.audiobook ? audiobookDelta(work.audiobook, nextAudiobook) : nextAudiobook
     const result = await db.works.updateAudiobook(work.id, audiobookChanges)
     setCurrentWork({ ...work, audiobook: result.audiobook, updatedAt: result.updatedAt })
@@ -205,17 +243,29 @@ export function useAudiobook() {
 
   const saveBinding = async (binding: VoiceBinding) => {
     if (!currentWork || !audiobook) return
-    const previous = binding.speakerKind === 'narrator' ? audiobook.narratorBinding : audiobook.characterBindings[binding.characterId || binding.id]
+    const bystanderBindings = ensureBystanderBindings(audiobook)
+    const previous = binding.speakerKind === 'narrator'
+      ? audiobook.narratorBinding
+      : binding.speakerKind === 'bystanderMale'
+        ? bystanderBindings.male
+        : binding.speakerKind === 'bystanderFemale'
+          ? bystanderBindings.female
+          : audiobook.characterBindings[binding.characterId || binding.id]
     const promptChanged = previous?.prompt !== binding.prompt
     const nextBinding = {
       ...binding,
-      promptTemplate: binding.prompt,
+      prompt: binding.speakerKind === 'bystanderMale' || binding.speakerKind === 'bystanderFemale' ? BYSTANDER_PROMPT_TEMPLATE : binding.prompt,
+      promptTemplate: binding.speakerKind === 'bystanderMale' || binding.speakerKind === 'bystanderFemale' ? BYSTANDER_PROMPT_TEMPLATE : binding.prompt,
       promptUpdatedAt: promptChanged ? now() : binding.promptUpdatedAt || binding.updatedAt,
       updatedAt: binding.updatedAt || now(),
     }
     const next = binding.speakerKind === 'narrator'
       ? invalidateAllAudio({ ...audiobook, narratorBinding: nextBinding })
-      : invalidateCharacterAudio({ ...audiobook, characterBindings: { ...audiobook.characterBindings, [binding.characterId || binding.id]: nextBinding } }, binding.characterId || binding.id)
+      : binding.speakerKind === 'bystanderMale'
+        ? invalidateSpeakerAudio({ ...audiobook, bystanderBindings: { ...bystanderBindings, male: nextBinding } }, 'bystanderMale')
+        : binding.speakerKind === 'bystanderFemale'
+          ? invalidateSpeakerAudio({ ...audiobook, bystanderBindings: { ...bystanderBindings, female: nextBinding } }, 'bystanderFemale')
+          : invalidateCharacterAudio({ ...audiobook, characterBindings: { ...audiobook.characterBindings, [binding.characterId || binding.id]: nextBinding } }, binding.characterId || binding.id)
     await persistAudiobook(next)
   }
 
@@ -299,6 +349,8 @@ export function useAudiobook() {
   const bindingForSegment = (segment: Pick<AudiobookSegment, 'speakerKind' | 'characterId'>, chapterId?: string) => {
     if (!audiobook) return undefined
     if (segment.speakerKind === 'narrator') return audiobook.narratorBinding
+    if (segment.speakerKind === 'bystanderMale') return ensureBystanderBindings(audiobook).male
+    if (segment.speakerKind === 'bystanderFemale') return ensureBystanderBindings(audiobook).female
     const key = segment.characterId || ''
     return chapterId ? audiobook.chapterBindings[chapterId]?.[key] || audiobook.characterBindings[key] : audiobook.characterBindings[key]
   }
@@ -309,7 +361,7 @@ export function useAudiobook() {
     const missing = new Set<string>()
     for (const segment of segments) {
       const binding = bindingForSegment(segment, chapterId)
-      if (!isBindingReady(binding)) missing.add(segmentSpeakerKey(segment) === 'narrator' ? '旁白' : segment.speakerName)
+      if (!isBindingReady(binding)) missing.add(segment.speakerName)
       else if (segment.speakerKind !== 'narrator' && !validatePromptTemplate(bindingPromptTemplate(binding, work))) missing.add(`${segment.speakerName}提示词`)
     }
     return [...missing]
@@ -508,9 +560,7 @@ export function useAudiobook() {
     const segment = orderedSegments[segmentIndex]
     if (!segment) return false
     if (!options.overwrite && (segment.prompt?.trim() || segment.promptEditedAt)) return false
-    const binding = segment.speakerKind === 'narrator'
-      ? latest.narratorBinding
-      : latest.chapterBindings[chapterId]?.[segment.characterId || ''] || latest.characterBindings[segment.characterId || '']
+    const binding = bindingForSegment(segment, chapterId)
     if (!binding) throw new Error(`${segment.speakerName} 缺少声音提示词配置`)
     const previousSegments = orderedSegments.slice(Math.max(0, segmentIndex - 2), segmentIndex)
     const effectiveBinding = { ...binding, prompt: bindingPromptTemplate(binding, work), promptTemplate: bindingPromptTemplate(binding, work) }
@@ -718,6 +768,11 @@ export function useAudiobook() {
     })
   }, [audiobook, currentWork])
 
+  const bystanderBindings = useMemo(() => {
+    if (!audiobook) return undefined
+    return ensureBystanderBindings(audiobook)
+  }, [audiobook])
+
   const chapterCharacterBindings = (chapterId: string, characterIds: string[]) => {
     if (!currentWork || !audiobook) return []
     return characterIds.map((characterId) => {
@@ -774,6 +829,7 @@ export function useAudiobook() {
     generatePromptTemplate,
     missingBindings,
     narratorBinding: audiobook?.narratorBinding,
+    bystanderBindings,
     characterBindings,
     chapterCharacterBindings,
     isBindingReady,

@@ -4,11 +4,14 @@ import { db } from './db'
 
 type LegacyRecord = Record<string, unknown>
 
+const BYSTANDER_PROMPT_TEMPLATE = '当前语境：【上下文】'
+
 function asRecord(value: unknown): LegacyRecord {
   return value && typeof value === 'object' ? value as LegacyRecord : {}
 }
 
 function ensurePromptTemplatePlaceholder(template: string, speakerKind: unknown) {
+  if (speakerKind === 'bystanderMale' || speakerKind === 'bystanderFemale') return BYSTANDER_PROMPT_TEMPLATE
   if (!template.trim()) return ''
   if (speakerKind === 'narrator') return template.replace(/[ \t]*当前语境[:：][ \t]*【上下文】[ \t]*$/, '').trim()
   if (template.includes('【上下文】')) return template
@@ -17,6 +20,9 @@ function ensurePromptTemplatePlaceholder(template: string, speakerKind: unknown)
 
 function bindingNeedsPromptTemplateMigration(binding: unknown) {
   const record = asRecord(binding)
+  if (record.speakerKind === 'bystanderMale' || record.speakerKind === 'bystanderFemale') {
+    return record.prompt !== BYSTANDER_PROMPT_TEMPLATE || record.promptTemplate !== BYSTANDER_PROMPT_TEMPLATE
+  }
   if (record.speakerKind === 'narrator') {
     return (typeof record.prompt === 'string' && record.prompt.includes('【上下文】'))
       || (typeof record.promptTemplate === 'string' && record.promptTemplate.includes('【上下文】'))
@@ -28,6 +34,7 @@ function bindingNeedsPromptTemplateMigration(binding: unknown) {
 /** 清理旧版本遗留字段，补充新字段默认值 */
 function migrateWork(work: Work): Work {
   let changed = false
+  const timestamp = Date.now()
 
   const defaultAudiobook: WorkAudiobookConfig = {
     narratorBinding: {
@@ -37,8 +44,30 @@ function migrateWork(work: Work): Work {
       source: 'pending',
       prompt: `${work.seed.tone || '自然'}、清晰、适合长篇小说旁白。`,
       promptTemplate: `${work.seed.tone || '自然'}、清晰、适合长篇小说旁白。`,
-      updatedAt: Date.now(),
-      promptUpdatedAt: Date.now(),
+      updatedAt: timestamp,
+      promptUpdatedAt: timestamp,
+    },
+    bystanderBindings: {
+      male: {
+        id: 'bystander-male',
+        speakerKind: 'bystanderMale',
+        displayName: '路人男声',
+        source: 'pending',
+        prompt: BYSTANDER_PROMPT_TEMPLATE,
+        promptTemplate: BYSTANDER_PROMPT_TEMPLATE,
+        updatedAt: timestamp,
+        promptUpdatedAt: timestamp,
+      },
+      female: {
+        id: 'bystander-female',
+        speakerKind: 'bystanderFemale',
+        displayName: '路人女声',
+        source: 'pending',
+        prompt: BYSTANDER_PROMPT_TEMPLATE,
+        promptTemplate: BYSTANDER_PROMPT_TEMPLATE,
+        updatedAt: timestamp,
+        promptUpdatedAt: timestamp,
+      },
     },
     characterBindings: {},
     chapterBindings: {},
@@ -109,11 +138,16 @@ function migrateWork(work: Work): Work {
     changed = true
   } else {
     const audiobook = asRecord(work.audiobook)
+    const bystanderBindings = asRecord(audiobook.bystanderBindings)
     const characterBindings = asRecord(audiobook.characterBindings)
     const chapterBindings = asRecord(audiobook.chapterBindings)
     const segmentsByChapter = asRecord(audiobook.segmentsByChapter)
     const nextAudiobook: WorkAudiobookConfig = {
       narratorBinding: migrateBinding(audiobook.narratorBinding || defaultAudiobook.narratorBinding),
+      bystanderBindings: {
+        male: migrateBinding(bystanderBindings.male || defaultAudiobook.bystanderBindings.male),
+        female: migrateBinding(bystanderBindings.female || defaultAudiobook.bystanderBindings.female),
+      },
       characterBindings: Object.fromEntries(Object.entries(characterBindings).map(([key, value]) => [key, migrateBinding(value)])),
       chapterBindings: Object.fromEntries(Object.entries(chapterBindings).map(([chapterId, bindings]) => [
         chapterId,
@@ -126,7 +160,7 @@ function migrateWork(work: Work): Work {
       chapterAudio: asRecord(audiobook.chapterAudio) as WorkAudiobookConfig['chapterAudio'],
     }
     const narratorBinding = asRecord(audiobook.narratorBinding)
-    if (!audiobook.chapterBindings || !narratorBinding.promptTemplate || bindingNeedsPromptTemplateMigration(audiobook.narratorBinding) || Object.values(characterBindings).some(bindingNeedsPromptTemplateMigration) || Object.values(chapterBindings).some((bindings) => Object.values(asRecord(bindings)).some(bindingNeedsPromptTemplateMigration)) || Object.values(segmentsByChapter).some((segments) => Array.isArray(segments) && segments.some((segment) => typeof asRecord(segment).sourceStartOffset !== 'number' || typeof asRecord(segment).segmentationSource !== 'string'))) {
+    if (!audiobook.chapterBindings || !audiobook.bystanderBindings || !narratorBinding.promptTemplate || bindingNeedsPromptTemplateMigration(audiobook.narratorBinding) || Object.values(bystanderBindings).some(bindingNeedsPromptTemplateMigration) || Object.values(characterBindings).some(bindingNeedsPromptTemplateMigration) || Object.values(chapterBindings).some((bindings) => Object.values(asRecord(bindings)).some(bindingNeedsPromptTemplateMigration)) || Object.values(segmentsByChapter).some((segments) => Array.isArray(segments) && segments.some((segment) => typeof asRecord(segment).sourceStartOffset !== 'number' || typeof asRecord(segment).segmentationSource !== 'string'))) {
       work = { ...work, audiobook: nextAudiobook }
       changed = true
     }

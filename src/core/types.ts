@@ -168,7 +168,8 @@ export interface VoiceboxConfig {
 }
 
 export type VoiceBindingSource = 'profile' | 'sample' | 'pending'
-export type AudiobookSpeakerKind = 'narrator' | 'character'
+export type AudiobookSpeakerKind = 'narrator' | 'character' | 'bystanderMale' | 'bystanderFemale'
+export type BystanderVoiceKey = 'male' | 'female'
 export type ChapterAudioStatus = 'pending' | 'generating' | 'completed' | 'failed' | 'stale'
 export type AudiobookSegmentationSource = 'legacy' | 'ai' | 'rule'
 export type AudiobookAttributionSource = 'legacy' | 'ai' | 'rule' | 'llm' | 'manual'
@@ -263,6 +264,7 @@ export interface ChapterGenerationSnapshot {
 
 export interface WorkAudiobookConfig {
   narratorBinding: VoiceBinding
+  bystanderBindings: Record<BystanderVoiceKey, VoiceBinding>
   characterBindings: Record<string, VoiceBinding>
   chapterBindings: Record<string, Record<string, VoiceBinding>>
   segmentsByChapter: Record<string, AudiobookSegment[]>

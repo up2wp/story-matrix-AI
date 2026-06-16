@@ -29,6 +29,8 @@ export default function SegmentReviewTable({ segments, characters, onUpdate, onD
   const hasDirtySegments = dirtyIds.length > 0
   const speakerOptions = [
     { value: 'narrator', label: '旁白' },
+    { value: 'bystanderMale', label: '路人男声' },
+    { value: 'bystanderFemale', label: '路人女声' },
     ...characters.map((character) => ({ value: character.id, label: character.name })),
   ]
 
@@ -69,13 +71,17 @@ export default function SegmentReviewTable({ segments, characters, onUpdate, onD
         return (
         <Select
           style={{ width: '100%' }}
-          value={current.speakerKind === 'narrator' ? 'narrator' : current.characterId}
+          value={current.speakerKind === 'character' ? current.characterId : current.speakerKind}
           options={speakerOptions}
           onChange={(value) => {
             const character = characters.find((item) => item.id === value)
             updateDraft(segment.id, character
               ? { speakerKind: 'character', characterId: character.id, speakerName: character.name, needsReview: false, retryable: false }
-              : { speakerKind: 'narrator', characterId: undefined, speakerName: '旁白', needsReview: false, retryable: false })
+              : value === 'bystanderMale'
+                ? { speakerKind: 'bystanderMale', characterId: undefined, speakerName: '路人男声', needsReview: false, retryable: false }
+                : value === 'bystanderFemale'
+                  ? { speakerKind: 'bystanderFemale', characterId: undefined, speakerName: '路人女声', needsReview: false, retryable: false }
+                  : { speakerKind: 'narrator', characterId: undefined, speakerName: '旁白', needsReview: false, retryable: false })
           }}
         />
         )

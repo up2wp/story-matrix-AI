@@ -2,6 +2,7 @@ import type { AudiobookSegment, Chapter, VoiceBinding } from '@/core/types'
 
 export const CONTEXT_PLACEHOLDER = '【上下文】'
 export const TEXT_PLACEHOLDER = '【文本】'
+export const BYSTANDER_PROMPT_TEMPLATE = `当前语境：${CONTEXT_PLACEHOLDER}`
 
 export function validatePromptTemplate(template: string) {
   return template.includes(CONTEXT_PLACEHOLDER)

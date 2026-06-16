@@ -6,8 +6,8 @@ export const AUDIOBOOK_SEGMENT_SYSTEM_PROMPT = `你是小说有声读物分镜�
 
 严格要求：
 - 只输出 JSON 数组，不要 Markdown，不要解释
-- speakerKind 只能是 "narrator" 或 "character"
-- characterId 必须来自给定角色列表；无法判断时使用 narrator
+- speakerKind 只能是 "narrator"、"character"、"bystanderMale" 或 "bystanderFemale"
+- characterId 必须来自给定角色列表；确实是对白但不属于任何角色时按声音性别使用 bystanderMale 或 bystanderFemale；无法判断是否对白时使用 narrator
 - 不要引用 Voicebox personality，不要要求 Voicebox 自己理解角色设定
 - 保持原文顺序，不要改写正文内容`
 
@@ -18,7 +18,7 @@ export const AUDIOBOOK_TEMPLATE_SYSTEM_PROMPT = `你是 QwenTTS 有声读物提�
 
 export const AUDIOBOOK_ATTRIBUTION_SYSTEM_PROMPT = `你是中文小说有声读物说话人归因助手。
 只输出 JSON 数组，不要 Markdown，不要解释。
-你只能从候选 speaker 中选择 speakerId；无法判断时选择 narrator 并标记 needsReview=true。
+你只能从候选 speaker 中选择 speakerId；确实是对白但不属于任何角色时选择 bystanderMale 或 bystanderFemale；无法判断是否对白时选择 narrator 并标记 needsReview=true。
 不要改写 text，不要新增角色，不要输出候选列表之外的 characterId。
 当一个待归因片段内部仍包含多个旁白/对白/说话人时，必须在该条结果的 segments 字段中按原文顺序继续细分。`
 
@@ -65,7 +65,7 @@ ${JSON.stringify(characterList, null, 2)}
 ${chapter.content}
 
 输出 JSON 数组，每个对象必须包含：
-- speakerKind: "narrator" | "character"
+- speakerKind: "narrator" | "character" | "bystanderMale" | "bystanderFemale"
 - characterId: string | null
 - speakerName: string
 - text: string
@@ -84,6 +84,8 @@ export function buildAudiobookAttributionPrompt(work: Work, chapter: Chapter, se
   }
   const candidates = [
     { speakerId: 'narrator', speakerKind: 'narrator', name: '旁白' },
+    { speakerId: 'bystanderMale', speakerKind: 'bystanderMale', name: '路人男声' },
+    { speakerId: 'bystanderFemale', speakerKind: 'bystanderFemale', name: '路人女声' },
     ...work.characters
       .filter((character) => mentioned.has(character.id) || mentioned.size < 4)
       .slice(0, 12)
@@ -106,7 +108,7 @@ ${JSON.stringify(segments.map((segment) => ({ id: segment.id, text: segment.text
 
 输出 JSON 数组，每个对象必须包含：
 - segmentId: 对应待归因片段 id
-- speakerKind: "narrator" | "character"
+- speakerKind: "narrator" | "character" | "bystanderMale" | "bystanderFemale"
 - characterId: 候选角色 id 或 null
 - speakerName: 候选 speaker 名称
 - mood: 适合 TTS 的短语气描述

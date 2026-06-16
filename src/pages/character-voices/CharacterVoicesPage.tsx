@@ -22,6 +22,7 @@ export default function CharacterVoicesPage() {
     saveBinding,
     generatePromptTemplate,
     narratorBinding,
+    bystanderBindings,
     characterBindings,
     isBindingReady,
   } = useAudiobook()
@@ -66,6 +67,33 @@ export default function CharacterVoicesPage() {
             addVoiceUrl="/voices"
           />
         </Card>
+
+        {bystanderBindings && <Card size="small" title="路人声音">
+          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+            <VoiceBindingCard
+              binding={bystanderBindings.male}
+              profiles={profiles}
+              voices={voices}
+              ready={isBindingReady(bystanderBindings.male)}
+              onBindProfile={bindProfile}
+              onBindVoice={bindVoice}
+              onSavePrompt={saveBinding}
+              addVoiceUrl="/voices"
+              fixedPrompt
+            />
+            <VoiceBindingCard
+              binding={bystanderBindings.female}
+              profiles={profiles}
+              voices={voices}
+              ready={isBindingReady(bystanderBindings.female)}
+              onBindProfile={bindProfile}
+              onBindVoice={bindVoice}
+              onSavePrompt={saveBinding}
+              addVoiceUrl="/voices"
+              fixedPrompt
+            />
+          </Space>
+        </Card>}
 
         <Card size="small" title="角色声音" extra={<Text type="secondary">{currentWork.characters.length} 个角色</Text>}>
           {characterBindings.length ? (

@@ -75,6 +75,7 @@ function mergeAudiobook(current: unknown, patch: Record<string, unknown>): Recor
     ...patch,
     segmentsByChapter: mergeRecord(existing.segmentsByChapter, patch.segmentsByChapter),
     chapterAudio: mergeRecord(existing.chapterAudio, patch.chapterAudio),
+    bystanderBindings: mergeRecord(existing.bystanderBindings, patch.bystanderBindings),
     characterBindings: mergeRecord(existing.characterBindings, patch.characterBindings),
     chapterBindings: mergeRecord(existing.chapterBindings, patch.chapterBindings),
   }

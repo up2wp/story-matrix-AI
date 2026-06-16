@@ -46,6 +46,18 @@ function loadSegmentRulesForTest() {
 
 const { createRuleBasedSegments: createRuleBasedSegmentsForTest, segmentsNeedingAttribution: segmentsNeedingAttributionForTest } = loadSegmentRulesForTest()
 
+function loadWorksRouteForTest() {
+  const mergeRecordStart = worksRouteSource.indexOf('function mergeRecord')
+  const segmentPatchStart = worksRouteSource.indexOf('const SEGMENT_PATCH_FIELDS')
+  const executableSource = worksRouteSource.slice(mergeRecordStart, segmentPatchStart)
+  const { outputText } = ts.transpileModule(executableSource, {
+    compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2023 },
+  })
+  return Function(`${outputText}; return { mergeAudiobook }`)()
+}
+
+const { mergeAudiobook: mergeAudiobookForTest } = loadWorksRouteForTest()
+
 function loadSegmentUtilsForTest() {
   let nextId = 0
   const executableSource = segmentUtilsSource
@@ -65,10 +77,10 @@ function loadSegmentUtilsForTest() {
   const { outputText } = ts.transpileModule(executableSource, {
     compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2023 },
   })
-  return Function('nextId', `${outputText}; return { segmentContainsQuotes, applySegmentRefinementResults }`)(nextId)
+  return Function('nextId', `${outputText}; return { normalizeSegments, applyAttributionResults, segmentContainsQuotes, applySegmentRefinementResults }`)(nextId)
 }
 
-const { segmentContainsQuotes: segmentContainsQuotesForTest, applySegmentRefinementResults: applySegmentRefinementResultsForTest } = loadSegmentUtilsForTest()
+const { normalizeSegments: normalizeSegmentsForTest, applyAttributionResults: applyAttributionResultsForTest, segmentContainsQuotes: segmentContainsQuotesForTest, applySegmentRefinementResults: applySegmentRefinementResultsForTest } = loadSegmentUtilsForTest()
 
 function workForSegmentRules() {
   return {
@@ -180,6 +192,25 @@ assert.match(
   'work PATCH nested-key allowlist should persist audiobook state in works.data JSON',
 )
 
+const mergedBystanderBindings = mergeAudiobookForTest({
+  bystanderBindings: {
+    male: { id: 'bystander-male', profileId: 'old-male' },
+    female: { id: 'bystander-female', profileId: 'old-female' },
+  },
+}, {
+  bystanderBindings: {
+    male: { id: 'bystander-male', profileId: 'new-male' },
+  },
+})
+assert.deepEqual(
+  mergedBystanderBindings.bystanderBindings,
+  {
+    male: { id: 'bystander-male', profileId: 'new-male' },
+    female: { id: 'bystander-female', profileId: 'old-female' },
+  },
+  'audiobook PATCH merge should preserve the untouched bystander voice when saving only one side',
+)
+
 assert.match(
   dbSource,
   /CREATE TABLE IF NOT EXISTS userVoices/,
@@ -202,6 +233,18 @@ assert.match(
   storeSource,
   /chapterBindings: \{\}/,
   'legacy works should receive chapter binding defaults without deleting old audiobook data',
+)
+
+assert.match(
+  typesSource,
+  /AudiobookSpeakerKind = 'narrator' \| 'character' \| 'bystanderMale' \| 'bystanderFemale'/,
+  'audiobook speaker kind should include fixed male and female bystander voices',
+)
+
+assert.match(
+  storeSource,
+  /BYSTANDER_PROMPT_TEMPLATE = '当前语境：【上下文】'[\s\S]*bystanderBindings:[\s\S]*路人男声[\s\S]*路人女声/,
+  'new and migrated audiobook state should include fixed-prompt bystander voice bindings',
 )
 
 assert.match(
@@ -542,6 +585,18 @@ assert.match(
 
 assert.match(
   characterVoicesPageSource,
+  /bystanderBindings[\s\S]*路人声音[\s\S]*fixedPrompt/,
+  'character voice settings page should render fixed-prompt bystander voice cards below narrator voice',
+)
+
+assert.match(
+  voiceBindingCardSource,
+  /fixedPrompt[\s\S]*disabled=\{fixedPrompt\}[\s\S]*!fixedPrompt && <Space/,
+  'fixed-prompt voice binding cards should disable prompt editing and hide prompt save actions',
+)
+
+assert.match(
+  characterVoicesPageSource,
   /characterBindings/,
   'character voice settings page should load work characters for voice and prompt settings',
 )
@@ -789,6 +844,48 @@ assert.deepEqual(
   'AI refinement results should replace one quoted rule segment with ordered speaker-attributed subsegments and trim wrapping quotes',
 )
 
+const bystanderAttributedSegments = applyAttributionResultsForTest(workForSegmentRules(), [{
+  id: 'unknown-dialogue',
+  chapterId: 'chapter-1',
+  order: 0,
+  speakerKind: 'narrator',
+  speakerName: '旁白',
+  text: '别动，我只是路过。',
+  mood: '待归因对白',
+  prompt: '',
+  segmentationSource: 'rule',
+  attributionSource: 'rule',
+  attributionStatus: 'needs_review',
+  attributionConfidence: 0.45,
+  needsReview: true,
+  retryable: true,
+  status: 'pending',
+}], [{
+  segmentId: 'unknown-dialogue',
+  speakerKind: 'bystanderMale',
+  characterId: null,
+  speakerName: '路人男声',
+  mood: '警惕的陌生男性对白',
+  confidence: 0.84,
+  needsReview: false,
+}], 'chapter-1-attr-1')
+
+assert.deepEqual(
+  bystanderAttributedSegments.map((segment) => ({ speakerKind: segment.speakerKind, speakerName: segment.speakerName, characterId: segment.characterId, needsReview: segment.needsReview })),
+  [{ speakerKind: 'bystanderMale', speakerName: '路人男声', characterId: undefined, needsReview: false }],
+  'AI attribution should map real non-role dialogue to the fixed male bystander voice instead of narrator',
+)
+
+const bystanderNormalizedSegments = normalizeSegmentsForTest(workForSegmentRules(), chapterForSegmentRules('有人喊道：“快走。”'), [{
+  speakerKind: 'bystanderFemale',
+  characterId: null,
+  speakerName: '路人女声',
+  text: '快走。',
+  mood: '急促女性对白',
+}])
+assert.equal(bystanderNormalizedSegments[0].speakerKind, 'bystanderFemale', 'legacy AI segmentation parser should preserve female bystander speakerKind')
+assert.equal(bystanderNormalizedSegments[0].speakerName, '路人女声', 'female bystander segments should use the fixed display name')
+
 assert.match(
   audiobookPromptSource,
   /buildAudiobookAttributionPrompt/,
@@ -805,6 +902,18 @@ assert.match(
   audiobookPromptSource,
   /候选 speaker/,
   'small-window attribution prompt should constrain the model to candidate speakers',
+)
+
+assert.match(
+  audiobookPromptSource,
+  /bystanderMale[\s\S]*路人男声[\s\S]*bystanderFemale[\s\S]*路人女声/,
+  'small-window attribution prompt should include fixed bystander speaker candidates',
+)
+
+assert.match(
+  audiobookPromptSource,
+  /确实是对白但不属于任何角色时选择 bystanderMale 或 bystanderFemale/,
+  'AI attribution instructions should classify non-role dialogue into gendered bystander voices',
 )
 
 assert.match(
@@ -859,6 +968,12 @@ assert.match(
   segmentReviewTableSource,
   /重试归因/,
   'segment review table should expose per-segment attribution retry',
+)
+
+assert.match(
+  segmentReviewTableSource,
+  /bystanderMale[\s\S]*路人男声[\s\S]*bystanderFemale[\s\S]*路人女声/,
+  'segment review table should allow manually selecting bystander voices',
 )
 
 assert.match(

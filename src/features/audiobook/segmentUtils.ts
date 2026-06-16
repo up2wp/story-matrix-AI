@@ -1,6 +1,12 @@
 import type { AudiobookSegment, Chapter, Work } from '@/core/types'
 import { generateId } from '@/utils/id'
 
+function bystanderName(speakerKind?: string) {
+  if (speakerKind === 'bystanderMale') return '路人男声'
+  if (speakerKind === 'bystanderFemale') return '路人女声'
+  return undefined
+}
+
 interface RawSegment {
   speakerKind?: string
   characterId?: string | null
@@ -47,7 +53,8 @@ export function normalizeSegments(work: Work, chapter: Chapter, rawSegments: Raw
     .filter((segment) => segment.text?.trim())
     .map((segment, index) => {
       const character = segment.characterId ? work.characters.find((c) => c.id === segment.characterId) : undefined
-      const speakerKind = character ? 'character' : 'narrator'
+      const bystander = bystanderName(segment.speakerKind)
+      const speakerKind = character ? 'character' : bystander ? segment.speakerKind as AudiobookSegment['speakerKind'] : 'narrator'
       const mood = segment.mood?.trim() || '平稳叙述'
       const text = segment.text?.trim() || ''
       const previousText = rawSegments.slice(0, index).map((item) => item.text?.trim() || '').filter(Boolean)
@@ -63,16 +70,16 @@ export function normalizeSegments(work: Work, chapter: Chapter, rawSegments: Raw
         order: index,
         speakerKind,
         characterId: character?.id,
-        speakerName: character?.name || segment.speakerName?.trim() || '旁白',
+        speakerName: character?.name || bystander || segment.speakerName?.trim() || '旁白',
         text,
         mood,
         prompt: '',
         sourceStartOffset: sourceStartOffset >= 0 ? sourceStartOffset : undefined,
         sourceEndOffset: sourceStartOffset >= 0 ? sourceStartOffset + text.length : undefined,
         segmentationSource: 'ai',
-        attributionSource: character ? 'ai' : 'legacy',
+        attributionSource: character || bystander ? 'ai' : 'legacy',
         attributionStatus: 'attributed',
-        attributionConfidence: character ? 0.85 : 0.7,
+        attributionConfidence: character || bystander ? 0.85 : 0.7,
         needsReview: false,
         retryable: false,
         status: 'pending',
@@ -103,15 +110,16 @@ export function applyAttributionResults(work: Work, segments: AudiobookSegment[]
 
     const character = result.characterId ? work.characters.find((item) => item.id === result.characterId) : undefined
     const wantsCharacter = result.speakerKind === 'character'
+    const bystander = bystanderName(result.speakerKind)
     const confidence = typeof result.confidence === 'number' ? Math.max(0, Math.min(1, result.confidence)) : 0.5
     const validCharacter = wantsCharacter && character
     const needsReview = Boolean(result.needsReview || (wantsCharacter && !character) || confidence < 0.72)
 
     return {
       ...segment,
-      speakerKind: validCharacter ? 'character' : 'narrator',
+      speakerKind: validCharacter ? 'character' : bystander ? result.speakerKind as AudiobookSegment['speakerKind'] : 'narrator',
       characterId: validCharacter ? character.id : undefined,
-      speakerName: validCharacter ? character.name : '旁白',
+      speakerName: validCharacter ? character.name : bystander || '旁白',
       mood: result.mood?.trim() || segment.mood || '平稳叙述',
       attributionSource: 'llm',
       attributionStatus: needsReview ? 'needs_review' : 'attributed',
@@ -127,15 +135,16 @@ export function applyAttributionResults(work: Work, segments: AudiobookSegment[]
 function applySpeaker(work: Work, segment: AudiobookSegment, result: AttributionChildResult | AttributionResult, batchId: string): AudiobookSegment {
   const character = result.characterId ? work.characters.find((item) => item.id === result.characterId) : undefined
   const wantsCharacter = result.speakerKind === 'character'
+  const bystander = bystanderName(result.speakerKind)
   const confidence = typeof result.confidence === 'number' ? Math.max(0, Math.min(1, result.confidence)) : 0.5
   const validCharacter = wantsCharacter && character
   const needsReview = Boolean(result.needsReview || (wantsCharacter && !character) || confidence < 0.72)
 
   return {
     ...segment,
-    speakerKind: validCharacter ? 'character' : 'narrator',
+    speakerKind: validCharacter ? 'character' : bystander ? result.speakerKind as AudiobookSegment['speakerKind'] : 'narrator',
     characterId: validCharacter ? character.id : undefined,
-    speakerName: validCharacter ? character.name : '旁白',
+    speakerName: validCharacter ? character.name : bystander || '旁白',
     mood: result.mood?.trim() || segment.mood || '平稳叙述',
     attributionSource: 'llm',
     attributionStatus: needsReview ? 'needs_review' : 'attributed',
@@ -235,5 +244,5 @@ export function mergeConsecutiveSegments(segments: AudiobookSegment[], segmentId
 }
 
 export function segmentSpeakerKey(segment: Pick<AudiobookSegment, 'speakerKind' | 'characterId'>) {
-  return segment.speakerKind === 'narrator' ? 'narrator' : segment.characterId || 'unknown'
+  return segment.speakerKind === 'character' ? segment.characterId || 'unknown' : segment.speakerKind
 }

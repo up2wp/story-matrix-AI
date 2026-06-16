@@ -18,6 +18,7 @@ interface Props {
   onSavePrompt: (binding: VoiceBinding) => Promise<void>
   addVoiceUrl?: string
   onGeneratePrompt?: (characterId: string) => Promise<string>
+  fixedPrompt?: boolean
 }
 
 function profileId(profile: VoiceboxProfile) {
@@ -28,7 +29,7 @@ function profileName(profile: VoiceboxProfile) {
   return profile.name || profile.display_name || profileId(profile)
 }
 
-export default function VoiceBindingCard({ binding, profiles, voices = [], ready, onBindProfile, onBindVoice, onSavePrompt, addVoiceUrl = '/voices', onGeneratePrompt }: Props) {
+export default function VoiceBindingCard({ binding, profiles, voices = [], ready, onBindProfile, onBindVoice, onSavePrompt, addVoiceUrl = '/voices', onGeneratePrompt, fixedPrompt = false }: Props) {
   const navigate = useNavigate()
   const [prompt, setPrompt] = useState(binding.prompt)
   const [generating, setGenerating] = useState(false)
@@ -88,11 +89,11 @@ export default function VoiceBindingCard({ binding, profiles, voices = [], ready
             if (profile) void onBindProfile(binding, profile)
           }}
         />
-        <Input.TextArea rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="QwenTTS 朗读指导，需包含【上下文】；正文会单独传给 Voicebox text" />
-        <Space wrap>
+        <Input.TextArea rows={fixedPrompt ? 2 : 4} value={fixedPrompt ? binding.prompt : prompt} disabled={fixedPrompt} onChange={(event) => setPrompt(event.target.value)} placeholder="QwenTTS 朗读指导，需包含【上下文】；正文会单独传给 Voicebox text" />
+        {!fixedPrompt && <Space wrap>
           {binding.speakerKind === 'character' && onGeneratePrompt && <Button size="small" icon={<ExperimentOutlined />} loading={generating} onClick={handleGeneratePrompt}>AI 生成提示词</Button>}
           <Button size="small" onClick={() => onSavePrompt({ ...binding, prompt, promptTemplate: prompt, updatedAt: Date.now() })}>保存提示词</Button>
-        </Space>
+        </Space>}
         <Text type="secondary">参考音频上传已集中到「声音管理」，这里仅选择已有音色。</Text>
         <Button size="small" icon={<PlusOutlined />} onClick={() => navigate(addVoiceUrl)}>添加声音</Button>
       </Space>
