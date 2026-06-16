@@ -53,6 +53,12 @@ export function fillPromptTemplate(binding: VoiceBinding, chapter: Chapter, segm
   }
   const template = overridePrompt || binding.promptTemplate || binding.prompt
   if (!template.trim()) throw new Error(`${binding.displayName} 缺少提示词模板`)
+  if (binding.speakerKind === 'narrator') {
+    const narratorPrompt = removeSpeechTextPlaceholder(template)
+      .replace(new RegExp(`[ \\t]*当前语境[:：][ \\t]*${CONTEXT_PLACEHOLDER}[ \\t]*$`), '')
+      .trim()
+    return { instruct: narratorPrompt.slice(-limit), clipped: narratorPrompt.length > limit, hash: stableHash(narratorPrompt.slice(-limit)) }
+  }
   if (!validatePromptTemplate(template)) throw new Error(`${binding.displayName} 的提示词模板缺少占位符`)
   const context = contextBeforeSegment(chapter, segment)
   const cleanedTemplate = removeSpeechTextPlaceholder(template)

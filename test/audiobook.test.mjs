@@ -152,8 +152,8 @@ assert.doesNotMatch(
 
 assert.match(
   storeSource,
-  /function ensurePromptTemplatePlaceholder[\s\S]*template\.includes\('【上下文】'\)[\s\S]*`\$\{template\}。当前语境：【上下文】`/,
-  'legacy narrator prompts should migrate to include the required context placeholder',
+  /function ensurePromptTemplatePlaceholder[\s\S]*speakerKind === 'narrator'[\s\S]*当前语境\[:：\][\s\S]*【上下文】[\s\S]*template\.includes\('【上下文】'\)/,
+  'narrator prompts should migrate away from context placeholders while character prompts keep the required placeholder',
 )
 
 assert.match(
@@ -170,8 +170,8 @@ assert.match(
 
 assert.match(
   storeSource,
-  /prompt: `\$\{work\.seed\.tone \|\| '自然'\}、清晰、适合长篇小说旁白。当前语境：【上下文】`[\s\S]*promptTemplate: `\$\{work\.seed\.tone \|\| '自然'\}、清晰、适合长篇小说旁白。当前语境：【上下文】`/,
-  'new work audiobook defaults should include a valid narrator prompt template',
+  /prompt: `\$\{work\.seed\.tone \|\| '自然'\}、清晰、适合长篇小说旁白。`[\s\S]*promptTemplate: `\$\{work\.seed\.tone \|\| '自然'\}、清晰、适合长篇小说旁白。`/,
+  'new work audiobook defaults should use a fixed narrator prompt without context placeholders',
 )
 
 assert.match(
@@ -592,6 +592,12 @@ assert.match(
   promptTemplateUtilsSource,
   /if \(overridePrompt\?\.trim\(\)\)[\s\S]*return \{ instruct: prompt\.slice\(-limit\), clipped: prompt\.length > limit, hash: stableHash\(prompt\.slice\(-limit\)\) \}/,
   'editable row prompt should be treated as a ready Voicebox instruct without requiring template placeholders',
+)
+
+assert.match(
+  promptTemplateUtilsSource,
+  /binding\.speakerKind === 'narrator'[\s\S]*removeSpeechTextPlaceholder\(template\)[\s\S]*当前语境\[:：\][\s\S]*CONTEXT_PLACEHOLDER[\s\S]*return \{ instruct: narratorPrompt\.slice\(-limit\)/,
+  'narrator audio generation should use narrator prompt body directly without filling segment context',
 )
 
 assert.match(

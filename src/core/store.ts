@@ -8,14 +8,19 @@ function asRecord(value: unknown): LegacyRecord {
   return value && typeof value === 'object' ? value as LegacyRecord : {}
 }
 
-function ensurePromptTemplatePlaceholder(template: string) {
+function ensurePromptTemplatePlaceholder(template: string, speakerKind: unknown) {
   if (!template.trim()) return ''
+  if (speakerKind === 'narrator') return template.replace(/[ \t]*当前语境[:：][ \t]*【上下文】[ \t]*$/, '').trim()
   if (template.includes('【上下文】')) return template
   return `${template}。当前语境：【上下文】`
 }
 
 function bindingNeedsPromptTemplateMigration(binding: unknown) {
   const record = asRecord(binding)
+  if (record.speakerKind === 'narrator') {
+    return (typeof record.prompt === 'string' && record.prompt.includes('【上下文】'))
+      || (typeof record.promptTemplate === 'string' && record.promptTemplate.includes('【上下文】'))
+  }
   return (typeof record.prompt === 'string' && record.prompt.trim() && !record.prompt.includes('【上下文】'))
     || (typeof record.promptTemplate === 'string' && record.promptTemplate.trim() && !record.promptTemplate.includes('【上下文】'))
 }
@@ -30,8 +35,8 @@ function migrateWork(work: Work): Work {
       speakerKind: 'narrator',
       displayName: '旁白',
       source: 'pending',
-      prompt: `${work.seed.tone || '自然'}、清晰、适合长篇小说旁白。当前语境：【上下文】`,
-      promptTemplate: `${work.seed.tone || '自然'}、清晰、适合长篇小说旁白。当前语境：【上下文】`,
+      prompt: `${work.seed.tone || '自然'}、清晰、适合长篇小说旁白。`,
+      promptTemplate: `${work.seed.tone || '自然'}、清晰、适合长篇小说旁白。`,
       updatedAt: Date.now(),
       promptUpdatedAt: Date.now(),
     },
@@ -45,8 +50,8 @@ function migrateWork(work: Work): Work {
     const record = asRecord(binding)
     return {
       ...record,
-      prompt: ensurePromptTemplatePlaceholder(typeof record.prompt === 'string' ? record.prompt : ''),
-      promptTemplate: ensurePromptTemplatePlaceholder(typeof record.promptTemplate === 'string' ? record.promptTemplate : typeof record.prompt === 'string' ? record.prompt : ''),
+      prompt: ensurePromptTemplatePlaceholder(typeof record.prompt === 'string' ? record.prompt : '', record.speakerKind),
+      promptTemplate: ensurePromptTemplatePlaceholder(typeof record.promptTemplate === 'string' ? record.promptTemplate : typeof record.prompt === 'string' ? record.prompt : '', record.speakerKind),
       updatedAt: typeof record.updatedAt === 'number' ? record.updatedAt : Date.now(),
       promptUpdatedAt: typeof record.promptUpdatedAt === 'number' ? record.promptUpdatedAt : typeof record.updatedAt === 'number' ? record.updatedAt : Date.now(),
     } as unknown as VoiceBinding
