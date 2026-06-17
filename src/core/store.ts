@@ -1,37 +1,174 @@
 import { create } from 'zustand'
-import type { Work, AIConfig } from './types'
+import type { Work, AIConfig, WorkAudiobookConfig, Chapter, VoiceBinding, AudiobookSegment } from './types'
 import { db } from './db'
+
+type LegacyRecord = Record<string, unknown>
+
+const BYSTANDER_PROMPT_TEMPLATE = '当前语境：【上下文】'
+
+function asRecord(value: unknown): LegacyRecord {
+  return value && typeof value === 'object' ? value as LegacyRecord : {}
+}
+
+function ensurePromptTemplatePlaceholder(template: string, speakerKind: unknown) {
+  if (speakerKind === 'bystanderMale' || speakerKind === 'bystanderFemale') return BYSTANDER_PROMPT_TEMPLATE
+  if (!template.trim()) return ''
+  if (speakerKind === 'narrator') return template.replace(/[ \t]*当前语境[:：][ \t]*【上下文】[ \t]*$/, '').trim()
+  if (template.includes('【上下文】')) return template
+  return `${template}。当前语境：【上下文】`
+}
+
+function bindingNeedsPromptTemplateMigration(binding: unknown) {
+  const record = asRecord(binding)
+  if (record.speakerKind === 'bystanderMale' || record.speakerKind === 'bystanderFemale') {
+    return record.prompt !== BYSTANDER_PROMPT_TEMPLATE || record.promptTemplate !== BYSTANDER_PROMPT_TEMPLATE
+  }
+  if (record.speakerKind === 'narrator') {
+    return (typeof record.prompt === 'string' && record.prompt.includes('【上下文】'))
+      || (typeof record.promptTemplate === 'string' && record.promptTemplate.includes('【上下文】'))
+  }
+  return (typeof record.prompt === 'string' && record.prompt.trim() && !record.prompt.includes('【上下文】'))
+    || (typeof record.promptTemplate === 'string' && record.promptTemplate.trim() && !record.promptTemplate.includes('【上下文】'))
+}
 
 /** 清理旧版本遗留字段，补充新字段默认值 */
 function migrateWork(work: Work): Work {
   let changed = false
+  const timestamp = Date.now()
+
+  const defaultAudiobook: WorkAudiobookConfig = {
+    narratorBinding: {
+      id: 'narrator',
+      speakerKind: 'narrator',
+      displayName: '旁白',
+      source: 'pending',
+      prompt: `${work.seed.tone || '自然'}、清晰、适合长篇小说旁白。`,
+      promptTemplate: `${work.seed.tone || '自然'}、清晰、适合长篇小说旁白。`,
+      updatedAt: timestamp,
+      promptUpdatedAt: timestamp,
+    },
+    bystanderBindings: {
+      male: {
+        id: 'bystander-male',
+        speakerKind: 'bystanderMale',
+        displayName: '路人男声',
+        source: 'pending',
+        prompt: BYSTANDER_PROMPT_TEMPLATE,
+        promptTemplate: BYSTANDER_PROMPT_TEMPLATE,
+        updatedAt: timestamp,
+        promptUpdatedAt: timestamp,
+      },
+      female: {
+        id: 'bystander-female',
+        speakerKind: 'bystanderFemale',
+        displayName: '路人女声',
+        source: 'pending',
+        prompt: BYSTANDER_PROMPT_TEMPLATE,
+        promptTemplate: BYSTANDER_PROMPT_TEMPLATE,
+        updatedAt: timestamp,
+        promptUpdatedAt: timestamp,
+      },
+    },
+    characterBindings: {},
+    chapterBindings: {},
+    segmentsByChapter: {},
+    chapterAudio: {},
+  }
+
+  const migrateBinding = (binding: unknown): VoiceBinding => {
+    const record = asRecord(binding)
+    return {
+      ...record,
+      prompt: ensurePromptTemplatePlaceholder(typeof record.prompt === 'string' ? record.prompt : '', record.speakerKind),
+      promptTemplate: ensurePromptTemplatePlaceholder(typeof record.promptTemplate === 'string' ? record.promptTemplate : typeof record.prompt === 'string' ? record.prompt : '', record.speakerKind),
+      updatedAt: typeof record.updatedAt === 'number' ? record.updatedAt : Date.now(),
+      promptUpdatedAt: typeof record.promptUpdatedAt === 'number' ? record.promptUpdatedAt : typeof record.updatedAt === 'number' ? record.updatedAt : Date.now(),
+    } as unknown as VoiceBinding
+  }
+
+  const migrateSegment = (segment: unknown, chapter: Chapter | undefined): AudiobookSegment => {
+    const record = asRecord(segment)
+    const text = typeof record.text === 'string' ? record.text.trim() : ''
+    const sourceStartOffset = typeof record.sourceStartOffset === 'number'
+      ? record.sourceStartOffset
+      : chapter?.content?.indexOf(text)
+    return {
+      ...record,
+      prompt: typeof record.prompt === 'string' ? record.prompt : '',
+      sourceStartOffset: typeof sourceStartOffset === 'number' && sourceStartOffset >= 0 ? sourceStartOffset : undefined,
+      sourceEndOffset: typeof record.sourceEndOffset === 'number'
+        ? record.sourceEndOffset
+        : typeof sourceStartOffset === 'number' && sourceStartOffset >= 0 ? sourceStartOffset + text.length : undefined,
+      sourceParagraphIndex: typeof record.sourceParagraphIndex === 'number' ? record.sourceParagraphIndex : undefined,
+      segmentationSource: typeof record.segmentationSource === 'string' ? record.segmentationSource : 'legacy',
+      attributionSource: typeof record.attributionSource === 'string' ? record.attributionSource : 'legacy',
+      attributionStatus: typeof record.attributionStatus === 'string' ? record.attributionStatus : 'attributed',
+      attributionConfidence: typeof record.attributionConfidence === 'number' ? record.attributionConfidence : 1,
+      needsReview: typeof record.needsReview === 'boolean' ? record.needsReview : false,
+      retryable: typeof record.retryable === 'boolean' ? record.retryable : false,
+    } as unknown as AudiobookSegment
+  }
   // 清理约束的 scope 和 relatedOutlineIds
-  const constraints = work.constraints.map((c: any) => {
-    if ('scope' in c || 'relatedOutlineIds' in c) {
+  const constraints = work.constraints.map((constraint) => {
+    const record = asRecord(constraint)
+    if ('scope' in record || 'relatedOutlineIds' in record) {
       changed = true
-      const { scope, relatedOutlineIds, ...rest } = c
-      return rest
+      const { scope: _scope, relatedOutlineIds: _relatedOutlineIds, ...rest } = record
+      return rest as unknown as typeof constraint
     }
-    return c
+    return constraint
   })
   // 清理大纲节点的 constraintIds
-  const outline = work.outline.map((n: any) => {
-    if ('constraintIds' in n) {
+  const outline = work.outline.map((node) => {
+    const record = asRecord(node)
+    if ('constraintIds' in record) {
       changed = true
-      const { constraintIds, ...rest } = n
-      return rest
+      const { constraintIds: _constraintIds, ...rest } = record
+      return rest as unknown as typeof node
     }
-    return n
+    return node
   })
   // 补充事件簿默认值
   if (!work.eventLog) {
     work = { ...work, eventLog: [] }
     changed = true
   }
+  if (!work.audiobook) {
+    work = { ...work, audiobook: defaultAudiobook }
+    changed = true
+  } else {
+    const audiobook = asRecord(work.audiobook)
+    const bystanderBindings = asRecord(audiobook.bystanderBindings)
+    const characterBindings = asRecord(audiobook.characterBindings)
+    const chapterBindings = asRecord(audiobook.chapterBindings)
+    const segmentsByChapter = asRecord(audiobook.segmentsByChapter)
+    const nextAudiobook: WorkAudiobookConfig = {
+      narratorBinding: migrateBinding(audiobook.narratorBinding || defaultAudiobook.narratorBinding),
+      bystanderBindings: {
+        male: migrateBinding(bystanderBindings.male || defaultAudiobook.bystanderBindings.male),
+        female: migrateBinding(bystanderBindings.female || defaultAudiobook.bystanderBindings.female),
+      },
+      characterBindings: Object.fromEntries(Object.entries(characterBindings).map(([key, value]) => [key, migrateBinding(value)])),
+      chapterBindings: Object.fromEntries(Object.entries(chapterBindings).map(([chapterId, bindings]) => [
+        chapterId,
+        Object.fromEntries(Object.entries(asRecord(bindings)).map(([key, value]) => [key, migrateBinding(value)])),
+      ])),
+      segmentsByChapter: Object.fromEntries(Object.entries(segmentsByChapter).map(([chapterId, segments]) => {
+        const chapter = work.chapters.find((item) => item.id === chapterId)
+        return [chapterId, Array.isArray(segments) ? segments.map((segment) => migrateSegment(segment, chapter)) : []]
+      })),
+      chapterAudio: asRecord(audiobook.chapterAudio) as WorkAudiobookConfig['chapterAudio'],
+    }
+    const narratorBinding = asRecord(audiobook.narratorBinding)
+    if (!audiobook.chapterBindings || !audiobook.bystanderBindings || !narratorBinding.promptTemplate || bindingNeedsPromptTemplateMigration(audiobook.narratorBinding) || Object.values(bystanderBindings).some(bindingNeedsPromptTemplateMigration) || Object.values(characterBindings).some(bindingNeedsPromptTemplateMigration) || Object.values(chapterBindings).some((bindings) => Object.values(asRecord(bindings)).some(bindingNeedsPromptTemplateMigration)) || Object.values(segmentsByChapter).some((segments) => Array.isArray(segments) && segments.some((segment) => typeof asRecord(segment).sourceStartOffset !== 'number' || typeof asRecord(segment).segmentationSource !== 'string'))) {
+      work = { ...work, audiobook: nextAudiobook }
+      changed = true
+    }
+  }
   if (changed) {
     const migrated = { ...work, constraints, outline }
     // 异步持久化迁移结果
-    db.works.update(work.id, { constraints, outline }).catch(() => {})
+    db.works.update(work.id, { constraints, outline, eventLog: migrated.eventLog, audiobook: migrated.audiobook }).catch(() => {})
     return migrated
   }
   return work

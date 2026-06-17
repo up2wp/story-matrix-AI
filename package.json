@@ -8,7 +8,8 @@
     "dev:server": "cd server && npm run dev",
     "test:model-config": "node test/model-config.test.mjs",
     "test:user-management": "node test/user-management.test.mjs",
-    "test": "npm run test:model-config && npm run test:user-management",
+    "test:audiobook": "node test/audiobook.test.mjs",
+    "test": "npm run test:model-config && npm run test:user-management && npm run test:audiobook",
     "build": "tsc -b && vite build && cd server && npm run build",
     "lint": "eslint .",
     "preview": "vite preview"

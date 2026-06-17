@@ -151,6 +151,127 @@ export interface EventLogConfig {
   extractPrompt: string
 }
 
+// --- 有声读物 / Voicebox ---
+
+export interface VoiceboxConfig {
+  serviceUrl: string
+  authType: 'none' | 'bearer' | 'api-key' | 'custom-header'
+  bearerToken?: string
+  apiKey?: string
+  customHeaderName?: string
+  customHeaderValue?: string
+  defaultEngine: string
+  defaultLanguage: string
+  defaultChunking: boolean
+  defaultCrossfade: number
+  defaultNormalize: boolean
+  generationConcurrency: number
+}
+
+export type VoiceBindingSource = 'profile' | 'sample' | 'pending'
+export type AudiobookSpeakerKind = 'narrator' | 'character' | 'bystanderMale' | 'bystanderFemale'
+export type BystanderVoiceKey = 'male' | 'female'
+export type ChapterAudioStatus = 'pending' | 'generating' | 'completed' | 'failed' | 'stale'
+export type AudiobookSegmentationSource = 'legacy' | 'ai' | 'rule'
+export type AudiobookAttributionSource = 'legacy' | 'ai' | 'rule' | 'llm' | 'manual'
+export type AudiobookAttributionStatus = 'pending' | 'attributing' | 'attributed' | 'needs_review' | 'failed' | 'manual'
+
+export interface UserVoiceAsset {
+  id: string
+  ownerId: string
+  displayName: string
+  profileId: string
+  profileName?: string
+  sampleId?: string
+  referenceText: string
+  consentConfirmedAt: number
+  createdAt: number
+  updatedAt: number
+  deletedAt?: number | null
+}
+
+export interface VoiceBinding {
+  id: string
+  speakerKind: AudiobookSpeakerKind
+  characterId?: string
+  displayName: string
+  source: VoiceBindingSource
+  soundId?: string
+  profileId?: string
+  profileName?: string
+  sampleId?: string
+  prompt: string
+  promptTemplate?: string
+  referenceText?: string
+  updatedAt: number
+  promptUpdatedAt?: number
+}
+
+export interface AudiobookSegment {
+  id: string
+  chapterId: string
+  order: number
+  speakerKind: AudiobookSpeakerKind
+  characterId?: string
+  speakerName: string
+  text: string
+  mood: string
+  prompt: string
+  sourceStartOffset?: number
+  sourceEndOffset?: number
+  sourceParagraphIndex?: number
+  segmentationSource?: AudiobookSegmentationSource
+  attributionSource?: AudiobookAttributionSource
+  attributionStatus?: AudiobookAttributionStatus
+  attributionConfidence?: number
+  attributionBatchId?: string
+  attributionError?: string
+  needsReview?: boolean
+  retryable?: boolean
+  textEditedAt?: number
+  speakerEditedAt?: number
+  promptEditedAt?: number
+  segmentVersion?: number
+  generationId?: string
+  status: ChapterAudioStatus
+  error?: string
+  generatedWith?: SegmentGenerationSnapshot
+}
+
+export interface SegmentGenerationSnapshot {
+  bindingUpdatedAt?: number
+  promptUpdatedAt?: number
+  narratorUpdatedAt?: number
+  textHash: string
+  instructHash: string
+}
+
+export interface ChapterAudioState {
+  chapterId: string
+  status: ChapterAudioStatus
+  segmentIds: string[]
+  generationIds: string[]
+  updatedAt: number
+  error?: string
+  generatedWith?: ChapterGenerationSnapshot
+}
+
+export interface ChapterGenerationSnapshot {
+  narratorUpdatedAt?: number
+  narratorPromptUpdatedAt?: number
+  roleVersions: Record<string, number | undefined>
+  segmentVersion: string
+}
+
+export interface WorkAudiobookConfig {
+  narratorBinding: VoiceBinding
+  bystanderBindings: Record<BystanderVoiceKey, VoiceBinding>
+  characterBindings: Record<string, VoiceBinding>
+  chapterBindings: Record<string, Record<string, VoiceBinding>>
+  segmentsByChapter: Record<string, AudiobookSegment[]>
+  chapterAudio: Record<string, ChapterAudioState>
+}
+
 // --- 作品 ---
 
 export interface Work {
@@ -169,6 +290,7 @@ export interface Work {
   chapters: Chapter[]
   eventLog?: EventLogEntry[]
   eventLogConfig?: EventLogConfig
+  audiobook?: WorkAudiobookConfig
 }
 
 // --- AI 相关 ---
@@ -199,4 +321,5 @@ export interface SystemConfig {
   id: 'singleton'
   registrationEnabled: boolean
   aiConfig?: AIConfig
+  voiceboxConfig?: VoiceboxConfig
 }

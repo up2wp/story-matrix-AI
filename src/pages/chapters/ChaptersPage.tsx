@@ -26,6 +26,7 @@ import {
   PlusOutlined,
 } from '@ant-design/icons'
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
+import { useSearchParams } from 'react-router'
 import type { Chapter } from '@/core/types'
 import { generateId } from '@/utils/id'
 import { useStore } from '@/core/store'
@@ -37,6 +38,7 @@ import { CHAPTER_SYSTEM_PROMPT, buildChapterPrompt, buildExtractEventsPrompt, bu
 import { DEFAULT_EVENT_LOG_CONFIG } from '@/features/seed/options'
 import type { EventLogEntry, EventLogConfig } from '@/core/types'
 import RichEditor from '@/components/editor/RichEditor'
+import ChapterAudiobookPanel from './ChapterAudiobookPanel'
 
 const { Title, Text } = Typography
 
@@ -55,6 +57,7 @@ export default function ChaptersPage() {
   const [countdown, setCountdown] = useState(0)
   const [eventLogOpen, setEventLogOpen] = useState(false)
   const [editingPrompt, setEditingPrompt] = useState<string | null>(null)
+  const [searchParams] = useSearchParams()
   const [directionOpen, setDirectionOpen] = useState(false)
   const [directionDraft, setDirectionDraft] = useState('')
   const directionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -76,6 +79,11 @@ export default function ChaptersPage() {
       notification.destroy('auto-continue')
     }
   }, [])
+
+  useEffect(() => {
+    const chapterId = searchParams.get('chapterId')
+    if (chapterId) setActiveChapterId(chapterId)
+  }, [searchParams])
 
   const chapters = currentWork?.chapters ?? []
   const outline = currentWork?.outline ?? []
@@ -530,12 +538,10 @@ export default function ChaptersPage() {
       const currentOutline = work.outline ?? []
       const currentChapters = work.chapters ?? []
       let newNodeId = generateId()
-      let parentNodeId: string | undefined
 
       if (qwMode === 'newVolume') {
         // 新建卷 + 章
         const volId = generateId()
-        parentNodeId = volId
         const volOrder = currentOutline.filter((n) => n.level === 'volume').length
         const volNode = {
           id: volId,
@@ -569,7 +575,6 @@ export default function ChaptersPage() {
           setQwLoading(false)
           return
         }
-        parentNodeId = lastVol.id
         const siblings = currentOutline.filter((n) => n.level === 'chapter' && n.parentId === lastVol.id)
         const chOrder = lastVol.order + siblings.length + 1
         const chNode = {
@@ -969,7 +974,7 @@ export default function ChaptersPage() {
 
             {/* 正文编辑器 */}
             <Card styles={{ body: { padding: 0, flex: 1, display: 'flex', flexDirection: 'column' } }}
-              style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}
+              style={{ flex: '1 1 320px', display: 'flex', flexDirection: 'column', minHeight: 240 }}
             >
               <RichEditor
                 content={writingChapterId === activeChapter.id ? (streamingContent ?? activeChapter.content) : activeChapter.content}
@@ -978,6 +983,14 @@ export default function ChaptersPage() {
                 height="100%"
               />
             </Card>
+
+            {currentWork && (
+              <ChapterAudiobookPanel
+                work={currentWork}
+                chapter={activeChapter}
+                writing={writingChapterId === activeChapter.id}
+              />
+            )}
           </div>
         )}
       </div>

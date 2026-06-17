@@ -13,8 +13,10 @@ import SeedPage from '@/pages/seed/SeedPage'
 import WorldPage from '@/pages/world/WorldPage'
 import OutlinePage from '@/pages/outline/OutlinePage'
 import ConstraintsPage from '@/pages/constraints/ConstraintsPage'
+import CharacterVoicesPage from '@/pages/character-voices/CharacterVoicesPage'
 import ChaptersPage from '@/pages/chapters/ChaptersPage'
 import PreviewPage from '@/pages/preview/PreviewPage'
+import VoicesPage from '@/pages/voices/VoicesPage'
 import { useAuthStore } from '@/core/auth-store'
 import { useStore } from '@/core/store'
 import { useSystemConfigStore } from '@/core/system-config-store'
@@ -45,8 +47,10 @@ export default function App() {
             <Route path="/world" element={<WorldPage />} />
             <Route path="/outline" element={<OutlinePage />} />
             <Route path="/constraints" element={<ConstraintsPage />} />
+            <Route path="/character-voices" element={<CharacterVoicesPage />} />
             <Route path="/chapters" element={<ChaptersPage />} />
             <Route path="/preview" element={<PreviewPage />} />
+            <Route path="/voices" element={<VoicesPage />} />
             <Route element={<AdminRoute><Outlet /></AdminRoute>}>
               <Route path="/admin" element={<AdminPage />} />
             </Route>

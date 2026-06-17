@@ -1018,7 +1018,7 @@ export default function OutlinePage() {
       const newOutline = [...outline, ...newNodes]
       await persistOutline(newOutline)
       // AI 面板显示修正后的结果
-      const correctedText = `已为「${addChaptersVolume.title}」生成 ${newNodes.length} 个章节：\n\n${newNodes.map((n, i) => `${n.title}\n${n.summary}`).join('\n\n')}`
+      const correctedText = `已为「${addChaptersVolume.title}」生成 ${newNodes.length} 个章节：\n\n${newNodes.map((n) => `${n.title}\n${n.summary}`).join('\n\n')}`
       setAIStream(false, correctedText)
       message.success(`已为「${addChaptersVolume.title}」添加 ${newNodes.length} 个章节`)
     } catch (err: any) {

@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 
 const aiClient = await readFile(new URL('../src/ai/client.ts', import.meta.url), 'utf8')
 const adminPage = await readFile(new URL('../src/pages/admin/AdminPage.tsx', import.meta.url), 'utf8')
+const aiRoute = await readFile(new URL('../server/src/routes/ai.ts', import.meta.url), 'utf8')
 
 assert.match(
   aiClient,
@@ -32,6 +33,24 @@ assert.match(
   adminPage,
   /fetch\(`\/api\/ai\/models`/,
   'Model settings should support loading provider model options through the backend proxy',
+)
+
+assert.match(
+  aiRoute,
+  /safeGenerationParams/,
+  'AI proxy should forward only whitelisted generation parameters to the provider',
+)
+
+assert.match(
+  aiRoute,
+  /max_tokens/,
+  'AI proxy should forward max_tokens so small-window attribution can bound output size',
+)
+
+assert.match(
+  aiRoute,
+  /AI_UPSTREAM_TIMEOUT_MS/,
+  'AI proxy should enforce a server-side upstream timeout',
 )
 
 console.log('model-config behavior assertions passed')

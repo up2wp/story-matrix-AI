@@ -63,6 +63,72 @@ function workToRow(work: WorkInput): WorkRow {
   return { id, ownerId, shared: shared ? 1 : 0, title, createdAt, updatedAt, data: JSON.stringify(rest) }
 }
 
+function mergeRecord(current: unknown, patch: unknown) {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return current
+  return { ...((current && typeof current === 'object' && !Array.isArray(current)) ? current as Record<string, unknown> : {}), ...patch as Record<string, unknown> }
+}
+
+function mergeAudiobook(current: unknown, patch: Record<string, unknown>): Record<string, unknown> {
+  const existing = current && typeof current === 'object' && !Array.isArray(current) ? current as Record<string, unknown> : {}
+  return {
+    ...existing,
+    ...patch,
+    segmentsByChapter: mergeRecord(existing.segmentsByChapter, patch.segmentsByChapter),
+    chapterAudio: mergeRecord(existing.chapterAudio, patch.chapterAudio),
+    bystanderBindings: mergeRecord(existing.bystanderBindings, patch.bystanderBindings),
+    characterBindings: mergeRecord(existing.characterBindings, patch.characterBindings),
+    chapterBindings: mergeRecord(existing.chapterBindings, patch.chapterBindings),
+  }
+}
+
+const SEGMENT_PATCH_FIELDS = new Set([
+  'speakerKind',
+  'characterId',
+  'speakerName',
+  'text',
+  'mood',
+  'prompt',
+  'attributionSource',
+  'attributionStatus',
+  'attributionConfidence',
+  'attributionBatchId',
+  'attributionError',
+  'needsReview',
+  'retryable',
+  'textEditedAt',
+  'speakerEditedAt',
+  'promptEditedAt',
+  'generationId',
+  'status',
+  'error',
+  'generatedWith',
+])
+
+function applySegmentPatch(audiobook: Record<string, unknown>, segmentPatch: Record<string, unknown>): Record<string, unknown> {
+  const chapterId = typeof segmentPatch.chapterId === 'string' ? segmentPatch.chapterId : ''
+  const segmentId = typeof segmentPatch.segmentId === 'string' ? segmentPatch.segmentId : ''
+  const fields = segmentPatch.fields && typeof segmentPatch.fields === 'object' && !Array.isArray(segmentPatch.fields) ? segmentPatch.fields as Record<string, unknown> : {}
+  const baseVersion = typeof segmentPatch.baseVersion === 'number' ? segmentPatch.baseVersion : undefined
+  if (!chapterId || !segmentId || !Object.keys(fields).length) throw new Error('缺少分段 patch 参数')
+  const segmentsByChapter = mergeRecord(audiobook.segmentsByChapter, {}) as Record<string, unknown>
+  const chapterSegments = Array.isArray(segmentsByChapter[chapterId]) ? segmentsByChapter[chapterId] as Record<string, unknown>[] : []
+  const targetIndex = chapterSegments.findIndex((segment) => segment.id === segmentId)
+  if (targetIndex < 0) throw new Error('分段不存在')
+  const target = chapterSegments[targetIndex]
+  const currentVersion = typeof target.segmentVersion === 'number' ? target.segmentVersion : 0
+  if (typeof baseVersion === 'number' && baseVersion !== currentVersion) throw new Error('分段已更新，请刷新后重试')
+  const allowedFields = Object.fromEntries(Object.entries(fields).filter(([key]) => SEGMENT_PATCH_FIELDS.has(key)))
+  if (!Object.keys(allowedFields).length) throw new Error('无有效分段字段')
+  const updatedSegment = { ...target, ...allowedFields, segmentVersion: currentVersion + 1 }
+  return {
+    ...audiobook,
+    segmentsByChapter: {
+      ...segmentsByChapter,
+      [chapterId]: chapterSegments.map((segment, index) => index === targetIndex ? updatedSegment : segment),
+    },
+  }
+}
+
 // GET /api/works — 列出自己的作品 + 他人分享作品摘要
 router.get('/', (req, res) => {
   const currentUser = getAuthenticatedUser(req as unknown as AuthenticatedRequest)
@@ -100,6 +166,28 @@ router.post('/', (req, res) => {
   res.status(201).json(rowToWork(row))
 })
 
+router.patch('/:id/audiobook', (req, res) => {
+  const currentUser = getAuthenticatedUser(req as unknown as AuthenticatedRequest)
+  const existing = db.prepare('SELECT * FROM works WHERE id = ?').get(req.params.id) as WorkRow | undefined
+  if (!existing) return res.status(404).json({ error: '作品不存在' })
+  if (existing.ownerId !== currentUser.id) return res.status(403).json({ error: '无权修改该作品' })
+  const existingData = JSON.parse(existing.data)
+  const audiobookChanges = req.body as Record<string, unknown>
+  const updatedAt = Date.now()
+  const { segmentPatch, ...audiobookPatch } = audiobookChanges
+  let nextAudiobook = mergeAudiobook(existingData.audiobook, audiobookPatch)
+  if (segmentPatch && typeof segmentPatch === 'object' && !Array.isArray(segmentPatch)) {
+    try {
+      nextAudiobook = applySegmentPatch(nextAudiobook, segmentPatch as Record<string, unknown>)
+    } catch (error) {
+      return res.status(error instanceof Error && error.message.includes('已更新') ? 409 : 400).json({ error: error instanceof Error ? error.message : '分段保存失败' })
+    }
+  }
+  const merged = { ...existingData, audiobook: nextAudiobook }
+  db.prepare('UPDATE works SET updatedAt = ?, data = ? WHERE id = ?').run(updatedAt, JSON.stringify(merged), req.params.id)
+  res.json({ audiobook: merged.audiobook, updatedAt })
+})
+
 // PATCH /api/works/:id — 部分更新
 router.patch('/:id', (req, res) => {
   const currentUser = getAuthenticatedUser(req as unknown as AuthenticatedRequest)
@@ -120,7 +208,7 @@ router.patch('/:id', (req, res) => {
   }
 
   // 嵌套字段合并到 data JSON
-  const nestedKeys = ['seed', 'characters', 'settings', 'constraints', 'storylines', 'outline', 'chapters', 'eventLog', 'eventLogConfig']
+  const nestedKeys = ['seed', 'characters', 'settings', 'constraints', 'storylines', 'outline', 'chapters', 'eventLog', 'eventLogConfig', 'audiobook']
   const hasNested = nestedKeys.some((k) => k in fields)
   if (hasNested) {
     const existingData = JSON.parse(existing.data)

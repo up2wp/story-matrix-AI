@@ -41,7 +41,31 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS systemConfig (
     id TEXT PRIMARY KEY CHECK (id = 'singleton'),
     registrationEnabled INTEGER NOT NULL DEFAULT 0,
-    aiConfig TEXT
+    aiConfig TEXT,
+    voiceboxConfig TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS userVoices (
+    id TEXT PRIMARY KEY,
+    ownerId TEXT NOT NULL,
+    displayName TEXT NOT NULL,
+    profileId TEXT NOT NULL,
+    profileName TEXT,
+    sampleId TEXT,
+    referenceText TEXT NOT NULL,
+    consentConfirmedAt INTEGER NOT NULL,
+    createdAt INTEGER NOT NULL,
+    updatedAt INTEGER NOT NULL,
+    deletedAt INTEGER,
+    FOREIGN KEY (ownerId) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS voiceboxGenerations (
+    generationId TEXT PRIMARY KEY,
+    ownerId TEXT NOT NULL,
+    profileId TEXT NOT NULL,
+    createdAt INTEGER NOT NULL,
+    FOREIGN KEY (ownerId) REFERENCES users(id)
   );
 `)
 
@@ -55,6 +79,37 @@ export function migrateDatabase(database: DatabaseInstance = db) {
   if (!columnExists(database, 'users', 'deletedAt')) {
     database.prepare('ALTER TABLE users ADD COLUMN deletedAt INTEGER').run()
   }
+
+  if (!columnExists(database, 'systemConfig', 'voiceboxConfig')) {
+    database.prepare('ALTER TABLE systemConfig ADD COLUMN voiceboxConfig TEXT').run()
+  }
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS userVoices (
+      id TEXT PRIMARY KEY,
+      ownerId TEXT NOT NULL,
+      displayName TEXT NOT NULL,
+      profileId TEXT NOT NULL,
+      profileName TEXT,
+      sampleId TEXT,
+      referenceText TEXT NOT NULL,
+      consentConfirmedAt INTEGER NOT NULL,
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL,
+      deletedAt INTEGER,
+      FOREIGN KEY (ownerId) REFERENCES users(id)
+    )
+  `)
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS voiceboxGenerations (
+      generationId TEXT PRIMARY KEY,
+      ownerId TEXT NOT NULL,
+      profileId TEXT NOT NULL,
+      createdAt INTEGER NOT NULL,
+      FOREIGN KEY (ownerId) REFERENCES users(id)
+    )
+  `)
 
   database.prepare("UPDATE users SET role = 'owner' WHERE username = 'admin' AND role = 'admin'").run()
 }

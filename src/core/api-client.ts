@@ -41,7 +41,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 
 // 通用表操作工厂
 function createTable<T extends { id: string }>(resource: string) {
-  return {
+  const table = {
     get: (id: string) => request<T | undefined>(`/${resource}/${id}`),
 
     put: (obj: T) => request<T>(`/${resource}/${obj.id}`, {
@@ -76,6 +76,7 @@ function createTable<T extends { id: string }>(resource: string) {
       }),
     }),
   }
+  return table
 }
 
 export const db = {
@@ -83,7 +84,17 @@ export const db = {
   delete: async () => { /* 无操作 */ },
 
   users: createTable<any>('users'),
-  works: createTable<any>('works'),
+  works: {
+    ...createTable<any>('works'),
+    updateAudiobook: (id: string, audiobookChanges: any) => request<any>(`/works/${id}/audiobook`, {
+      method: 'PATCH',
+      body: JSON.stringify(audiobookChanges),
+    }),
+    patchAudiobookSegment: (id: string, segmentPatch: any) => request<any>(`/works/${id}/audiobook`, {
+      method: 'PATCH',
+      body: JSON.stringify({ segmentPatch }),
+    }),
+  },
 
   systemConfig: {
     get: (_id: string) => request<any>('/system-config'),
