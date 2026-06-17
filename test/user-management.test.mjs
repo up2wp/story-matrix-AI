@@ -7,6 +7,8 @@ const authRouteSource = await readFile(new URL('../server/src/routes/auth.ts', i
 const usersRouteSource = await readFile(new URL('../server/src/routes/users.ts', import.meta.url), 'utf8')
 const worksRouteSource = await readFile(new URL('../server/src/routes/works.ts', import.meta.url), 'utf8')
 const authStoreSource = await readFile(new URL('../src/core/auth-store.ts', import.meta.url), 'utf8')
+const loginPageSource = await readFile(new URL('../src/pages/login/LoginPage.tsx', import.meta.url), 'utf8')
+const worksPageSource = await readFile(new URL('../src/pages/works/WorksPage.tsx', import.meta.url), 'utf8')
 const adminPageSource = await readFile(new URL('../src/pages/admin/AdminPage.tsx', import.meta.url), 'utf8')
 const topBarSource = await readFile(new URL('../src/components/layout/TopBar.tsx', import.meta.url), 'utf8')
 const adminRouteSource = await readFile(new URL('../src/components/auth/AdminRoute.tsx', import.meta.url), 'utf8')
@@ -86,14 +88,14 @@ assert.match(
 
 assert.match(
   worksRouteSource,
-  /WHERE ownerId = \? OR shared = 1/,
-  'work list should only expose own works plus shared works',
+  /currentUser\.role === 'owner' \|\| currentUser\.role === 'admin'/,
+  'owners and admins should be able to list all users works',
 )
 
 assert.match(
   worksRouteSource,
-  /function rowToWorkSummary/,
-  'shared non-owned works should be summarized without serialized content',
+  /access === 'none'/,
+  'shared non-owned works should be readable instead of limited to title-only summaries',
 )
 
 assert.match(
@@ -118,6 +120,36 @@ assert.match(
   authStoreSource,
   /\/api\/auth\/profile/,
   'frontend profile updates should call the server endpoint',
+)
+
+assert.match(
+  loginPageSource,
+  /useEffect\(\(\) => \{\s*loadConfig\(\)/s,
+  'login page should load public system config before login so enabled registration is visible immediately',
+)
+
+assert.match(
+  worksPageSource,
+  /user\.role === 'owner' \|\| user\.role === 'admin'/,
+  'works page should treat owners and admins as privileged viewers',
+)
+
+assert.match(
+  worksPageSource,
+  /title: '创建人'/,
+  'works list should show creator information for privileged viewers',
+)
+
+assert.match(
+  worksPageSource,
+  /title: '进度\/阶段'/,
+  'works list should show progress or stage information',
+)
+
+assert.doesNotMatch(
+  worksPageSource,
+  /<Tag>仅标题<\/Tag>/,
+  'works page should not block privileged or shared records with a title-only action',
 )
 
 assert.match(

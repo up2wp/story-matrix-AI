@@ -41,18 +41,9 @@ function rowToWork(row: WorkRow) {
   }
 }
 
-function rowToWorkSummary(row: WorkRow) {
-  return {
-    id: row.id,
-    shared: Boolean(row.shared),
-    title: row.title,
-  }
-}
-
 function canAccessWork(user: CurrentUser, row: WorkRow) {
   if (row.ownerId === user.id) return 'owner'
-  if (row.shared && user.role === 'admin') return 'admin-summary'
-  if (row.shared && user.role === 'owner') return 'admin-summary'
+  if (user.role === 'owner' || user.role === 'admin') return 'admin'
   if (row.shared) return 'shared'
   return 'none'
 }
@@ -129,11 +120,13 @@ function applySegmentPatch(audiobook: Record<string, unknown>, segmentPatch: Rec
   }
 }
 
-// GET /api/works — 列出自己的作品 + 他人分享作品摘要
+// GET /api/works — 普通用户列出自己的作品 + 分享作品；拥有者和管理员列出全部作品
 router.get('/', (req, res) => {
   const currentUser = getAuthenticatedUser(req as unknown as AuthenticatedRequest)
-  const rows = db.prepare('SELECT * FROM works WHERE ownerId = ? OR shared = 1').all(currentUser.id) as WorkRow[]
-  res.json(rows.map((row) => (row.ownerId === currentUser.id ? rowToWork(row) : rowToWorkSummary(row))))
+  const rows = currentUser.role === 'owner' || currentUser.role === 'admin'
+    ? db.prepare('SELECT * FROM works').all() as WorkRow[]
+    : db.prepare('SELECT * FROM works WHERE ownerId = ? OR shared = 1').all(currentUser.id) as WorkRow[]
+  res.json(rows.map(rowToWork))
 })
 
 // GET /api/works/count?ownerId=X — 统计作品数
@@ -152,7 +145,7 @@ router.get('/:id', (req, res) => {
   const row = db.prepare('SELECT * FROM works WHERE id = ?').get(req.params.id) as WorkRow | undefined
   if (!row) return res.status(404).json({ error: '作品不存在' })
   const access = canAccessWork(currentUser, row)
-  if (access === 'none' || access === 'admin-summary') return res.status(403).json({ error: '无权查看该作品内容' })
+  if (access === 'none') return res.status(403).json({ error: '无权查看该作品内容' })
   res.json(rowToWork(row))
 })
 

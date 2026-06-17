@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router'
 import { Form, Input, Button, Card, Typography, message } from 'antd'
 import { UserOutlined, LockOutlined } from '@ant-design/icons'
@@ -16,6 +16,10 @@ export default function LoginPage() {
   const from = (location.state as { from?: Location })?.from?.pathname || '/works'
 
   const loadConfig = useSystemConfigStore(s => s.loadConfig)
+
+  useEffect(() => {
+    loadConfig()
+  }, [loadConfig])
 
   const onFinish = async (values: { username: string; password: string }) => {
     setLoading(true)

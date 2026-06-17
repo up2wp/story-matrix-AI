@@ -15,6 +15,14 @@ interface WorkItem extends Work {
   ownerName?: string
 }
 
+function getWorkProgress(work: WorkItem) {
+  if (work.chapters?.length) return `章节丰盈（${work.chapters.length} 章）`
+  if (work.constraints?.length) return `核心约束（${work.constraints.length} 条）`
+  if (work.outline?.length) return '主线大纲'
+  if (work.settings?.length) return '世界构建'
+  return '故事萌芽'
+}
+
 export default function WorksPage() {
   const navigate = useNavigate()
   const user = useAuthStore(s => s.user)
@@ -30,8 +38,8 @@ export default function WorksPage() {
       const allWorks = await db.works.toArray()
       let accessible: WorkItem[]
 
-      if (user.role === 'admin') {
-        // 管理员看到所有作品
+      if (user.role === 'owner' || user.role === 'admin') {
+        // 拥有者和管理员看到所有作品
         const users = await db.users.toArray()
         const userMap = new Map(users.map(u => [u.id, u.displayName]))
         accessible = allWorks.map(w => ({ ...w, ownerName: userMap.get(w.ownerId) || '未知' }))
@@ -93,6 +101,8 @@ export default function WorksPage() {
   }
 
   const isOwner = (work: WorkItem) => user && work.ownerId === user.id
+  const canManageAllWorks = user?.role === 'owner' || user?.role === 'admin'
+  const canView = (work: WorkItem) => isOwner(work) || canManageAllWorks || work.shared
 
   const columns: ColumnsType<WorkItem> = [
     {
@@ -102,16 +112,22 @@ export default function WorksPage() {
       width: 200,
       ellipsis: true,
     },
-    ...(user?.role === 'admin'
-      ? [{ title: '作者', dataIndex: 'ownerName', key: 'ownerName', width: 100 }]
+    ...(canManageAllWorks
+      ? [{ title: '创建人', dataIndex: 'ownerName', key: 'ownerName', width: 100 }]
       : []),
+    {
+      title: '进度/阶段',
+      key: 'progress',
+      width: 160,
+      render: (_: unknown, record: WorkItem) => getWorkProgress(record),
+    },
     {
       title: '状态',
       key: 'status',
       width: 80,
       render: (_: unknown, record: WorkItem) => {
         if (isOwner(record)) return <Tag color="blue">可编辑</Tag>
-        if (user?.role === 'owner' || user?.role === 'admin') return <Tag color="default">仅标题</Tag>
+        if (canManageAllWorks || record.shared) return <Tag color="orange">只读</Tag>
         return <Tag color="orange">只读</Tag>
       },
     },
@@ -147,12 +163,12 @@ export default function WorksPage() {
             <Button type="link" icon={<EditOutlined />} onClick={() => handleOpen(record, false)}>
               编辑
             </Button>
-          ) : user?.role === 'user' ? (
+          ) : canView(record) ? (
             <Button type="link" icon={<EyeOutlined />} onClick={() => handleOpen(record, true)}>
               查看
             </Button>
           ) : (
-            <Tag>仅标题</Tag>
+            null
           )}
           <Button type="link" icon={<CopyOutlined />} onClick={() => handleCopy(record)}>
             复制
