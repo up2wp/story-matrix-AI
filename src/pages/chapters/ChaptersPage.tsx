@@ -15,7 +15,6 @@ import {
   Modal,
   List,
   Spin,
-  Badge,
 } from 'antd'
 import {
   ExperimentOutlined,
@@ -1591,7 +1590,7 @@ export default function ChaptersPage() {
                     >
                       {items.map((item, i) => (
                         <div key={i} style={{
-                          minHeight: 22, lineHeight: '22px', padding: '2px 8px',
+                          minHeight: 22, padding: '2px 8px',
                           whiteSpace: 'pre-wrap', wordBreak: 'break-all',
                           background: item.type === 'removed' ? '#fff1f0' : item.type === 'added' ? '#f6ffed' : undefined,
                           borderLeft: item.type === 'removed' ? '3px solid #ff4d4f' : item.type === 'added' ? '3px solid #52c41a' : '3px solid transparent',

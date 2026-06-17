@@ -34,7 +34,7 @@ import { generateStream } from '@/ai/client'
 import { seedContext, worldContext, charactersContext, constraintsContext } from '@/ai/context'
 import { OUTLINE_SYSTEM_PROMPT, buildOutlinePrompt, buildOutlineNodePolishPrompt, buildAddChaptersPrompt, buildMultiVolumeChaptersPrompt, buildStorylineRecommendPrompt, buildStorylinePolishPrompt, buildFixStorylineBindingPrompt, buildOutlineCheckPrompt } from '@/ai/prompts/outline'
 
-const { Title, Text, Paragraph } = Typography
+const { Title, Text } = Typography
 const { TextArea } = Input
 
 export default function OutlinePage() {
