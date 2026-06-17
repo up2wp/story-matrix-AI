@@ -14,6 +14,10 @@ const topBarSource = await readFile(new URL('../src/components/layout/TopBar.tsx
 const adminRouteSource = await readFile(new URL('../src/components/auth/AdminRoute.tsx', import.meta.url), 'utf8')
 const sidebarSource = await readFile(new URL('../src/components/layout/Sidebar.tsx', import.meta.url), 'utf8')
 const chaptersPageSource = await readFile(new URL('../src/pages/chapters/ChaptersPage.tsx', import.meta.url), 'utf8')
+const viteConfigSource = await readFile(new URL('../vite.config.ts', import.meta.url), 'utf8')
+const dockerfileSource = await readFile(new URL('../Dockerfile', import.meta.url), 'utf8')
+const dockerComposeSource = await readFile(new URL('../docker-compose.yml', import.meta.url), 'utf8')
+const dockerignoreSource = await readFile(new URL('../.dockerignore', import.meta.url), 'utf8')
 
 assert.match(
   dbSource,
@@ -205,6 +209,42 @@ assert.match(
   sidebarSource,
   /!readOnly[\s\S]*key: '\/character-voices'[\s\S]*label: '角色声音'/,
   'read-only work viewing should hide character voice navigation',
+)
+
+assert.match(
+  viteConfigSource,
+  /process\.env\.APP_VERSION[\s\S]*git describe --tags --exact-match HEAD[\s\S]*git rev-parse --short HEAD[\s\S]*return 'dev'[\s\S]*__APP_VERSION__/,
+  'vite config should expose an automatic app version from build args, git tag, short hash, or dev fallback',
+)
+
+assert.match(
+  dockerfileSource,
+  /FROM node:24-alpine AS builder[\s\S]*RUN apk add --no-cache git[\s\S]*RUN npm run build/,
+  'docker image builds should have git available so vite can resolve the current tag or hash automatically',
+)
+
+assert.match(
+  dockerComposeSource,
+  /build: \./,
+  'docker compose should use the normal build context so docker builds resolve version the same way as local builds',
+)
+
+assert.doesNotMatch(
+  dockerignoreSource,
+  /^\.git$/m,
+  'docker build context should include .git so version resolution is automatic without manual version files',
+)
+
+assert.match(
+  sidebarSource,
+  /const appVersion = __APP_VERSION__|__APP_VERSION__/,
+  'sidebar should read the build-time app version constant',
+)
+
+assert.match(
+  sidebarSource,
+  /flexDirection: 'column'[\s\S]*<Menu[\s\S]*flex: 1[\s\S]*版本[\s\S]*appVersion/s,
+  'sidebar should reserve bottom space for the current version label without replacing navigation',
 )
 
 assert.match(

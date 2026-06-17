@@ -10,6 +10,7 @@ RUN apk add --no-cache python3 make g++ \
 
 FROM node:24-alpine AS builder
 WORKDIR /app
+RUN apk add --no-cache git
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/server/node_modules ./server/node_modules

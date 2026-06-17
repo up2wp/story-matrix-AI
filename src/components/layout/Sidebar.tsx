@@ -15,6 +15,7 @@ import { useStore } from '@/core/store'
 import { useAuthStore } from '@/core/auth-store'
 
 const { Sider } = Layout
+const appVersion = __APP_VERSION__
 
 export default function Sidebar() {
   const collapsed = useStore((s) => s.sidebarCollapsed)
@@ -73,6 +74,8 @@ export default function Sidebar() {
         background: '#fff',
         borderRight: '1px solid #f0f0f0',
         overflow: 'auto',
+        display: 'flex',
+        flexDirection: 'column',
       }}
     >
       {readOnly && (
@@ -85,8 +88,11 @@ export default function Sidebar() {
         selectedKeys={[location.pathname]}
         items={menuItems}
         onClick={handleMenuClick}
-        style={{ border: 'none', height: readOnly ? 'calc(100% - 40px)' : '100%' }}
+        style={{ border: 'none', flex: 1 }}
       />
+      <div style={{ padding: '8px 16px', color: '#bfbfbf', fontSize: 12, textAlign: 'center' }}>
+        版本 {appVersion}
+      </div>
     </Sider>
   )
 }
