@@ -47,6 +47,7 @@ export default function OutlinePage() {
   const aiConfig = useSystemConfigStore((s) => s.aiConfig)
   const [loading, setLoading] = useState(false)
   const [polishing, setPolishing] = useState(false)
+  const [expandedSummaries, setExpandedSummaries] = useState<Set<string>>(new Set())
   const [editModalOpen, setEditModalOpen] = useState(false)
   const [genModalOpen, setGenModalOpen] = useState(false)
   const [addChaptersModalOpen, setAddChaptersModalOpen] = useState(false)
@@ -1047,6 +1048,37 @@ export default function OutlinePage() {
     setEditModalOpen(true)
   }
 
+  // 新建序章卷（排在最前面，章节不参与编号）
+  const handleAddPrologue = async () => {
+    if (!currentWork) return
+    const volId = generateId()
+    const chId = generateId()
+    const volNode: OutlineNode = {
+      id: volId,
+      title: '序章',
+      summary: '正文前的背景铺垫',
+      order: 0,
+      level: 'volume',
+      characterIds: [],
+      storylineIds: [],
+    }
+    const chNode: OutlineNode = {
+      id: chId,
+      parentId: volId,
+      title: '前言',
+      summary: '',
+      order: 1,
+      level: 'chapter',
+      characterIds: [],
+      storylineIds: [],
+    }
+    // 所有现有节点 order +2，给序章卷和前言腾位
+    const shifted = outline.map((n) => ({ ...n, order: n.order + 2 }))
+    const newOutline = [volNode, chNode, ...shifted]
+    await persistOutline(newOutline)
+    message.success('已创建序章卷')
+  }
+
   // 保存新增
   const handleSaveNew = async () => {
     if (!editing) return
@@ -1065,6 +1097,7 @@ export default function OutlinePage() {
         {!readOnly && (
           <Space>
             <Button icon={<PlusOutlined />} onClick={() => handleAdd('volume')}>新增卷</Button>
+            <Button onClick={handleAddPrologue}>新建序章卷</Button>
             {!outline.some((n) => n.level === 'chapter') && (
               <Button icon={<ExperimentOutlined />} onClick={openGenModal} loading={loading}>
                 AI 随机生成
@@ -1192,7 +1225,29 @@ export default function OutlinePage() {
                   }
                 >
                   {vol.summary && (
-                    <Paragraph type="secondary" style={{ marginBottom: 16 }}>{vol.summary}</Paragraph>
+                    <div style={{ marginBottom: 16 }}>
+                      <div
+                        style={{
+                          color: '#666',
+                          fontSize: 14,
+                          lineHeight: 1.8,
+                          whiteSpace: 'pre-wrap',
+                          overflow: 'hidden',
+                          maxHeight: expandedSummaries.has(vol.id) ? 'none' : 80,
+                        }}
+                      >{vol.summary}</div>
+                      {vol.summary.length > 100 && (
+                        <Button type="link" size="small" style={{ padding: 0, fontSize: 12 }}
+                          onClick={() => setExpandedSummaries((prev) => {
+                            const next = new Set(prev)
+                            next.has(vol.id) ? next.delete(vol.id) : next.add(vol.id)
+                            return next
+                          })}
+                        >
+                          {expandedSummaries.has(vol.id) ? '收起' : '展开全部'}
+                        </Button>
+                      )}
+                    </div>
                   )}
 
                   {chapters.length === 0 ? (
@@ -1223,9 +1278,30 @@ export default function OutlinePage() {
                             ) : undefined
                           }
                         >
-                          <Paragraph style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
-                            {ch.summary || '暂无剧情简述'}
-                          </Paragraph>
+                          <div>
+                            <div
+                              style={{
+                                margin: 0,
+                                whiteSpace: 'pre-wrap',
+                                overflow: 'hidden',
+                                maxHeight: expandedSummaries.has(ch.id) ? 'none' : 66,
+                                fontSize: 13,
+                              }}
+                            >
+                              {ch.summary || '暂无剧情简述'}
+                            </div>
+                            {(ch.summary || '').length > 100 && (
+                              <Button type="link" size="small" style={{ padding: 0, fontSize: 11 }}
+                                onClick={() => setExpandedSummaries((prev) => {
+                                  const next = new Set(prev)
+                                  next.has(ch.id) ? next.delete(ch.id) : next.add(ch.id)
+                                  return next
+                                })}
+                              >
+                                {expandedSummaries.has(ch.id) ? '收起' : '展开'}
+                              </Button>
+                            )}
+                          </div>
                           {/* 故事线标记 */}
                           {ch.storylineIds && ch.storylineIds.length > 0 && (
                             <div style={{ display: 'flex', gap: 4, marginTop: 8, flexWrap: 'wrap' }}>

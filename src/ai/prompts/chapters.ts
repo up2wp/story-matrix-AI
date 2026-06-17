@@ -181,3 +181,89 @@ ${eventSection}
 - 严格遵守叙述视角（pov）
 - 不能与历史事件时间线中的记录矛盾`
 }
+
+// ============================================================
+// ============================================================
+// 全文逻辑检查 — 问题扫描
+// ============================================================
+
+export function buildIssueScanPrompt(
+  chaptersText: string,
+  prevVolumeText: string,
+  earlierEvents: string,
+  volumeName: string,
+  focus?: string,
+): string {
+  const prevVolumeSection = prevVolumeText ? `\n上一卷正文（用于跨卷一致性检查）：\n${prevVolumeText}\n` : ''
+  const earlierSection = earlierEvents ? `\n更早卷的事件时间线：\n${earlierEvents}\n` : ''
+  const focusSection = focus?.trim() ? `\n用户重点关注：\n${focus.trim()}\n请优先检查以上关注项。\n` : ''
+
+  return `你是一位专业的小说编辑。请仔细检查「${volumeName}」中以下章节的剧情逻辑，找出所有具体问题。
+
+${prevVolumeSection}${earlierSection}${focusSection}
+本卷各章节正文（按顺序）：
+${chaptersText}
+
+检查维度：
+1. **前后矛盾**：人物行为、性格、能力是否前后一致
+2. **时间线错误**：事件发生的先后顺序是否合理
+3. **角色遗忘**：重要角色是否突然消失或未交代
+4. **因果断裂**：重要转折是否有足够的铺垫和动机
+5. **逻辑漏洞**：情节是否合理，有无硬伤
+6. **跨卷一致性**：与前序卷的信息是否有冲突
+
+对每个问题，找出原文中**具体的段落或句子**作为 findText（用于定位问题位置）。
+
+严格输出 JSON，格式如下：
+{
+  "issues": [
+    {
+      "chapterTitle": "问题所在章节的标题",
+      "issue": "问题描述（一句话）",
+      "findText": "原文中需要修改的段落或句子（完整复制，用于定位）",
+      "severity": "high 或 medium 或 low"
+    }
+  ]
+}
+
+findText 必须是原文中真实存在的连续文本（10-200字），用于精确定位问题位置。
+issues 只包含确实有问题的条目。如果没有问题，issues 为空数组。
+只输出 JSON，不要输出其他内容。`
+}
+
+// ============================================================
+// 全文逻辑检查 — 按章节合并修复
+// ============================================================
+
+export function buildChapterFixPrompt(
+  chapterTitle: string,
+  chapterContent: string,
+  issues: { issue: string; findText: string }[],
+): string {
+  const issueList = issues.map((item, i) => `${i + 1}. ${item.issue}\n   定位：「${item.findText.slice(0, 80)}」`).join('\n')
+
+  return `你是一位专业的小说编辑。请修复以下章节中的所有问题，输出完整的修改后正文。
+
+章节标题：${chapterTitle}
+
+需要修复的问题：
+${issueList}
+
+章节正文：
+${chapterContent}
+
+要求：
+1. 一次性修复所有问题，输出完整的修改后章节正文
+2. 保持原文的风格、语气和叙事视角
+3. 保持原文的篇幅和节奏，不要大幅删减或扩写
+4. 修改处与上下文自然衔接
+5. 不要输出任何分析、解释或元信息，只输出正文
+
+严格输出 JSON，格式如下：
+{
+  "content": "修改后的完整章节正文",
+  "changes": ["修改1的原因", "修改2的原因"]
+}
+
+只输出 JSON，不要输出其他内容。`
+}
