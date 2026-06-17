@@ -13,6 +13,7 @@ const adminPageSource = await readFile(new URL('../src/pages/admin/AdminPage.tsx
 const topBarSource = await readFile(new URL('../src/components/layout/TopBar.tsx', import.meta.url), 'utf8')
 const adminRouteSource = await readFile(new URL('../src/components/auth/AdminRoute.tsx', import.meta.url), 'utf8')
 const sidebarSource = await readFile(new URL('../src/components/layout/Sidebar.tsx', import.meta.url), 'utf8')
+const chaptersPageSource = await readFile(new URL('../src/pages/chapters/ChaptersPage.tsx', import.meta.url), 'utf8')
 
 assert.match(
   dbSource,
@@ -136,8 +137,14 @@ assert.match(
 
 assert.match(
   worksPageSource,
-  /title: '创建人'/,
-  'works list should show creator information for privileged viewers',
+  /const users = await db\.users\.toArray\(\)[\s\S]*accessible = allWorks[\s\S]*ownerName: userMap\.get\(w\.ownerId\)/,
+  'works list should enrich every visible row with creator information',
+)
+
+assert.match(
+  worksPageSource,
+  /\{ title: '创建人', dataIndex: 'ownerName', key: 'ownerName'/,
+  'works list should show creator information for every user role',
 )
 
 assert.match(
@@ -186,6 +193,24 @@ assert.match(
   sidebarSource,
   /\['owner', 'admin'\]\.includes\(user\.role\)/,
   'owners and admins should both see the system management navigation item',
+)
+
+assert.match(
+  sidebarSource,
+  /!readOnly[\s\S]*key: '\/voices'[\s\S]*label: '声音管理'/,
+  'read-only work viewing should hide work-level voice management navigation',
+)
+
+assert.match(
+  sidebarSource,
+  /!readOnly[\s\S]*key: '\/character-voices'[\s\S]*label: '角色声音'/,
+  'read-only work viewing should hide character voice navigation',
+)
+
+assert.match(
+  chaptersPageSource,
+  /currentWork && !readOnly[\s\S]*<ChapterAudiobookPanel/,
+  'read-only chapter viewing should hide chapter audiobook controls and content',
 )
 
 console.log('user-management behavior assertions passed')

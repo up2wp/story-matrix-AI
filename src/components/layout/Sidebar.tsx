@@ -28,9 +28,11 @@ export default function Sidebar() {
 
   const hasWork = !!currentWork
 
-    const menuItems = [
+  const menuItems = [
     { key: '/works', icon: <AppstoreOutlined />, label: '作品列表' },
-    { key: '/voices', icon: <CustomerServiceOutlined />, label: '声音管理' },
+    ...(!readOnly
+      ? [{ key: '/voices', icon: <CustomerServiceOutlined />, label: '声音管理' }]
+      : []),
     ...(hasWork
       ? [
           { type: 'divider' as const },
@@ -38,7 +40,9 @@ export default function Sidebar() {
           { key: '/world', icon: <GlobalOutlined />, label: '世界构建' },
           { key: '/constraints', icon: <AimOutlined />, label: '核心约束' },
           { key: '/outline', icon: <BranchesOutlined />, label: '主线大纲' },
-          { key: '/character-voices', icon: <CustomerServiceOutlined />, label: '角色声音' },
+          ...(!readOnly
+            ? [{ key: '/character-voices', icon: <CustomerServiceOutlined />, label: '角色声音' }]
+            : []),
           { key: '/chapters', icon: <FileTextOutlined />, label: '章节丰盈' },
           { key: '/preview', icon: <ReadOutlined />, label: '全文预览' },
         ]

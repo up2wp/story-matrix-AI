@@ -36,18 +36,18 @@ export default function WorksPage() {
     setLoading(true)
     try {
       const allWorks = await db.works.toArray()
+      const users = await db.users.toArray()
+      const userMap = new Map(users.map(u => [u.id, u.displayName]))
       let accessible: WorkItem[]
 
       if (user.role === 'owner' || user.role === 'admin') {
         // 拥有者和管理员看到所有作品
-        const users = await db.users.toArray()
-        const userMap = new Map(users.map(u => [u.id, u.displayName]))
         accessible = allWorks.map(w => ({ ...w, ownerName: userMap.get(w.ownerId) || '未知' }))
       } else {
         // 普通用户看到自己的作品 + 分享的作品
         accessible = allWorks
           .filter(w => w.ownerId === user.id || w.shared)
-          .map(w => ({ ...w }))
+          .map(w => ({ ...w, ownerName: userMap.get(w.ownerId) || '未知' }))
       }
 
       accessible.sort((a, b) => b.updatedAt - a.updatedAt)
@@ -112,9 +112,7 @@ export default function WorksPage() {
       width: 200,
       ellipsis: true,
     },
-    ...(canManageAllWorks
-      ? [{ title: '创建人', dataIndex: 'ownerName', key: 'ownerName', width: 100 }]
-      : []),
+    { title: '创建人', dataIndex: 'ownerName', key: 'ownerName', width: 100 },
     {
       title: '进度/阶段',
       key: 'progress',

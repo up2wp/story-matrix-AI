@@ -586,8 +586,8 @@ assert.match(
 
 assert.match(
   sidebarSource,
-  /key: '\/works'[\s\S]*key: '\/voices'[\s\S]*\.\.\.\(hasWork/,
-  'sidebar should expose user-level voice management directly below works before work-scoped items',
+  /key: '\/works'[\s\S]*!readOnly[\s\S]*key: '\/voices'[\s\S]*\.\.\.\(hasWork/,
+  'sidebar should expose user-level voice management directly below works before work-scoped items when editable',
 )
 
 assert.match(
@@ -604,8 +604,8 @@ assert.match(
 
 assert.match(
   sidebarSource,
-  /key: '\/character-voices'[\s\S]*label: '角色声音'[\s\S]*key: '\/chapters'/,
-  'sidebar should place character voice settings before chapter enrichment',
+  /!readOnly[\s\S]*key: '\/character-voices'[\s\S]*label: '角色声音'[\s\S]*key: '\/chapters'/,
+  'sidebar should place character voice settings before chapter enrichment when editable',
 )
 
 assert.match(

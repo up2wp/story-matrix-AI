@@ -984,7 +984,7 @@ export default function ChaptersPage() {
               />
             </Card>
 
-            {currentWork && (
+            {currentWork && !readOnly && (
               <ChapterAudiobookPanel
                 work={currentWork}
                 chapter={activeChapter}
