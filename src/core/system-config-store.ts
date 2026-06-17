@@ -38,6 +38,7 @@ export const defaultVoiceboxConfig: VoiceboxConfig = {
   defaultChunking: true,
   defaultCrossfade: 0.15,
   defaultNormalize: true,
+  generationConcurrency: 2,
 }
 
 export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
@@ -50,7 +51,7 @@ export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
     const config = await db.systemConfig.get('singleton')
     if (config) {
       const aiConfig = config.aiConfig || { ...defaultAIConfig }
-      const voiceboxConfig = config.voiceboxConfig || { ...defaultVoiceboxConfig }
+      const voiceboxConfig = { ...defaultVoiceboxConfig, ...(config.voiceboxConfig || {}) }
       set({ registrationEnabled: config.registrationEnabled, aiConfig, voiceboxConfig, isLoading: false })
       // 同步到全局 store
       useStore.getState().setAIConfig(aiConfig)

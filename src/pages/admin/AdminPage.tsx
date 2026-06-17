@@ -134,6 +134,9 @@ function VoiceboxSettings() {
           <Form.Item name="defaultCrossfade" label="交叉淡化" style={{ marginBottom: 0 }}>
             <Input type="number" min={0} max={1} step={0.05} style={{ width: 120 }} />
           </Form.Item>
+          <Form.Item name="generationConcurrency" label="全局并发数量" rules={[{ required: true, message: '请输入全局并发数量' }]} style={{ marginBottom: 0 }} extra="作用于整个系统的 Voicebox 生成队列，多个用户共享这个上限。">
+            <InputNumber min={1} max={20} precision={0} style={{ width: 160 }} />
+          </Form.Item>
         </Space>
       </Card>
 

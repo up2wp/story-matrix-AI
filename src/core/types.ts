@@ -165,6 +165,7 @@ export interface VoiceboxConfig {
   defaultChunking: boolean
   defaultCrossfade: number
   defaultNormalize: boolean
+  generationConcurrency: number
 }
 
 export type VoiceBindingSource = 'profile' | 'sample' | 'pending'

@@ -13,6 +13,7 @@ interface VoiceboxConfigPayload {
   customHeaderName?: string
   customHeaderValue?: string
   profileOwners?: Record<string, string>
+  generationConcurrency?: number
 }
 
 interface VoiceboxProfilePayload {
@@ -29,13 +30,34 @@ interface UserVoiceRow {
 }
 
 function defaultVoiceboxConfig() {
-  return { serviceUrl: 'http://127.0.0.1:17493', authType: 'none' as const }
+  return { serviceUrl: 'http://127.0.0.1:17493', authType: 'none' as const, generationConcurrency: 2 }
 }
 
 function loadVoiceboxConfig(): VoiceboxConfigPayload {
   const row = db.prepare('SELECT voiceboxConfig FROM systemConfig WHERE id = ?').get('singleton') as { voiceboxConfig?: string } | undefined
   if (!row?.voiceboxConfig) return defaultVoiceboxConfig()
-  return JSON.parse(row.voiceboxConfig) as VoiceboxConfigPayload
+  return { ...defaultVoiceboxConfig(), ...JSON.parse(row.voiceboxConfig) } as VoiceboxConfigPayload
+}
+
+let activeVoiceboxGenerations = 0
+const voiceboxGenerationQueue: Array<() => void> = []
+
+function loadVoiceboxGenerationConcurrency() {
+  const rawLimit = loadVoiceboxConfig().generationConcurrency
+  return typeof rawLimit === 'number' && Number.isInteger(rawLimit) && rawLimit > 0 ? rawLimit : 2
+}
+
+async function runWithVoiceboxGenerationSlot<T>(task: () => Promise<T>): Promise<T> {
+  if (activeVoiceboxGenerations >= loadVoiceboxGenerationConcurrency()) {
+    await new Promise<void>((resolve) => voiceboxGenerationQueue.push(resolve))
+  }
+  activeVoiceboxGenerations += 1
+  try {
+    return await task()
+  } finally {
+    activeVoiceboxGenerations -= 1
+    voiceboxGenerationQueue.shift()?.()
+  }
 }
 
 function baseUrl() {
@@ -256,11 +278,11 @@ router.post('/generate', async (req, res) => {
     const currentUser = (req as unknown as AuthenticatedRequest).currentUser
     const ownedVoice = findOwnedVoiceByProfile(profileId, currentUser.id)
     if (!canUseProfile(profileId, currentUser.id) || (loadVoiceboxConfig().profileOwners?.[profileId] && !ownedVoice)) return res.status(403).json({ error: '无权使用该音色' })
-    const result = await proxyJson('/generate', {
+    const result = await runWithVoiceboxGenerationSlot(() => proxyJson('/generate', {
       method: 'POST',
       headers: upstreamHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(req.body),
-    })
+    }))
     if (!result.ok) return res.status(result.status).json({ error: result.error })
     const generation = result.data as { generation_id?: string; id?: string }
     const generationId = generation.generation_id || generation.id

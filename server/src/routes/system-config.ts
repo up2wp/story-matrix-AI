@@ -38,6 +38,7 @@ function defaultVoiceboxConfig() {
     defaultChunking: true,
     defaultCrossfade: 0.15,
     defaultNormalize: true,
+    generationConcurrency: 2,
   }
 }
 
@@ -52,7 +53,7 @@ function maskVoiceboxConfig(config: ReturnType<typeof defaultVoiceboxConfig>) {
 
 function mergeVoiceboxConfig(fieldsConfig: ReturnType<typeof defaultVoiceboxConfig>) {
   const row = db.prepare('SELECT voiceboxConfig FROM systemConfig WHERE id = ?').get('singleton') as { voiceboxConfig?: string } | undefined
-  const existing = row?.voiceboxConfig ? JSON.parse(row.voiceboxConfig) as ReturnType<typeof defaultVoiceboxConfig> : defaultVoiceboxConfig()
+  const existing = row?.voiceboxConfig ? { ...defaultVoiceboxConfig(), ...JSON.parse(row.voiceboxConfig) } as ReturnType<typeof defaultVoiceboxConfig> : defaultVoiceboxConfig()
   return {
     ...existing,
     ...fieldsConfig,

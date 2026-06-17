@@ -255,6 +255,36 @@ assert.match(
 
 assert.match(
   typesSource,
+  /generationConcurrency: number/,
+  'Voicebox config should include a configurable audiobook generation concurrency limit',
+)
+
+assert.match(
+  systemConfigStoreSource,
+  /generationConcurrency: 2/,
+  'browser Voicebox config defaults should cap audiobook generation concurrency at two jobs',
+)
+
+assert.match(
+  systemConfigRouteSource,
+  /generationConcurrency: 2/,
+  'server Voicebox config defaults should cap audiobook generation concurrency at two jobs',
+)
+
+assert.match(
+  adminPageSource,
+  /name="generationConcurrency"[\s\S]*全局并发数量/,
+  'Voicebox admin settings should let owners and admins configure the global generation concurrency limit',
+)
+
+assert.match(
+  voiceboxRouteSource,
+  /runWithVoiceboxGenerationSlot[\s\S]*loadVoiceboxGenerationConcurrency[\s\S]*activeVoiceboxGenerations[\s\S]*voiceboxGenerationQueue/,
+  'Voicebox generation proxy should enforce one backend-wide queue shared by all users',
+)
+
+assert.match(
+  typesSource,
   /authType: 'none' \| 'bearer' \| 'api-key' \| 'custom-header'/,
   'Voicebox config should support explicit auth modes for production services',
 )
