@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import type { Request, Response as ExpressResponse } from 'express'
+import { randomUUID } from 'crypto'
 import db from '../db.js'
 import type { AuthenticatedRequest } from '../middleware/auth.js'
 
@@ -28,6 +29,36 @@ interface UserVoiceRow {
   sampleId?: string | null
   deletedAt?: number | null
 }
+
+interface ChapterAudioSegmentInput {
+  order?: number
+  generationId?: string
+}
+
+interface ChapterAudioJob {
+  id: string
+  ownerId: string
+  status: 'pending' | 'generating' | 'completed' | 'failed'
+  totalSegments: number
+  completedSegments: number
+  createdAt: number
+  updatedAt: number
+  audio?: Buffer
+  error?: string
+}
+
+interface WavInfo {
+  audioFormat: number
+  numChannels: number
+  sampleRate: number
+  byteRate: number
+  blockAlign: number
+  bitsPerSample: number
+  data: Buffer
+}
+
+const CHAPTER_AUDIO_PAUSE_MS = 700
+const chapterAudioJobs = new Map<string, ChapterAudioJob>()
 
 function defaultVoiceboxConfig() {
   return { serviceUrl: 'http://127.0.0.1:17493', authType: 'none' as const, generationConcurrency: 2 }
@@ -85,6 +116,76 @@ function upstreamHeaders(extra?: Record<string, string>) {
 
 function assertSafeId(id: string) {
   if (!/^[A-Za-z0-9_.:-]+$/.test(id)) throw new Error('ID 包含不安全字符')
+}
+
+function readAscii(buffer: Buffer, offset: number, length: number) {
+  return buffer.toString('ascii', offset, offset + length)
+}
+
+function parseWav(buffer: Buffer): WavInfo {
+  if (buffer.length < 44 || readAscii(buffer, 0, 4) !== 'RIFF' || readAscii(buffer, 8, 4) !== 'WAVE') throw new Error('Voicebox 返回的音频不是 WAV 格式')
+  let offset = 12
+  let format: Omit<WavInfo, 'data'> | undefined
+  let data: Buffer | undefined
+  while (offset + 8 <= buffer.length) {
+    const chunkId = readAscii(buffer, offset, 4)
+    const chunkSize = buffer.readUInt32LE(offset + 4)
+    const chunkStart = offset + 8
+    if (chunkStart + chunkSize > buffer.length) throw new Error('WAV 音频数据不完整')
+    if (chunkId === 'fmt ') {
+      format = {
+        audioFormat: buffer.readUInt16LE(chunkStart),
+        numChannels: buffer.readUInt16LE(chunkStart + 2),
+        sampleRate: buffer.readUInt32LE(chunkStart + 4),
+        byteRate: buffer.readUInt32LE(chunkStart + 8),
+        blockAlign: buffer.readUInt16LE(chunkStart + 12),
+        bitsPerSample: buffer.readUInt16LE(chunkStart + 14),
+      }
+    }
+    if (chunkId === 'data') data = buffer.subarray(chunkStart, chunkStart + chunkSize)
+    offset = chunkStart + chunkSize + (chunkSize % 2)
+  }
+  if (!format || !data) throw new Error('WAV 缺少 fmt 或 data 数据块')
+  if (format.audioFormat !== 1 || format.bitsPerSample !== 16) throw new Error('当前仅支持拼接 PCM 16-bit WAV 音频')
+  return { ...format, data }
+}
+
+function createWavHeader(format: Omit<WavInfo, 'data'>, dataBytes: number) {
+  const header = Buffer.alloc(44)
+  header.write('RIFF', 0, 'ascii')
+  header.writeUInt32LE(36 + dataBytes, 4)
+  header.write('WAVE', 8, 'ascii')
+  header.write('fmt ', 12, 'ascii')
+  header.writeUInt32LE(16, 16)
+  header.writeUInt16LE(format.audioFormat, 20)
+  header.writeUInt16LE(format.numChannels, 22)
+  header.writeUInt32LE(format.sampleRate, 24)
+  header.writeUInt32LE(format.byteRate, 28)
+  header.writeUInt16LE(format.blockAlign, 32)
+  header.writeUInt16LE(format.bitsPerSample, 34)
+  header.write('data', 36, 'ascii')
+  header.writeUInt32LE(dataBytes, 40)
+  return header
+}
+
+function createSilentWavPcm16(format: Omit<WavInfo, 'data'>, durationMs: number) {
+  const frameCount = Math.round((format.sampleRate * durationMs) / 1000)
+  return Buffer.alloc(frameCount * format.blockAlign)
+}
+
+function concatWavSegments(buffers: Buffer[]) {
+  if (!buffers.length) throw new Error('没有可合成的音频片段')
+  const parsed = buffers.map(parseWav)
+  const first = parsed[0]
+  for (const item of parsed.slice(1)) {
+    if (item.numChannels !== first.numChannels || item.sampleRate !== first.sampleRate || item.bitsPerSample !== first.bitsPerSample || item.blockAlign !== first.blockAlign) {
+      throw new Error('音频片段 WAV 格式不一致，无法安全拼接')
+    }
+  }
+  const silence = createSilentWavPcm16(first, CHAPTER_AUDIO_PAUSE_MS)
+  const dataParts = parsed.flatMap((item, index) => index === 0 ? [item.data] : [silence, item.data])
+  const data = Buffer.concat(dataParts)
+  return Buffer.concat([createWavHeader(first, data.length), data])
 }
 
 async function readVoiceboxError(response: globalThis.Response) {
@@ -325,6 +426,95 @@ async function streamAudio(res: ExpressResponse, path: string, range?: string) {
   for await (const chunk of response.body) res.write(chunk)
   return res.end()
 }
+
+async function fetchAudioBuffer(generationId: string) {
+  const response = await fetch(`${baseUrl()}/audio/${encodeURIComponent(generationId)}`, { headers: upstreamHeaders() })
+  if (!response.ok) throw new Error(await readVoiceboxError(response))
+  return Buffer.from(await response.arrayBuffer())
+}
+
+function startChapterAudioJob(job: ChapterAudioJob, segments: Required<Pick<ChapterAudioSegmentInput, 'generationId' | 'order'>>[]) {
+  void (async () => {
+    try {
+      job.status = 'generating'
+      job.updatedAt = Date.now()
+      const buffers: Buffer[] = []
+      for (const segment of segments) {
+        buffers.push(await fetchAudioBuffer(segment.generationId))
+        job.completedSegments += 1
+        job.updatedAt = Date.now()
+      }
+      job.audio = concatWavSegments(buffers)
+      job.status = 'completed'
+      job.updatedAt = Date.now()
+    } catch (error) {
+      job.status = 'failed'
+      job.error = error instanceof Error ? error.message : '章节音频合成失败'
+      job.updatedAt = Date.now()
+    }
+  })()
+}
+
+router.post('/chapter-audio', async (req, res) => {
+  try {
+    const currentUser = (req as unknown as AuthenticatedRequest).currentUser
+    const rawSegments = Array.isArray(req.body?.segments) ? req.body.segments as ChapterAudioSegmentInput[] : []
+    const segments = rawSegments
+      .map((segment) => ({ generationId: String(segment.generationId || ''), order: Number(segment.order || 0) }))
+      .filter((segment) => segment.generationId)
+      .sort((a, b) => a.order - b.order)
+    if (!segments.length) return res.status(400).json({ error: '没有可合成的音频片段' })
+    for (const segment of segments) {
+      assertSafeId(segment.generationId)
+      if (!canAccessGeneration(segment.generationId, currentUser.id)) return res.status(403).json({ error: '无权合成该音频片段' })
+    }
+    const job: ChapterAudioJob = {
+      id: randomUUID(),
+      ownerId: currentUser.id,
+      status: 'pending',
+      totalSegments: segments.length,
+      completedSegments: 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }
+    chapterAudioJobs.set(job.id, job)
+    startChapterAudioJob(job, segments)
+    res.status(202).json({ jobId: job.id, status: job.status, totalSegments: job.totalSegments, completedSegments: job.completedSegments })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '章节音频合成请求失败'
+    res.status(400).json({ error: message })
+  }
+})
+
+router.get('/chapter-audio/:jobId', (req, res) => {
+  try {
+    assertSafeId(req.params.jobId)
+    const currentUser = (req as unknown as AuthenticatedRequest).currentUser
+    const job = chapterAudioJobs.get(req.params.jobId)
+    if (!job || job.ownerId !== currentUser.id) return res.status(404).json({ error: '章节音频合成任务不存在' })
+    res.json({ jobId: job.id, status: job.status, totalSegments: job.totalSegments, completedSegments: job.completedSegments, error: job.error })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '章节音频合成状态获取失败'
+    res.status(400).json({ error: message })
+  }
+})
+
+router.get('/chapter-audio/:jobId/audio', (req, res) => {
+  try {
+    assertSafeId(req.params.jobId)
+    const currentUser = (req as unknown as AuthenticatedRequest).currentUser
+    const job = chapterAudioJobs.get(req.params.jobId)
+    if (!job || job.ownerId !== currentUser.id) return res.status(404).json({ error: '章节音频合成任务不存在' })
+    if (job.status !== 'completed' || !job.audio) return res.status(409).json({ error: '章节音频尚未合成完成' })
+    res.setHeader('Content-Type', 'audio/wav')
+    res.setHeader('Content-Length', String(job.audio.length))
+    res.setHeader('Content-Disposition', 'attachment; filename="chapter-audio.wav"')
+    res.end(job.audio)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '章节音频下载失败'
+    res.status(400).json({ error: message })
+  }
+})
 
 router.get('/audio/:generationId', async (req, res) => {
   try {
