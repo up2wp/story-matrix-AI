@@ -56,7 +56,7 @@ export function constraintsContext(constraints: Constraint[]): string {
 export function eventLogContext(
   eventLog: EventLogEntry[],
   beforeChapterId?: string,
-  maxEntries: number = 50,
+  maxEntries: number = 800,
 ): string {
   if (!eventLog.length) return '（暂无历史事件记录）'
 
