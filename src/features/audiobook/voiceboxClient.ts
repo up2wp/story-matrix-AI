@@ -47,6 +47,14 @@ export interface VoiceboxGenerationStatus {
   error?: string
 }
 
+export interface ChapterAudioSynthesisStatus {
+  jobId: string
+  status: 'pending' | 'generating' | 'completed' | 'failed'
+  totalSegments: number
+  completedSegments: number
+  error?: string
+}
+
 export const voiceboxClient = {
   health: () => request<unknown>('/health', { headers: requestHeaders(false) }),
   profiles: () => request<VoiceboxProfile[]>('/profiles', { headers: requestHeaders(false) }),
@@ -71,6 +79,20 @@ export const voiceboxClient = {
     body: JSON.stringify(body),
   }),
   status: (generationId: string) => request<VoiceboxGenerationStatus>(`/generate/${encodeURIComponent(generationId)}/status`, { headers: requestHeaders(false) }),
+  synthesizeChapterAudio: (body: { chapterId: string; chapterTitle: string; segments: Array<{ order: number; generationId: string }> }) => request<ChapterAudioSynthesisStatus>('/chapter-audio', {
+    method: 'POST',
+    headers: requestHeaders(),
+    body: JSON.stringify(body),
+  }),
+  chapterAudioStatus: (jobId: string) => request<ChapterAudioSynthesisStatus>(`/chapter-audio/${encodeURIComponent(jobId)}`, { headers: requestHeaders(false) }),
+  downloadChapterAudio: async (jobId: string) => {
+    const response = await fetch(`/api/voicebox/chapter-audio/${encodeURIComponent(jobId)}/audio`, { headers: requestHeaders(false) })
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({ error: response.statusText })) as { error?: string }
+      throw new Error(data.error || `章节音频下载失败: ${response.status}`)
+    }
+    return URL.createObjectURL(await response.blob())
+  },
   audioUrl: (generationId: string) => `/api/voicebox/audio/${encodeURIComponent(generationId)}`,
   sampleUrl: (sampleId: string) => `/api/voicebox/samples/${encodeURIComponent(sampleId)}`,
   fetchMediaUrl: async (url: string) => {

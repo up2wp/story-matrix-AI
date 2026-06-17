@@ -11,6 +11,7 @@ const serverIndexSource = await readFile(new URL('../server/src/index.ts', impor
 const voiceboxRouteSource = await readFile(new URL('../server/src/routes/voicebox.ts', import.meta.url), 'utf8')
 const userVoicesRouteSource = await readFile(new URL('../server/src/routes/user-voices.ts', import.meta.url), 'utf8')
 const voiceboxClientSource = await readFile(new URL('../src/features/audiobook/voiceboxClient.ts', import.meta.url), 'utf8')
+const audioUtilsSource = await readFile(new URL('../src/features/audiobook/audioUtils.ts', import.meta.url), 'utf8')
 const promptTemplateUtilsSource = await readFile(new URL('../src/features/audiobook/promptTemplateUtils.ts', import.meta.url), 'utf8')
 const useUserVoicesSource = await readFile(new URL('../src/features/audiobook/useUserVoices.ts', import.meta.url), 'utf8')
 const systemConfigStoreSource = await readFile(new URL('../src/core/system-config-store.ts', import.meta.url), 'utf8')
@@ -1326,14 +1327,56 @@ assert.match(
 
 assert.match(
   chapterAudioPlayerSource,
-  /downloadChapterAudioManifest/,
-  'chapter audio surface should provide a chapter-level download artifact',
+  /synthesizeChapterAudio/,
+  'chapter audio surface should start a backend chapter synthesis job instead of exporting a manifest',
 )
 
 assert.match(
   chapterAudioPlayerSource,
-  /downloadChapterAudioManifest\(chapter, segments\)[\s\S]*合并章节音频/,
-  'chapter audio surface should present the chapter-level merge/download action as 合并章节音频',
+  /Progress[\s\S]*synthesisProgress[\s\S]*合成进度/,
+  'chapter audio surface should show chapter synthesis progress while the backend concatenates audio',
+)
+
+assert.doesNotMatch(
+  audioUtilsSource + chapterAudioPlayerSource,
+  /manifest|downloadChapterAudioManifest|audiobook-manifest/i,
+  'chapter synthesis should not download a JSON manifest when users request merged chapter audio',
+)
+
+assert.match(
+  voiceboxClientSource,
+  /synthesizeChapterAudio[\s\S]*\/api\/voicebox\/chapter-audio/,
+  'voicebox client should expose a chapter synthesis API that sends only generation IDs and ordering metadata',
+)
+
+assert.match(
+  voiceboxClientSource,
+  /chapterAudioStatus[\s\S]*\/api\/voicebox\/chapter-audio\/\$\{encodeURIComponent\(jobId\)\}/,
+  'voicebox client should poll chapter synthesis progress by job id',
+)
+
+assert.match(
+  voiceboxClientSource,
+  /downloadChapterAudio[\s\S]*\/api\/voicebox\/chapter-audio\/\$\{encodeURIComponent\(jobId\)\}\/audio/,
+  'voicebox client should download the synthesized chapter audio blob after completion',
+)
+
+assert.match(
+  voiceboxRouteSource,
+  /router\.post\('\/chapter-audio'/,
+  'Voicebox proxy should expose a backend chapter audio synthesis job route',
+)
+
+assert.match(
+  voiceboxRouteSource,
+  /concatWavSegments[\s\S]*createSilentWavPcm16/,
+  'chapter audio synthesis should concatenate segment WAV audio with inserted silence between segments',
+)
+
+assert.match(
+  voiceboxRouteSource,
+  /chapterAudioJobs[\s\S]*completedSegments[\s\S]*totalSegments/,
+  'chapter audio synthesis jobs should track progress for frontend polling',
 )
 
 assert.doesNotMatch(
