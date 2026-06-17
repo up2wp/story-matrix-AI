@@ -24,7 +24,8 @@ export const AUDIOBOOK_ATTRIBUTION_SYSTEM_PROMPT = `你是中文小说有声读�
 
 export const AUDIOBOOK_TONE_SYSTEM_PROMPT = `你是 QwenTTS 有声读物语气编辑。
 只输出 JSON 数组，不要 Markdown，不要解释。
-每条 tone 控制在 50 字左右，描述当前分段的声音状态、情绪、节奏和重音倾向。
+每条 tone 控制在 30 字以内，只描述符合场景的语气、情绪、节奏和重音倾向。
+不要描述音色；音色已由说话人的声音决定。
 不要复述待朗读正文，不要输出角色设定全文。`
 
 export function buildVoicePrompt(work: Work, characterId?: string, mood?: string) {
@@ -126,7 +127,7 @@ ${JSON.stringify(items, null, 2)}
 
 输出 JSON 数组，每个对象必须包含：
 - segmentId: 输入中的 segmentId
-- tone: 50 字左右的中文语气描述
+- tone: 30 字以内的中文语气描述，只写符合场景的语气、情绪、节奏和重音倾向，不写音色
 
 必须为每个输入 segmentId 输出一条结果，segmentId 必须原样复制。不要把字段命名为 prompt、description 或 text。`
 }

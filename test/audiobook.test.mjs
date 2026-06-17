@@ -900,6 +900,18 @@ assert.match(
 
 assert.match(
   audiobookPromptSource,
+  /每条 tone 控制在 30 字以内[\s\S]*不要描述音色/,
+  'tone generation system prompt should cap scene tone descriptions at 30 chars and avoid timbre',
+)
+
+assert.match(
+  audiobookPromptSource,
+  /tone: 30 字以内的中文语气描述[\s\S]*不写音色/,
+  'tone compression output contract should request short scene-only tone descriptions',
+)
+
+assert.match(
+  audiobookPromptSource,
   /候选 speaker/,
   'small-window attribution prompt should constrain the model to candidate speakers',
 )
