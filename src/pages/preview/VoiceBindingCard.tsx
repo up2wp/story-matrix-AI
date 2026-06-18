@@ -7,6 +7,10 @@ import type { UserVoiceAsset } from '@/core/types'
 import type { VoiceboxProfile } from '@/features/audiobook/voiceboxClient'
 
 const { Text } = Typography
+const MIN_VOICE_SELECT_WIDTH = 240
+const MAX_VOICE_SELECT_WIDTH = 520
+const SELECT_HORIZONTAL_PADDING = 96
+const OPTION_CHARACTER_WIDTH = 14
 
 interface Props {
   binding: VoiceBinding
@@ -29,10 +33,20 @@ function profileName(profile: VoiceboxProfile) {
   return profile.name || profile.display_name || profileId(profile)
 }
 
+export function getVoiceSelectWidth(optionLabels: string[], viewportWidth: number) {
+  const longestLabelLength = optionLabels.reduce((max, label) => Math.max(max, label.length), 0)
+  const contentWidth = Math.max(MIN_VOICE_SELECT_WIDTH, longestLabelLength * OPTION_CHARACTER_WIDTH + SELECT_HORIZONTAL_PADDING)
+  const viewportLimit = Math.max(MIN_VOICE_SELECT_WIDTH, viewportWidth - 64)
+  return Math.min(contentWidth, MAX_VOICE_SELECT_WIDTH, viewportLimit)
+}
+
 export default function VoiceBindingCard({ binding, profiles, voices = [], ready, onBindProfile, onBindVoice, onSavePrompt, addVoiceUrl = '/voices', onGeneratePrompt, fixedPrompt = false }: Props) {
   const navigate = useNavigate()
   const [prompt, setPrompt] = useState(binding.prompt)
   const [generating, setGenerating] = useState(false)
+  const voiceOptions = voices.map((voice) => ({ value: `voice:${voice.id}`, label: voice.displayName }))
+  const profileOptions = profiles.map((profile) => ({ value: `profile:${profileId(profile)}`, label: profileName(profile) }))
+  const selectWidth = getVoiceSelectWidth([...voiceOptions, ...profileOptions].map((option) => option.label), typeof window === 'undefined' ? MAX_VOICE_SELECT_WIDTH : window.innerWidth)
 
   const handleGeneratePrompt = async () => {
     if (!binding.characterId || !onGeneratePrompt) return
@@ -67,15 +81,17 @@ export default function VoiceBindingCard({ binding, profiles, voices = [], ready
         <Select
           allowClear
           placeholder="选择已有音色"
+          popupMatchSelectWidth={selectWidth}
+          style={{ width: selectWidth, maxWidth: '100%' }}
           value={binding.soundId ? `voice:${binding.soundId}` : binding.profileId ? `profile:${binding.profileId}` : undefined}
           options={[
             {
               label: '我的声音',
-              options: voices.map((voice) => ({ value: `voice:${voice.id}`, label: voice.displayName })),
+              options: voiceOptions,
             },
             {
               label: 'Voicebox 公共/预设',
-              options: profiles.map((profile) => ({ value: `profile:${profileId(profile)}`, label: profileName(profile) })),
+              options: profileOptions,
             },
           ]}
           onChange={(value) => {

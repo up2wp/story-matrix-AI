@@ -83,6 +83,45 @@ function loadSegmentUtilsForTest() {
 
 const { normalizeSegments: normalizeSegmentsForTest, applyAttributionResults: applyAttributionResultsForTest, segmentContainsQuotes: segmentContainsQuotesForTest, applySegmentRefinementResults: applySegmentRefinementResultsForTest } = loadSegmentUtilsForTest()
 
+function loadVoiceBindingCardForTest() {
+  const helperStart = voiceBindingCardSource.indexOf('const MIN_VOICE_SELECT_WIDTH')
+  const componentStart = voiceBindingCardSource.indexOf('export default function VoiceBindingCard')
+  assert.ok(helperStart >= 0, 'VoiceBindingCard should define adaptive select sizing constants')
+  assert.ok(componentStart > helperStart, 'VoiceBindingCard sizing helper should be defined before the component')
+  const executableSource = voiceBindingCardSource.slice(helperStart, componentStart)
+    .replace('export function getVoiceSelectWidth', 'function getVoiceSelectWidth')
+  const { outputText } = ts.transpileModule(executableSource, {
+    compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2023 },
+  })
+  return Function(`${outputText}; return { getVoiceSelectWidth }`)()
+}
+
+const { getVoiceSelectWidth: getVoiceSelectWidthForTest } = loadVoiceBindingCardForTest()
+
+assert.equal(
+  getVoiceSelectWidthForTest(['短音色', '特别长的角色声音名称用于验证下拉选框宽度会跟随选项扩展'], 1440),
+  474,
+  'voice select should grow with long option labels on wide screens',
+)
+
+assert.equal(
+  getVoiceSelectWidthForTest(['特别长的角色声音名称用于验证下拉选框宽度会跟随选项扩展并且不能无限扩大超过桌面上限'], 1440),
+  520,
+  'voice select should not exceed the desktop width cap',
+)
+
+assert.equal(
+  getVoiceSelectWidthForTest(['特别长的角色声音名称用于验证移动端不会横向溢出屏幕'], 360),
+  296,
+  'voice select should cap itself to the mobile viewport minus page breathing room',
+)
+
+assert.equal(
+  getVoiceSelectWidthForTest([], 1440),
+  240,
+  'voice select should keep a usable minimum width when no voices are available',
+)
+
 function workForSegmentRules() {
   return {
     id: 'work-1',
