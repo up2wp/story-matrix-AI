@@ -100,6 +100,7 @@ export default function WorksPage() {
   const isOwner = (work: WorkItem) => user && work.ownerId === user.id
   const canManageAllWorks = user?.role === 'owner' || user?.role === 'admin'
   const canView = (work: WorkItem) => isOwner(work) || canManageAllWorks || work.shared
+  const canCopy = (work: WorkItem) => isOwner(work) || canManageAllWorks
 
   const columns: ColumnsType<WorkItem> = [
     {
@@ -165,9 +166,11 @@ export default function WorksPage() {
           ) : (
             null
           )}
-          <Button type="link" icon={<CopyOutlined />} onClick={() => handleCopy(record)}>
-            复制
-          </Button>
+          {canCopy(record) && (
+            <Button type="link" icon={<CopyOutlined />} onClick={() => handleCopy(record)}>
+              复制
+            </Button>
+          )}
           {isOwner(record) && (
             <Popconfirm title="确认删除此作品？" onConfirm={() => handleDelete(record)} okText="确认" cancelText="取消" okButtonProps={{ autoFocus: true }}>
               <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>

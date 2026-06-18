@@ -165,6 +165,18 @@ assert.match(
 
 assert.match(
   worksPageSource,
+  /const canCopy = \(work: WorkItem\) => isOwner\(work\) \|\| canManageAllWorks/,
+  'normal users should not be allowed to copy other users shared works',
+)
+
+assert.match(
+  worksPageSource,
+  /\{canCopy\(record\) && \([\s\S]*复制[\s\S]*\)\}/,
+  'works page should hide the copy action when the current user cannot copy the work',
+)
+
+assert.match(
+  worksPageSource,
   /title: '进度\/阶段'/,
   'works list should show progress or stage information',
 )
