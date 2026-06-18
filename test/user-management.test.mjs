@@ -105,6 +105,12 @@ assert.match(
 
 assert.match(
   worksRouteSource,
+  /ownerName|displayName/,
+  'work list API should include creator names without requiring clients to call user-management endpoints',
+)
+
+assert.match(
+  worksRouteSource,
   /user\.role === 'admin'/,
   'admins should be handled explicitly so they cannot inspect other users work content',
 )
@@ -141,8 +147,14 @@ assert.match(
 
 assert.match(
   worksPageSource,
-  /const users = await db\.users\.toArray\(\)[\s\S]*accessible = allWorks[\s\S]*ownerName: userMap\.get\(w\.ownerId\)/,
-  'works list should enrich every visible row with creator information',
+  /dataIndex: 'ownerName'/,
+  'works list should render creator information returned by the works API',
+)
+
+assert.doesNotMatch(
+  worksPageSource,
+  /db\.users\.toArray\(\)/,
+  'normal user works list should not depend on the admin-only user management endpoint',
 )
 
 assert.match(

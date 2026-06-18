@@ -12,6 +12,7 @@ interface WorkRow {
   createdAt: number
   updatedAt: number
   data: string
+  ownerName?: string
 }
 
 interface WorkInput extends Record<string, unknown> {
@@ -33,6 +34,7 @@ function rowToWork(row: WorkRow) {
   return {
     id: row.id,
     ownerId: row.ownerId,
+    ownerName: row.ownerName,
     shared: Boolean(row.shared),
     title: row.title,
     createdAt: row.createdAt,
@@ -124,8 +126,8 @@ function applySegmentPatch(audiobook: Record<string, unknown>, segmentPatch: Rec
 router.get('/', (req, res) => {
   const currentUser = getAuthenticatedUser(req as unknown as AuthenticatedRequest)
   const rows = currentUser.role === 'owner' || currentUser.role === 'admin'
-    ? db.prepare('SELECT * FROM works').all() as WorkRow[]
-    : db.prepare('SELECT * FROM works WHERE ownerId = ? OR shared = 1').all(currentUser.id) as WorkRow[]
+    ? db.prepare('SELECT works.*, users.displayName as ownerName FROM works LEFT JOIN users ON users.id = works.ownerId').all() as WorkRow[]
+    : db.prepare('SELECT works.*, users.displayName as ownerName FROM works LEFT JOIN users ON users.id = works.ownerId WHERE works.ownerId = ? OR works.shared = 1').all(currentUser.id) as WorkRow[]
   res.json(rows.map(rowToWork))
 })
 
