@@ -1,5 +1,62 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { Card, Typography, Space, Button, Checkbox, Empty, Divider } from 'antd'
+
+// 简易 Markdown 渲染
+function renderMarkdown(text: string): string {
+  // 先处理表格
+  let html = text.replace(/((?:^\|.+\|\n)+)/gm, (tableBlock) => {
+    const rows = tableBlock.trim().split('\n')
+    if (rows.length < 2) return tableBlock
+    const headerCells = rows[0].split('|').filter((c: string) => c.trim() !== '')
+    const isSeparator = (row: string) => /^\|?[\s:-]+\|/.test(row.trim()) || /^[\s:-]+\|/.test(row.trim())
+    let bodyStart = 1
+    if (rows.length > 1 && isSeparator(rows[1])) bodyStart = 2
+    let table = '<table><thead><tr>'
+    for (const cell of headerCells) {
+      table += `<th>${cell.trim()}</th>`
+    }
+    table += '</tr></thead><tbody>'
+    for (let i = bodyStart; i < rows.length; i++) {
+      const cells = rows[i].split('|').filter((c: string) => c.trim() !== '')
+      table += '<tr>'
+      for (const cell of cells) {
+        table += `<td>${cell.trim()}</td>`
+      }
+      table += '</tr>'
+    }
+    table += '</tbody></table>'
+    return table
+  })
+
+  html = html
+    // 代码块
+    .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+    // 行内代码
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    // 标题
+    .replace(/^#### (.+)$/gm, '<h4>$1</h4>')
+    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+    // 粗体和斜体
+    .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    // 引用
+    .replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>')
+    // 无序列表
+    .replace(/^[*-] (.+)$/gm, '<li>$1</li>')
+    // 分割线
+    .replace(/^---+$/gm, '<hr/>')
+    // 段落（双换行）
+    .replace(/\n\n/g, '</p><p>')
+    // 单换行
+    .replace(/\n/g, '<br/>')
+  // 包裹列表
+  html = html.replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
+  html = html.replace(/<\/ul>\s*<ul>/g, '')
+  return `<p>${html}</p>`
+}
 import {
   DownloadOutlined,
   FileTextOutlined,
@@ -125,9 +182,10 @@ export default function PreviewPage() {
               <div key={outline.id} id={fullscreen ? `fs-ch-${outline.id}` : `ch-${outline.id}`} style={{ marginBottom: 32 }}>
                 <Title level={3} style={{ marginBottom: 8, ...colorStyle }}>{outline.title}</Title>
                 {chapter?.content ? (
-                  <div style={{ whiteSpace: 'pre-wrap', lineHeight: 2, fontSize: 17, ...colorStyle }}>
-                    {chapter.content}
-                  </div>
+                  <div
+                    style={{ lineHeight: 2, fontSize: 17, ...colorStyle }}
+                    dangerouslySetInnerHTML={{ __html: renderMarkdown(chapter.content) }}
+                  />
                 ) : (
                   <Text type="secondary" italic style={{ color: theme.secondary }}>（本章暂无正文）</Text>
                 )}
@@ -316,7 +374,7 @@ export default function PreviewPage() {
         {/* 全文内容 */}
         <Card
           className="preview-content-card"
-          bodyStyle={{ padding: 24, maxWidth: 800, margin: '0 auto' }}
+          styles={{ body: { padding: 24, maxWidth: 800, margin: '0 auto' } }}
           style={{ flex: 1, overflow: 'auto' }}
         >
           {renderContent()}

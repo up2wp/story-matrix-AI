@@ -27,7 +27,7 @@ import {
 } from '@ant-design/icons'
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { useSearchParams } from 'react-router'
-import { diffLines } from 'diff'
+import { diffLines, diffChars } from 'diff'
 import type { Chapter } from '@/core/types'
 import { generateId } from '@/utils/id'
 import { useStore } from '@/core/store'
@@ -35,7 +35,7 @@ import { useSystemConfigStore } from '@/core/system-config-store'
 import { db } from '@/core/db'
 import { generate, generateStream } from '@/ai/client'
 import { seedContext, worldContext, charactersContext, constraintsContext, eventLogContext } from '@/ai/context'
-import { CHAPTER_SYSTEM_PROMPT, buildChapterPrompt, buildExtractEventsPrompt, buildInspirationPrompt, buildInspirationChapterPrompt, buildIssueScanPrompt, buildChapterFixPrompt } from '@/ai/prompts/chapters'
+import { CHAPTER_SYSTEM_PROMPT, buildChapterPrompt, buildExtractEventsPrompt, buildInspirationPrompt, buildInspirationChapterPrompt, buildIssueScanPrompt, buildChapterFixPrompt, buildRefinePrompt } from '@/ai/prompts/chapters'
 import { DEFAULT_EVENT_LOG_CONFIG } from '@/features/seed/options'
 import type { EventLogEntry, EventLogConfig } from '@/core/types'
 import RichEditor from '@/components/editor/RichEditor'
@@ -68,6 +68,15 @@ export default function ChaptersPage() {
   const [qwMode, setQwMode] = useState<'newVolume' | 'continue'>('continue')
   const [qwInspirations, setQwInspirations] = useState<{ title: string; summary: string }[]>([])
   const [qwLoading, setQwLoading] = useState(false)
+  // AI 微调
+  const [refineOpen, setRefineOpen] = useState(false)
+  const [refineInstruction, setRefineInstruction] = useState('')
+  const [refineOriginal, setRefineOriginal] = useState('')
+  const [refineResult, setRefineResult] = useState('')
+  const [refineLoading, setRefineLoading] = useState(false)
+  const [refineDone, setRefineDone] = useState(false)
+  const [refineDiffKey, setRefineDiffKey] = useState(0)
+  const [refineEditing, setRefineEditing] = useState(false)
   // 全文检查
   const [checkStep, setCheckStep] = useState<'select' | 'scanning' | 'issues' | 'fixing' | null>(null)
   const [checkVolumes, setCheckVolumes] = useState<string[]>([])
@@ -85,6 +94,13 @@ export default function ChaptersPage() {
   const diffRightRef = useRef<HTMLDivElement>(null)
   const diffEditorRef = useRef<any>(null)
   const diffScrollLock = useRef(false)
+  // 微调弹窗独立 refs/state
+  const refineDiffLeftRef = useRef<HTMLDivElement>(null)
+  const refineDiffRightRef = useRef<HTMLDivElement>(null)
+  const refineDiffEditorRef = useRef<HTMLTextAreaElement | null>(null)
+  const refineDiffScrollLock = useRef(false)
+  const [refineLeftScrollPercent, setRefineLeftScrollPercent] = useState(0)
+  const [refineRightScrollPercent, setRefineRightScrollPercent] = useState(0)
   const countdownRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const cancelAutoRef = useRef(false)
 
@@ -102,6 +118,33 @@ export default function ChaptersPage() {
     textarea.addEventListener('scroll', onScroll)
     return () => textarea.removeEventListener('scroll', onScroll)
   }, [editingFix])
+
+  // 微调编辑器滚动同步左侧
+  useEffect(() => {
+    if (!refineOpen || !refineEditing) return
+    const ta = refineDiffEditorRef.current
+    if (!ta) return
+    if (refineDiffLeftRef.current) {
+      ta.scrollTop = refineDiffLeftRef.current.scrollTop
+    }
+    const onScroll = () => {
+      if (refineDiffScrollLock.current) return
+      refineDiffScrollLock.current = true
+      if (refineDiffLeftRef.current) {
+        const maxScroll = ta.scrollHeight - ta.clientHeight
+        if (maxScroll > 0) {
+          const percent = ta.scrollTop / maxScroll
+          const leftMax = refineDiffLeftRef.current.scrollHeight - refineDiffLeftRef.current.clientHeight
+          refineDiffLeftRef.current.scrollTop = percent * leftMax
+          setRefineLeftScrollPercent(percent)
+          setRefineRightScrollPercent(percent)
+        }
+      }
+      requestAnimationFrame(() => { refineDiffScrollLock.current = false })
+    }
+    ta.addEventListener('scroll', onScroll)
+    return () => ta.removeEventListener('scroll', onScroll)
+  }, [refineOpen, refineEditing])
 
   // 清理倒计时定时器
   useEffect(() => {
@@ -838,6 +881,82 @@ export default function ChaptersPage() {
   }
 
   // === 快速续写 ===
+  // === AI 微调 ===
+  const handleOpenRefine = () => {
+    if (!activeChapter) return
+    setRefineOriginal(activeChapter.content || '')
+    setRefineResult('')
+    setRefineInstruction('')
+    setRefineDone(false)
+    setRefineEditing(false)
+    setRefineOpen(true)
+  }
+
+  const handleRefine = async () => {
+    if (!activeChapter || !refineInstruction.trim()) return
+    if (!aiConfig?.apiKey) { message.warning('请先配置 AI API Key'); return }
+
+    setRefineLoading(true)
+    setRefineResult('')
+    setRefineEditing(false)
+    try {
+      // 构建当前卷前文
+      const work = useStore.getState().currentWork
+      let prevChaptersText = ''
+      if (work) {
+        const outline = work.outline ?? []
+        const chapters = work.chapters ?? []
+        const currentOutlineNode = outline.find((n) => n.id === activeChapter.outlineId)
+        if (currentOutlineNode) {
+          const parentVolume = outline.find((n) => n.id === currentOutlineNode.parentId)
+          if (parentVolume) {
+            const siblingNodes = outline
+              .filter((n) => n.parentId === parentVolume.id && n.level === 'chapter' && n.order < currentOutlineNode.order)
+              .sort((a, b) => a.order - b.order)
+            const parts: string[] = []
+            for (const node of siblingNodes) {
+              const ch = chapters.find((c) => c.outlineId === node.id)
+              if (ch?.content) {
+                parts.push(`【${node.title}】\n${ch.content}`)
+              }
+            }
+            prevChaptersText = parts.join('\n\n')
+          }
+        }
+      }
+      const prompt = buildRefinePrompt(refineOriginal, refineInstruction, prevChaptersText || undefined)
+      const text = await generateStream(prompt, CHAPTER_SYSTEM_PROMPT, aiConfig, (_chunk, fullText) => {
+        setRefineResult(fullText)
+      })
+      if (text && text !== refineOriginal) {
+        setRefineResult(text)
+        setRefineDone(true)
+      } else {
+        message.warning('AI 未产生修改')
+      }
+    } catch (err: any) {
+      message.error('微调失败：' + err.message)
+    } finally {
+      setRefineLoading(false)
+    }
+  }
+
+  const handleApplyRefine = async () => {
+    if (!activeChapter || !refineResult) return
+    const wordCount = refineResult.replace(/\s/g, '').length
+    const updated = (useStore.getState().currentWork?.chapters ?? []).map((c) =>
+      c.id === activeChapter.id ? { ...c, content: refineResult, wordCount } : c,
+    )
+    await persistChapters(updated)
+    message.success('微调已应用')
+    setRefineOpen(false)
+    const work = useStore.getState().currentWork
+    if (work) {
+      const ch = (work.chapters ?? []).find((c) => c.id === activeChapter.id)
+      if (ch) regenerateChapterEvents(ch.id)
+    }
+  }
+
   const handleQuickWrite = async (mode: 'newVolume' | 'continue') => {
     if (!currentWork) return
     if (!aiConfig?.apiKey) { message.warning('请先配置 AI API Key'); return }
@@ -1269,6 +1388,14 @@ export default function ChaptersPage() {
                   >
                     AI 生成正文
                   </Button>
+                  {activeChapter.wordCount > 0 && (
+                    <Button
+                      icon={<ExperimentOutlined />}
+                      onClick={handleOpenRefine}
+                    >
+                      AI 微调
+                    </Button>
+                  )}
                 </Space>
               )}
             </div>
@@ -1825,6 +1952,213 @@ export default function ChaptersPage() {
             </div>
             )
           })
+        )}
+      </Modal>
+
+      {/* AI 微调弹窗 */}
+      <Modal
+        title="AI 微调"
+        open={refineOpen}
+        onCancel={() => setRefineOpen(false)}
+        width={1000}
+        styles={{ body: { height: '75vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' } }}
+        footer={
+          <Space>
+            <Button onClick={() => setRefineOpen(false)}>取消</Button>
+            <Button type="primary" onClick={handleApplyRefine} disabled={!refineDone || !refineResult}>
+              应用修改
+            </Button>
+          </Space>
+        }
+      >
+        {refineLoading && !refineResult ? (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+            <Spin size="large" description="AI 微调中..." />
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 8 }}>
+            {/* 微调指令 */}
+            <div style={{ flexShrink: 0 }}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <Input.TextArea
+                  rows={2}
+                  value={refineInstruction}
+                  onChange={(e) => setRefineInstruction(e.target.value)}
+                  placeholder="例如：让对话更自然、增加环境描写、调整节奏..."
+                  disabled={refineLoading}
+                  style={{ flex: 1 }}
+                />
+                <Button
+                  type="primary"
+                  icon={<ExperimentOutlined />}
+                  loading={refineLoading}
+                  disabled={!refineInstruction.trim()}
+                  onClick={handleRefine}
+                  style={{ alignSelf: 'flex-end' }}
+                >
+                  微调
+                </Button>
+              </div>
+            </div>
+            {/* 左右对比视图 */}
+            {(() => {
+              void refineDiffKey
+              const displayRight = refineResult || refineOriginal
+              const charParts = refineResult ? diffChars(refineOriginal, refineResult) : []
+              const leftItems: { text: string; type: 'same' | 'removed' }[] = []
+              const rightItems: { text: string; type: 'same' | 'added' }[] = []
+              if (refineResult) {
+                for (const part of charParts) {
+                  if (!part.added && !part.removed) {
+                    leftItems.push({ text: part.value, type: 'same' })
+                    rightItems.push({ text: part.value, type: 'same' })
+                  } else if (part.removed) {
+                    leftItems.push({ text: part.value, type: 'removed' })
+                    rightItems.push({ text: '', type: 'same' })
+                  } else if (part.added) {
+                    leftItems.push({ text: '', type: 'same' })
+                    rightItems.push({ text: part.value, type: 'added' })
+                  }
+                }
+              } else {
+                // 无结果时，左侧显示原文，右侧也显示原文（无高亮）
+                leftItems.push({ text: refineOriginal, type: 'same' })
+                rightItems.push({ text: '', type: 'same' })
+              }
+
+              const renderHighlight = (items: { text: string; type: string }[], highlightType: string, color: string) => {
+                const paragraphs: { text: string; type: string }[][] = []
+                let current: { text: string; type: string }[] = []
+                for (const item of items) {
+                  const lines = item.text.split('\n')
+                  for (let i = 0; i < lines.length; i++) {
+                    if (i > 0) { paragraphs.push(current); current = [] }
+                    current.push({ text: lines[i], type: item.type })
+                  }
+                }
+                if (current.length) paragraphs.push(current)
+                return paragraphs.map((para, pi) => (
+                  <div key={pi} style={{ minHeight: 22, padding: '2px 8px', lineHeight: 1.8, fontSize: 13 }}>
+                    {para.map((item, ii) => (
+                      <span key={ii} style={{
+                        background: item.type === highlightType ? (highlightType === 'removed' ? '#fff1f0' : '#f6ffed') : undefined,
+                        borderBottom: item.type === highlightType ? `2px solid ${color}` : undefined,
+                      }}>{item.text || ' '}</span>
+                    ))}
+                  </div>
+                ))
+              }
+
+              const leftTotal = leftItems.reduce((s, item) => s + (item.text.split('\n').length || 1), 0)
+              const rightTotal = rightItems.reduce((s, item) => s + (item.text.split('\n').length || 1), 0)
+              const totalLines = Math.max(leftTotal, rightTotal, 1)
+              const removedRanges: { start: number; end: number }[] = []
+              const addedRanges: { start: number; end: number }[] = []
+              let lp = 0
+              for (const item of leftItems) { const lc = item.text.split('\n').length || 1; if (item.type === 'removed') removedRanges.push({ start: lp / totalLines * 100, end: (lp + lc) / totalLines * 100 }); lp += lc }
+              lp = 0
+              for (const item of rightItems) { const lc = item.text.split('\n').length || 1; if (item.type === 'added') addedRanges.push({ start: lp / totalLines * 100, end: (lp + lc) / totalLines * 100 }); lp += lc }
+
+              const renderMinimap = (ranges: { start: number; end: number }[], color: string) => (
+                <div style={{ width: 10, background: '#f5f5f5', borderLeft: '1px solid #e8e8e8', position: 'relative', flexShrink: 0 }}>
+                  {ranges.map((r, i) => (
+                    <div key={i} style={{ position: 'absolute', left: 1, right: 1, top: `${r.start}%`, height: `${Math.max(r.end - r.start, 1.5)}%`, background: color, borderRadius: 2, opacity: 0.8 }} />
+                  ))}
+                </div>
+              )
+
+              const getStats = (text: string, scrollPercent: number) => {
+                const lines = text.split('\n')
+                const total = lines.length
+                const chars = text.replace(/\s/g, '').length
+                const currentLine = Math.min(Math.ceil(scrollPercent * total) + 1, total)
+                return { chars, total, currentLine }
+              }
+
+              const handleRefineDiffScroll = (source: 'left' | 'right') => () => {
+                if (refineDiffScrollLock.current) return
+                refineDiffScrollLock.current = true
+                const src = source === 'left' ? refineDiffLeftRef.current : (refineEditing ? refineDiffEditorRef.current : refineDiffRightRef.current)
+                const tgt = source === 'left' ? (refineEditing ? refineDiffEditorRef.current : refineDiffRightRef.current) : refineDiffLeftRef.current
+                if (src && tgt) {
+                  const maxScroll = src.scrollHeight - src.clientHeight
+                  if (maxScroll > 0) {
+                    const percent = src.scrollTop / maxScroll
+                    const tgtMax = tgt.scrollHeight - tgt.clientHeight
+                    tgt.scrollTop = percent * tgtMax
+                    setRefineLeftScrollPercent(percent)
+                    setRefineRightScrollPercent(percent)
+                  }
+                }
+                requestAnimationFrame(() => { refineDiffScrollLock.current = false })
+              }
+
+              const leftStats = getStats(refineOriginal, refineLeftScrollPercent)
+              const rightStats = getStats(refineResult, refineRightScrollPercent)
+
+              return (
+                <div style={{ display: 'flex', gap: 2, flex: 1, border: '1px solid #d9d9d9', borderRadius: 6, overflow: 'hidden', minHeight: 0 }}>
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                    <div style={{ padding: '6px 12px', borderBottom: '1px solid #f0f0f0', fontWeight: 600, fontSize: 12, color: '#999', flexShrink: 0 }}>
+                      {refineEditing ? '原文（高亮标记修改位置）' : '原文（红色 = 将被删除）'}
+                    </div>
+                    <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+                      <div ref={refineDiffLeftRef} style={{ flex: 1, overflow: 'auto', background: '#fafafa' }} onScroll={handleRefineDiffScroll('left')}>
+                        {renderHighlight(leftItems, 'removed', '#ff4d4f')}
+                      </div>
+                      {renderMinimap(removedRanges, '#ff4d4f')}
+                    </div>
+                    <div style={{ padding: '2px 8px', borderTop: '1px solid #f0f0f0', fontSize: 11, color: '#999', flexShrink: 0, display: 'flex', gap: 12 }}>
+                      <span>字数: {leftStats.chars}</span>
+                      <span>行数: {leftStats.total}</span>
+                      <span>当前: {leftStats.currentLine}/{leftStats.total}</span>
+                    </div>
+                  </div>
+                  <div style={{ width: 1, background: '#d9d9d9' }} />
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                    <div style={{ padding: '6px 12px', borderBottom: '1px solid #f0f0f0', fontWeight: 600, fontSize: 12, color: '#999', flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>{refineResult ? (refineEditing ? '修改后（可编辑）' : '修改后（绿色 = 新增）') : '修改后（等待 AI 输出）'}</span>
+                      {refineResult && (
+                        <Space size={4}>
+                          <Button size="small" type="link" onClick={() => setRefineDiffKey((k) => k + 1)}>重新对比</Button>
+                          <Button size="small" type="link" onClick={() => setRefineEditing(!refineEditing)}>
+                            {refineEditing ? '确认并对比' : '编辑'}
+                          </Button>
+                        </Space>
+                      )}
+                    </div>
+                    <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+                      {refineEditing && refineResult ? (
+                        <textarea
+                          ref={refineDiffEditorRef as any}
+                          value={refineResult}
+                          onChange={(e) => setRefineResult(e.target.value)}
+                          style={{ flex: 1, border: 'none', borderRadius: 0, fontSize: 13, resize: 'none', lineHeight: 1.8, padding: '2px 8px', fontFamily: 'inherit' }}
+                          autoFocus
+                        />
+                      ) : refineResult ? (
+                        <>
+                          <div ref={refineDiffRightRef} style={{ flex: 1, overflow: 'auto', background: '#fafafa' }} onScroll={handleRefineDiffScroll('right')}>
+                            {renderHighlight(rightItems, 'added', '#52c41a')}
+                          </div>
+                          {renderMinimap(addedRanges, '#52c41a')}
+                        </>
+                      ) : (
+                        <div ref={refineDiffRightRef} style={{ flex: 1, overflow: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#bbb', fontSize: 13 }}>
+                          点击「微调」后 AI 将在此显示修改结果
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ padding: '2px 8px', borderTop: '1px solid #f0f0f0', fontSize: 11, color: '#999', flexShrink: 0, display: 'flex', gap: 12 }}>
+                      <span>字数: {rightStats.chars}</span>
+                      <span>行数: {rightStats.total}</span>
+                      <span>当前: {rightStats.currentLine}/{rightStats.total}</span>
+                    </div>
+                  </div>
+                </div>
+              )
+            })()}
+          </div>
         )}
       </Modal>
     </div>

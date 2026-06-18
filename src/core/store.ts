@@ -196,6 +196,7 @@ function getLastWorkId(): string | null {
 interface AppState {
   // 当前作品
   currentWork: Work | null
+  workLoaded: boolean
   setCurrentWork: (work: Work | null) => void
   /** 从 localStorage 恢复上次打开的作品 */
   loadLastWork: () => Promise<void>
@@ -237,19 +238,21 @@ interface AppState {
 
 export const useStore = create<AppState>((set) => ({
   currentWork: null,
+  workLoaded: false,
   setCurrentWork: (work) => {
     saveLastWorkId(work?.id ?? null)
     set({ currentWork: work ? migrateWork(work) : null })
   },
   loadLastWork: async () => {
     const id = getLastWorkId()
-    if (!id) return
+    if (!id) { set({ workLoaded: true }); return }
     try {
       const work = await db.works.get(id)
-      if (work) set({ currentWork: migrateWork(work) })
-      else saveLastWorkId(null)
+      if (work) set({ currentWork: migrateWork(work), workLoaded: true })
+      else { saveLastWorkId(null); set({ workLoaded: true }) }
     } catch {
       saveLastWorkId(null)
+      set({ workLoaded: true })
     }
   },
 

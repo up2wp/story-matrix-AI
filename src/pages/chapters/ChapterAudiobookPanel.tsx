@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Empty, Progress, Space, Typography } from 'antd'
+import { Alert, Button, Card, Collapse, Empty, Progress, Space, Typography } from 'antd'
 import { useState } from 'react'
 import { CustomerServiceOutlined, SoundOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router'
@@ -69,12 +69,14 @@ export default function ChapterAudiobookPanel({ work, chapter, writing }: Props)
   }
 
   return (
-    <Card
+    <Collapse
       size="small"
-      style={{ marginTop: 16, flexShrink: 0, maxHeight: 'min(42vh, 560px)', display: 'flex', flexDirection: 'column' }}
-      styles={{ body: { overflowY: 'auto', overflowX: 'hidden', minHeight: 0 } }}
-      title={<><CustomerServiceOutlined /> 有声读物</>}
-    >
+      style={{ marginTop: 16, flexShrink: 0 }}
+      items={[{
+        key: 'audiobook',
+        label: <><CustomerServiceOutlined /> 有声读物</>,
+        children: (
+          <div style={{ maxHeight: 'min(36vh, 480px)', overflowY: 'auto', overflowX: 'hidden' }}>
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
         <Space wrap>
           <Button onClick={() => navigate('/character-voices')}>配置角色声音</Button>
@@ -97,6 +99,9 @@ export default function ChapterAudiobookPanel({ work, chapter, writing }: Props)
         {segments.length ? <SegmentReviewTable segments={segments} characters={work.characters} onUpdate={(segmentId, changes, baseVersion) => updateSegment(chapter.id, segmentId, changes, baseVersion)} onDirtyChange={setHasDirtySegments} onGenerateTonePrompt={async (segmentId) => { await generateSegmentTonePrompt(chapter.id, segmentId, { overwrite: true }) }} onGenerateTonePrompts={() => generateSegmentTonePrompts(chapter.id)} onMergeSegments={(segmentIds) => mergeSegments(chapter.id, segmentIds)} onRefineSegment={(segmentId) => refineSegment(chapter, segmentId)} onRetryAttribution={(segmentId) => retrySegmentAttribution(chapter, segmentId)} onRegenerateSegmentAudio={(segmentId) => regenerateSegmentAudio(chapter, segmentId)} onPlaySegmentAudio={playSegmentAudio} onDownloadSegmentAudio={downloadSegmentAudio} scrollY={280} /> : <Empty description="先点击 AI 分段" />}
         <ChapterAudioPlayer chapter={chapter} segments={segments} />
       </Space>
-    </Card>
+          </div>
+        ),
+      }]}
+    />
   )
 }
