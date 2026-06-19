@@ -92,6 +92,8 @@ export default function ChaptersPage() {
   const [nextFixReady, setNextFixReady] = useState<{ content: string; changes: string[]; title: string } | null>(null)
   const diffLeftRef = useRef<HTMLDivElement>(null)
   const diffRightRef = useRef<HTMLDivElement>(null)
+  const [leftScrollPercent, setLeftScrollPercent] = useState(0)
+  const [rightScrollPercent, setRightScrollPercent] = useState(0)
   const diffEditorRef = useRef<any>(null)
   const diffScrollLock = useRef(false)
   // 微调弹窗独立 refs/state
@@ -107,16 +109,28 @@ export default function ChaptersPage() {
   // 编辑器滚动同步左侧
   useEffect(() => {
     if (!editingFix) return
-    const textarea = diffEditorRef.current?.resizableTextArea?.textArea
-    if (!textarea) return
+    const ta = diffEditorRef.current
+    if (!ta) return
+    if (diffLeftRef.current) {
+      ta.scrollTop = diffLeftRef.current.scrollTop
+    }
     const onScroll = () => {
       if (diffScrollLock.current) return
       diffScrollLock.current = true
-      if (diffLeftRef.current) diffLeftRef.current.scrollTop = textarea.scrollTop
+      if (diffLeftRef.current) {
+        const maxScroll = ta.scrollHeight - ta.clientHeight
+        if (maxScroll > 0) {
+          const percent = ta.scrollTop / maxScroll
+          const leftMax = diffLeftRef.current.scrollHeight - diffLeftRef.current.clientHeight
+          diffLeftRef.current.scrollTop = percent * leftMax
+          setLeftScrollPercent(percent)
+          setRightScrollPercent(percent)
+        }
+      }
       requestAnimationFrame(() => { diffScrollLock.current = false })
     }
-    textarea.addEventListener('scroll', onScroll)
-    return () => textarea.removeEventListener('scroll', onScroll)
+    ta.addEventListener('scroll', onScroll)
+    return () => ta.removeEventListener('scroll', onScroll)
   }, [editingFix])
 
   // 微调编辑器滚动同步左侧
@@ -1644,143 +1658,153 @@ export default function ChaptersPage() {
             )}
             {/* 左右对比视图 */}
             {(() => {
-              // diffKey 用于强制重新计算 diff
               void diffKey
-              // 获取原文
+              void refineDiffKey
               const work = useStore.getState().currentWork
               const ch = (work?.chapters ?? []).find((c) => {
                 const node = (work?.outline ?? []).find((n) => n.id === c.outlineId)
                 return node?.title === fixChapterTitle || node?.title.includes(fixChapterTitle)
               })
               const originalText = ch?.content || ''
-              const parts = diffLines(originalText, fixDraft)
+              const charParts = diffChars(originalText, fixDraft)
 
-              // 分离为左右，记录每个 change 在总行数中的位置
-              const leftParts: { text: string; type: 'same' | 'removed' }[] = []
-              const rightParts: { text: string; type: 'same' | 'added' }[] = []
-              const changePositions: { start: number; end: number; type: 'removed' | 'added' }[] = []
-              let leftLineCount = 0
-              let rightLineCount = 0
-
-              for (const part of parts) {
-                const lines = part.value.split('\n')
-                if (lines[lines.length - 1] === '') lines.pop()
-                const lineCount = lines.length || 1
-
+              const leftItems: { text: string; type: 'same' | 'removed' }[] = []
+              const rightItems: { text: string; type: 'same' | 'added' }[] = []
+              for (const part of charParts) {
                 if (!part.added && !part.removed) {
-                  leftParts.push({ text: part.value, type: 'same' })
-                  rightParts.push({ text: part.value, type: 'same' })
-                  leftLineCount += lineCount
-                  rightLineCount += lineCount
+                  leftItems.push({ text: part.value, type: 'same' })
+                  rightItems.push({ text: part.value, type: 'same' })
                 } else if (part.removed) {
-                  leftParts.push({ text: part.value, type: 'removed' })
-                  rightParts.push({ text: '', type: 'same' })
-                  changePositions.push({ start: leftLineCount, end: leftLineCount + lineCount, type: 'removed' })
-                  leftLineCount += lineCount
-                  rightLineCount += lineCount // 占位行
+                  leftItems.push({ text: part.value, type: 'removed' })
+                  rightItems.push({ text: '', type: 'same' })
                 } else if (part.added) {
-                  leftParts.push({ text: '', type: 'same' })
-                  rightParts.push({ text: part.value, type: 'added' })
-                  changePositions.push({ start: rightLineCount, end: rightLineCount + lineCount, type: 'added' })
-                  leftLineCount += lineCount // 占位行
-                  rightLineCount += lineCount
+                  leftItems.push({ text: '', type: 'same' })
+                  rightItems.push({ text: part.value, type: 'added' })
                 }
               }
 
-              const totalLines = Math.max(leftLineCount, rightLineCount, 1)
+              const renderHighlight = (items: { text: string; type: string }[], highlightType: string, color: string) => {
+                const paragraphs: { text: string; type: string }[][] = []
+                let current: { text: string; type: string }[] = []
+                for (const item of items) {
+                  const ls = item.text.split('\n')
+                  for (let i = 0; i < ls.length; i++) {
+                    if (i > 0) { paragraphs.push(current); current = [] }
+                    current.push({ text: ls[i], type: item.type })
+                  }
+                }
+                if (current.length) paragraphs.push(current)
+                return paragraphs.map((para, pi) => (
+                  <div key={pi} style={{ minHeight: 22, padding: '2px 8px', lineHeight: 1.8, fontSize: 13 }}>
+                    {para.map((item, ii) => (
+                      <span key={ii} style={{
+                        background: item.type === highlightType ? (highlightType === 'removed' ? '#fff1f0' : '#f6ffed') : undefined,
+                        borderBottom: item.type === highlightType ? `2px solid ${color}` : undefined,
+                      }}>{item.text || '\u00a0'}</span>
+                    ))}
+                  </div>
+                ))
+              }
 
-              // 同步滚动处理
-              const handleScroll = (source: 'left' | 'right') => (e: React.UIEvent<HTMLDivElement>) => {
+              const leftTotal = leftItems.reduce((s, item) => s + (item.text.split('\n').length || 1), 0)
+              const rightTotal = rightItems.reduce((s, item) => s + (item.text.split('\n').length || 1), 0)
+              const totalLines = Math.max(leftTotal, rightTotal, 1)
+              const removedRanges: { start: number; end: number }[] = []
+              const addedRanges: { start: number; end: number }[] = []
+              let lp = 0
+              for (const item of leftItems) { const lc = item.text.split('\n').length || 1; if (item.type === 'removed') removedRanges.push({ start: lp / totalLines * 100, end: (lp + lc) / totalLines * 100 }); lp += lc }
+              lp = 0
+              for (const item of rightItems) { const lc = item.text.split('\n').length || 1; if (item.type === 'added') addedRanges.push({ start: lp / totalLines * 100, end: (lp + lc) / totalLines * 100 }); lp += lc }
+
+              const renderMinimap = (ranges: { start: number; end: number }[], color: string) => (
+                <div style={{ width: 10, background: '#f5f5f5', borderLeft: '1px solid #e8e8e8', position: 'relative', flexShrink: 0 }}>
+                  {ranges.map((r, i) => (
+                    <div key={i} style={{ position: 'absolute', left: 1, right: 1, top: `${r.start}%`, height: `${Math.max(r.end - r.start, 1.5)}%`, background: color, borderRadius: 2, opacity: 0.8 }} />
+                  ))}
+                </div>
+              )
+
+              const getStats = (text: string, scrollPercent: number) => {
+                const ls = text.split('\n')
+                const total = ls.length
+                const chars = text.replace(/\s/g, '').length
+                const currentLine = Math.min(Math.ceil(scrollPercent * total) + 1, total)
+                return { chars, total, currentLine }
+              }
+
+              const handleDiffScroll = (source: 'left' | 'right') => () => {
                 if (diffScrollLock.current) return
                 diffScrollLock.current = true
-                const target = source === 'left' ? diffRightRef.current : diffLeftRef.current
-                if (target && e.currentTarget) {
-                  target.scrollTop = e.currentTarget.scrollTop
+                const src = source === 'left' ? diffLeftRef.current : (editingFix ? diffEditorRef.current : diffRightRef.current)
+                const tgt = source === 'left' ? (editingFix ? diffEditorRef.current : diffRightRef.current) : diffLeftRef.current
+                if (src && tgt) {
+                  const maxScroll = src.scrollHeight - src.clientHeight
+                  if (maxScroll > 0) {
+                    const percent = src.scrollTop / maxScroll
+                    const tgtMax = tgt.scrollHeight - tgt.clientHeight
+                    tgt.scrollTop = percent * tgtMax
+                    setLeftScrollPercent(percent)
+                    setRightScrollPercent(percent)
+                  }
                 }
                 requestAnimationFrame(() => { diffScrollLock.current = false })
               }
 
-              // 渲染带 minimap 的面板
-              const renderPanel = (
-                items: { text: string; type: string }[],
-                containerRef: React.RefObject<HTMLDivElement | null>,
-                changes: { start: number; end: number; type: string }[],
-                changeType: 'removed' | 'added',
-              ) => (
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                  <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-                    {/* 内容区 */}
-                    <div
-                      ref={containerRef}
-                      style={{ flex: 1, overflow: 'auto', background: '#fafafa' }}
-                      onScroll={handleScroll(changeType === 'removed' ? 'left' : 'right')}
-                    >
-                      {items.map((item, i) => (
-                        <div key={i} style={{
-                          minHeight: 22, padding: '2px 8px',
-                          whiteSpace: 'pre-wrap', wordBreak: 'break-all',
-                          background: item.type === 'removed' ? '#fff1f0' : item.type === 'added' ? '#f6ffed' : undefined,
-                          borderLeft: item.type === 'removed' ? '3px solid #ff4d4f' : item.type === 'added' ? '3px solid #52c41a' : '3px solid transparent',
-                          fontSize: 13, lineHeight: 1.8,
-                        }}>
-                          {item.text || ' '}
-                        </div>
-                      ))}
-                    </div>
-                    {/* Minimap 修改位置指示条 */}
-                    <div style={{ width: 12, background: '#f5f5f5', borderLeft: '1px solid #e8e8e8', position: 'relative', flexShrink: 0 }}>
-                      {changes.filter((c) => c.type === changeType).map((c, i) => {
-                        const top = (c.start / totalLines) * 100
-                        const height = Math.max(((c.end - c.start) / totalLines) * 100, 1.5)
-                        return (
-                          <div key={i} style={{
-                            position: 'absolute',
-                            left: 1, right: 1,
-                            top: `${top}%`,
-                            height: `${height}%`,
-                            background: changeType === 'removed' ? '#ff4d4f' : '#52c41a',
-                            borderRadius: 2,
-                            opacity: 0.8,
-                          }} />
-                        )
-                      })}
-                    </div>
-                  </div>
-                </div>
-              )
+              const leftStats = getStats(originalText, leftScrollPercent)
+              const rightStats = getStats(fixDraft, rightScrollPercent)
 
               return (
                 <div style={{ display: 'flex', gap: 2, flex: 1, border: '1px solid #d9d9d9', borderRadius: 6, overflow: 'hidden', minHeight: 0 }}>
-                  {/* 左侧：原文 */}
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                     <div style={{ padding: '6px 12px', borderBottom: '1px solid #f0f0f0', fontWeight: 600, fontSize: 12, color: '#999', flexShrink: 0 }}>
-                      原文（<span style={{ color: '#ff4d4f' }}>红色</span> = 将被删除）
+                      {editingFix ? '原文（高亮标记修改位置）' : '原文（红色 = 将被删除）'}
                     </div>
-                    {renderPanel(leftParts, diffLeftRef, changePositions, 'removed')}
+                    <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+                      <div ref={diffLeftRef} style={{ flex: 1, overflow: 'auto', background: '#fafafa' }} onScroll={handleDiffScroll('left')}>
+                        {renderHighlight(leftItems, 'removed', '#ff4d4f')}
+                      </div>
+                      {renderMinimap(removedRanges, '#ff4d4f')}
+                    </div>
+                    <div style={{ padding: '2px 8px', borderTop: '1px solid #f0f0f0', fontSize: 11, color: '#999', flexShrink: 0, display: 'flex', gap: 12 }}>
+                      <span>字数: {leftStats.chars}</span>
+                      <span>行数: {leftStats.total}</span>
+                      <span>当前: {leftStats.currentLine}/{leftStats.total}</span>
+                    </div>
                   </div>
                   <div style={{ width: 1, background: '#d9d9d9' }} />
-                  {/* 右侧：修改后 */}
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                     <div style={{ padding: '6px 12px', borderBottom: '1px solid #f0f0f0', fontWeight: 600, fontSize: 12, color: '#999', flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span>修改后（<span style={{ color: '#52c41a' }}>绿色</span> = 新增）</span>
+                      <span>{editingFix ? '修改后（可编辑）' : '修改后（绿色 = 新增）'}</span>
                       <Space size={4}>
                         <Button size="small" type="link" onClick={() => setDiffKey((k) => k + 1)}>重新对比</Button>
                         <Button size="small" type="link" onClick={() => setEditingFix(!editingFix)}>
-                          {editingFix ? '确认' : '编辑'}
+                          {editingFix ? '确认并对比' : '编辑'}
                         </Button>
                       </Space>
                     </div>
-                    {editingFix ? (
-                      <Input.TextArea
-                        ref={diffEditorRef}
-                        value={fixDraft}
-                        onChange={(e) => setFixDraft(e.target.value)}
-                        style={{ flex: 1, border: 'none', borderRadius: 0, fontSize: 13, resize: 'none', lineHeight: 1.8 }}
-                        autoFocus
-                      />
-                    ) : (
-                      renderPanel(rightParts, diffRightRef, changePositions, 'added')
-                    )}
+                    <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+                      {editingFix ? (
+                        <textarea
+                          ref={diffEditorRef as any}
+                          value={fixDraft}
+                          onChange={(e) => setFixDraft(e.target.value)}
+                          style={{ flex: 1, border: 'none', borderRadius: 0, fontSize: 13, resize: 'none', lineHeight: 1.8, padding: '2px 8px', fontFamily: 'inherit' }}
+                          autoFocus
+                        />
+                      ) : (
+                        <>
+                          <div ref={diffRightRef} style={{ flex: 1, overflow: 'auto', background: '#fafafa' }} onScroll={handleDiffScroll('right')}>
+                            {renderHighlight(rightItems, 'added', '#52c41a')}
+                          </div>
+                          {renderMinimap(addedRanges, '#52c41a')}
+                        </>
+                      )}
+                    </div>
+                    <div style={{ padding: '2px 8px', borderTop: '1px solid #f0f0f0', fontSize: 11, color: '#999', flexShrink: 0, display: 'flex', gap: 12 }}>
+                      <span>字数: {rightStats.chars}</span>
+                      <span>行数: {rightStats.total}</span>
+                      <span>当前: {rightStats.currentLine}/{rightStats.total}</span>
+                    </div>
                   </div>
                 </div>
               )
@@ -1789,7 +1813,7 @@ export default function ChaptersPage() {
         )}
         {!fixDraft && checkStep === 'fixing' && (
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
-            <Spin tip={`正在生成 ${fixQueue[0] || ''} 的修改建议...`} />
+            <Spin description={`正在生成 ${fixQueue[0] || ''} 的修改建议...`} />
           </div>
         )}
       </Modal>
@@ -1830,7 +1854,7 @@ export default function ChaptersPage() {
           <div>
             {qwLoading && qwInspirations.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '32px 0' }}>
-                <Spin tip="AI 正在构思灵感..." />
+                <Spin description="AI 正在构思灵感..." />
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -1971,12 +1995,7 @@ export default function ChaptersPage() {
           </Space>
         }
       >
-        {refineLoading && !refineResult ? (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-            <Spin size="large" description="AI 微调中..." />
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 8 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 8 }}>
             {/* 微调指令 */}
             <div style={{ flexShrink: 0 }}>
               <div style={{ display: 'flex', gap: 8 }}>
@@ -1996,7 +2015,7 @@ export default function ChaptersPage() {
                   onClick={handleRefine}
                   style={{ alignSelf: 'flex-end' }}
                 >
-                  微调
+                  {refineLoading ? '微调中...' : '微调'}
                 </Button>
               </div>
             </div>
@@ -2159,7 +2178,6 @@ export default function ChaptersPage() {
               )
             })()}
           </div>
-        )}
       </Modal>
     </div>
   )
