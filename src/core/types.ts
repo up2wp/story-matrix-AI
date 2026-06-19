@@ -251,6 +251,7 @@ export interface ChapterAudioState {
   status: ChapterAudioStatus
   segmentIds: string[]
   generationIds: string[]
+  chapterAudioJobId?: string
   updatedAt: number
   error?: string
   generatedWith?: ChapterGenerationSnapshot

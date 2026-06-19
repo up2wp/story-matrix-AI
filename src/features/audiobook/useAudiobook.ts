@@ -188,6 +188,18 @@ function invalidateSpeakerAudio(config: WorkAudiobookConfig, speakerKind: VoiceB
   }
 }
 
+function clearSynthesizedChapterAudio(config: WorkAudiobookConfig, chapterId: string, error = '章节分段已变更，请重新合成章节音频'): WorkAudiobookConfig {
+  const state = config.chapterAudio[chapterId]
+  if (!state?.chapterAudioJobId) return config
+  return {
+    ...config,
+    chapterAudio: {
+      ...config.chapterAudio,
+      [chapterId]: { ...state, status: 'stale', chapterAudioJobId: undefined, error, updatedAt: now() },
+    },
+  }
+}
+
 function changedRecordEntries<T>(current: Record<string, T>, next: Record<string, T>): Record<string, T> {
   return Object.fromEntries(Object.entries(next).filter(([key, value]) => JSON.stringify(current[key]) !== JSON.stringify(value)))
 }
@@ -369,15 +381,21 @@ export function useAudiobook() {
 
   const saveSegments = async (chapterId: string, segments: AudiobookSegment[]) => {
     if (!audiobook) return
-    await persistAudiobook({
+    await persistAudiobook(clearSynthesizedChapterAudio({
       ...audiobook,
       segmentsByChapter: { ...audiobook.segmentsByChapter, [chapterId]: segments },
-    })
+    }, chapterId))
   }
 
   const patchSegmentFields = async (chapterId: string, segmentId: string, fields: Partial<AudiobookSegment>, baseVersion?: number) => {
     const work = useStore.getState().currentWork
     if (!work) return
+    const clearsChapterAudio = ['speakerKind', 'characterId', 'speakerName', 'text', 'mood', 'prompt', 'attributionSource', 'attributionStatus', 'attributionConfidence', 'needsReview'].some((field) => field in fields)
+    if (clearsChapterAudio) {
+      const latest = ensureAudiobook(work)
+      const cleared = clearSynthesizedChapterAudio(latest, chapterId)
+      if (cleared !== latest) await persistAudiobook(cleared)
+    }
     const result = await db.works.patchAudiobookSegment(work.id, {
       chapterId,
       segmentId,
@@ -396,6 +414,7 @@ export function useAudiobook() {
       ...latestWork,
       audiobook: {
         ...latestAudiobook,
+        chapterAudio: clearsChapterAudio ? clearSynthesizedChapterAudio(latestAudiobook, chapterId).chapterAudio : latestAudiobook.chapterAudio,
         segmentsByChapter: {
           ...latestAudiobook.segmentsByChapter,
           [chapterId]: latestSegments.map((segment) => segment.id === segmentId ? resultSegment : segment),
@@ -415,7 +434,7 @@ export function useAudiobook() {
     const marking = currentSegments.map((segment) => batch.some((item) => item.id === segment.id)
       ? { ...segment, attributionStatus: 'attributing' as const, attributionBatchId: batchId, attributionError: undefined }
       : segment)
-    await persistAudiobook({ ...latest, segmentsByChapter: { ...latest.segmentsByChapter, [chapter.id]: marking } })
+    await persistAudiobook(clearSynthesizedChapterAudio({ ...latest, segmentsByChapter: { ...latest.segmentsByChapter, [chapter.id]: marking } }, chapter.id))
 
     try {
       const prompt = buildAudiobookAttributionPrompt(work, chapter, batch, contextSegments)
@@ -423,13 +442,13 @@ export function useAudiobook() {
       const results = parseAttributionJson(text)
       const afterGenerate = ensureAudiobook(useStore.getState().currentWork!)
       const applied = applyAttributionResults(work, afterGenerate.segmentsByChapter[chapter.id] || [], results, batchId)
-      await persistAudiobook({ ...afterGenerate, segmentsByChapter: { ...afterGenerate.segmentsByChapter, [chapter.id]: applied } })
+      await persistAudiobook(clearSynthesizedChapterAudio({ ...afterGenerate, segmentsByChapter: { ...afterGenerate.segmentsByChapter, [chapter.id]: applied } }, chapter.id))
       return true
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : '归因失败'
       const afterError = ensureAudiobook(useStore.getState().currentWork!)
       const failed = markAttributionFailed(afterError.segmentsByChapter[chapter.id] || [], batch.map((segment) => segment.id), batchId, errMsg)
-      await persistAudiobook({ ...afterError, segmentsByChapter: { ...afterError.segmentsByChapter, [chapter.id]: failed } })
+      await persistAudiobook(clearSynthesizedChapterAudio({ ...afterError, segmentsByChapter: { ...afterError.segmentsByChapter, [chapter.id]: failed } }, chapter.id))
       return false
     }
   }
@@ -444,7 +463,7 @@ export function useAudiobook() {
     const marking = currentSegments.map((segment) => batch.some((item) => item.id === segment.id)
       ? { ...segment, attributionStatus: 'attributing' as const, attributionBatchId: batchId, attributionError: undefined }
       : segment)
-    await persistAudiobook({ ...latest, segmentsByChapter: { ...latest.segmentsByChapter, [chapter.id]: marking } })
+    await persistAudiobook(clearSynthesizedChapterAudio({ ...latest, segmentsByChapter: { ...latest.segmentsByChapter, [chapter.id]: marking } }, chapter.id))
 
     try {
       const prompt = buildAudiobookAttributionPrompt(work, chapter, batch, contextSegments)
@@ -452,13 +471,13 @@ export function useAudiobook() {
       const results = parseAttributionJson(text)
       const afterGenerate = ensureAudiobook(useStore.getState().currentWork!)
       const applied = applySegmentRefinementResults(work, afterGenerate.segmentsByChapter[chapter.id] || [], results, batchId)
-      await persistAudiobook({ ...afterGenerate, segmentsByChapter: { ...afterGenerate.segmentsByChapter, [chapter.id]: applied } })
+      await persistAudiobook(clearSynthesizedChapterAudio({ ...afterGenerate, segmentsByChapter: { ...afterGenerate.segmentsByChapter, [chapter.id]: applied } }, chapter.id))
       return true
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : '细分失败'
       const afterError = ensureAudiobook(useStore.getState().currentWork!)
       const failed = markAttributionFailed(afterError.segmentsByChapter[chapter.id] || [], batch.map((segment) => segment.id), batchId, errMsg)
-      await persistAudiobook({ ...afterError, segmentsByChapter: { ...afterError.segmentsByChapter, [chapter.id]: failed } })
+      await persistAudiobook(clearSynthesizedChapterAudio({ ...afterError, segmentsByChapter: { ...afterError.segmentsByChapter, [chapter.id]: failed } }, chapter.id))
       return false
     }
   }
@@ -753,6 +772,26 @@ export function useAudiobook() {
     await generateChapterAudio(chapter, { segmentIds: [segmentId] })
   }
 
+  const saveSynthesizedChapterAudio = async (chapterId: string, chapterAudioJobId: string) => {
+    const latest = ensureAudiobook(useStore.getState().currentWork!)
+    const segments = latest.segmentsByChapter[chapterId] || []
+    await persistAudiobook({
+      ...latest,
+      chapterAudio: {
+        ...latest.chapterAudio,
+        [chapterId]: {
+          chapterId,
+          status: 'completed',
+          segmentIds: segments.map((segment) => segment.id),
+          generationIds: segments.map((segment) => segment.generationId).filter((id): id is string => Boolean(id)),
+          chapterAudioJobId,
+          updatedAt: now(),
+          error: undefined,
+        },
+      },
+    })
+  }
+
   const characterBindings = useMemo(() => {
     if (!currentWork || !audiobook) return []
     return currentWork.characters.map((character) => audiobook.characterBindings[character.id] || {
@@ -826,6 +865,7 @@ export function useAudiobook() {
     refineSegment,
     generateChapterAudio,
     regenerateSegmentAudio,
+    saveSynthesizedChapterAudio,
     generatePromptTemplate,
     missingBindings,
     narratorBinding: audiobook?.narratorBinding,

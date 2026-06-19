@@ -1430,6 +1430,36 @@ assert.match(
   'chapter audio player should not start audio loading or state updates when no completed segments exist',
 )
 
+assert.match(
+  typesSource,
+  /chapterAudioJobId\?: string/,
+  'chapter audio state should persist the final synthesized chapter audio job id for later preview playback',
+)
+
+assert.match(
+  chapterAudioPlayerSource + useAudiobookSource,
+  /downloadChapterAudio\(job\.jobId\)[\s\S]*onSynthesized\?\.\(job\.jobId\)[\s\S]*saveSynthesizedChapterAudio[\s\S]*chapterAudioJobId/,
+  'completed chapter synthesis should pass the backend job id to persistence after downloading the merged audio',
+)
+
+assert.match(
+  previewPageSource,
+  /PlayCircleOutlined[\s\S]*getSynthesizedChapterAudio[\s\S]*chapterAudioJobId[\s\S]*playChapterAudio/,
+  'full preview chapter titles should expose a play button only when a completed synthesized chapter audio job exists',
+)
+
+assert.match(
+  useAudiobookSource,
+  /clearSynthesizedChapterAudio[\s\S]*章节分段已变更，请重新合成章节音频[\s\S]*chapterAudioJobId/,
+  'saved AI segmentation changes should clear stale final chapter synthesis audio from the chapter audio state',
+)
+
+assert.match(
+  useAudiobookSource,
+  /attributeSegmentBatch[\s\S]*clearSynthesizedChapterAudio[\s\S]*refineSegmentBatch[\s\S]*clearSynthesizedChapterAudio/,
+  'AI attribution retry and AI segment refinement should clear final chapter synthesis audio even when bypassing row patch persistence',
+)
+
 assert.doesNotMatch(
   segmentReviewTableSource,
   /pagination=\{\{ pageSize: 20, showSizeChanger: true \}\}/,

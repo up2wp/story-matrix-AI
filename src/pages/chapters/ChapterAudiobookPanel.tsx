@@ -29,6 +29,7 @@ export default function ChapterAudiobookPanel({ work, chapter, writing }: Props)
     mergeSegments,
     generateChapterAudio,
     regenerateSegmentAudio,
+    saveSynthesizedChapterAudio,
     missingBindings,
     narratorBinding,
     segmentingChapterId,
@@ -95,7 +96,7 @@ export default function ChapterAudiobookPanel({ work, chapter, writing }: Props)
         {missing.length > 0 && <Alert type="warning" showIcon message={`缺少音色绑定：${missing.join('、')}`} description="请先到「角色声音」配置旁白和角色音色。" />}
         {unresolvedCount > 0 && <Alert type="info" showIcon message={`${unresolvedCount} 个分段需要复核或重试归因`} description="低置信度不会丢失原文；修正说话人后即可继续生成音频。" />}
         {segments.length ? <SegmentReviewTable segments={segments} characters={work.characters} onUpdate={(segmentId, changes, baseVersion) => updateSegment(chapter.id, segmentId, changes, baseVersion)} onDirtyChange={setHasDirtySegments} onGenerateTonePrompt={async (segmentId) => { await generateSegmentTonePrompt(chapter.id, segmentId, { overwrite: true }) }} onGenerateTonePrompts={() => generateSegmentTonePrompts(chapter.id)} onMergeSegments={(segmentIds) => mergeSegments(chapter.id, segmentIds)} onRefineSegment={(segmentId) => refineSegment(chapter, segmentId)} onRetryAttribution={(segmentId) => retrySegmentAttribution(chapter, segmentId)} onRegenerateSegmentAudio={(segmentId) => regenerateSegmentAudio(chapter, segmentId)} onPlaySegmentAudio={playSegmentAudio} onDownloadSegmentAudio={downloadSegmentAudio} scrollY={280} /> : <Empty description="先点击 AI 分段" />}
-        <ChapterAudioPlayer chapter={chapter} segments={segments} />
+        <ChapterAudioPlayer chapter={chapter} segments={segments} chapterAudio={audiobook.chapterAudio[chapter.id]} onSynthesized={(jobId) => saveSynthesizedChapterAudio(chapter.id, jobId)} />
       </Space>
     </Card>
   )
