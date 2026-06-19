@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Card, Typography, Space, Button, Checkbox, Empty, Divider } from 'antd'
+import { Card, Typography, Space, Button, Checkbox, Empty, Divider, message } from 'antd'
 import {
   DownloadOutlined,
   FileTextOutlined,
@@ -8,9 +8,11 @@ import {
   CompressOutlined,
   SunOutlined,
   MoonOutlined,
+  PlayCircleOutlined,
 } from '@ant-design/icons'
 import { Navigate } from 'react-router'
 import { usePreview } from '@/features/preview/usePreview'
+import { voiceboxClient } from '@/features/audiobook/voiceboxClient'
 
 const { Title, Text, Paragraph } = Typography
 
@@ -58,6 +60,25 @@ export default function PreviewPage() {
 
   const { seed, characters, settings } = currentWork
   const theme = darkMode ? THEMES.dark : THEMES.light
+
+  const getSynthesizedChapterAudio = (chapterId?: string) => {
+    if (!chapterId) return undefined
+    const audioState = currentWork.audiobook?.chapterAudio[chapterId]
+    return audioState?.status === 'completed' && audioState.chapterAudioJobId ? audioState : undefined
+  }
+
+  const playChapterAudio = async (chapterId: string) => {
+    const audioState = getSynthesizedChapterAudio(chapterId)
+    if (!audioState?.chapterAudioJobId) return
+    try {
+      const url = await voiceboxClient.downloadChapterAudio(audioState.chapterAudioJobId)
+      const audio = new Audio(url)
+      audio.onended = () => URL.revokeObjectURL(url)
+      await audio.play()
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '章节音频播放失败')
+    }
+  }
 
   // 正文内容渲染（复用）
   const renderContent = (colorStyle?: React.CSSProperties) => (
@@ -123,7 +144,10 @@ export default function PreviewPage() {
 
             {vol.chapters.map(({ outline, chapter }) => (
               <div key={outline.id} id={fullscreen ? `fs-ch-${outline.id}` : `ch-${outline.id}`} style={{ marginBottom: 32 }}>
-                <Title level={3} style={{ marginBottom: 8, ...colorStyle }}>{outline.title}</Title>
+                <Space align="center" size={8} style={{ marginBottom: 8 }}>
+                  <Title level={3} style={{ marginBottom: 0, ...colorStyle }}>{outline.title}</Title>
+                  {getSynthesizedChapterAudio(outline.id) && <Button type="text" size="small" icon={<PlayCircleOutlined />} aria-label={`播放 ${outline.title} 章节音频`} onClick={() => void playChapterAudio(outline.id)} />}
+                </Space>
                 {chapter?.content ? (
                   <div style={{ whiteSpace: 'pre-wrap', lineHeight: 2, fontSize: 17, ...colorStyle }}>
                     {chapter.content}
