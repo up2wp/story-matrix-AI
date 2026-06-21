@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import crypto from 'crypto'
 import db from '../db.js'
-import { createSession, destroySession, requireAuth, type AuthenticatedRequest } from '../middleware/auth.js'
+import { createSession, destroySession, destroyUserSessions, requireAuth, type AuthenticatedRequest } from '../middleware/auth.js'
 
 const router = Router()
 const SAFE_FIELDS = 'id, username, displayName, role, createdAt, deletedAt'
@@ -56,11 +56,8 @@ router.post('/login', (req, res) => {
     return res.status(401).json({ error: '用户名或密码错误' })
   }
 
-  const token = createSession(user.id, user.username, user.role)
-  res.json({
-    token,
-    user: serializeUser(user),
-  })
+  createSession(user.id, user.username, user.role, res)
+  res.json({ user: serializeUser(user) })
 })
 
 // POST /api/auth/register — 公开注册（需系统开启）
@@ -91,15 +88,13 @@ router.post('/register', (req, res) => {
   }
 
   const user = db.prepare(`SELECT ${SAFE_FIELDS} FROM users WHERE id = ?`).get(id) as UserRow
-  const token = createSession(id, username, 'user')
-  res.status(201).json({ token, user })
+  createSession(id, username, 'user', res)
+  res.status(201).json({ user })
 })
 
 // POST /api/auth/logout — 登出
 router.post('/logout', requireAuth, (req, res) => {
-  const authHeader = req.headers.authorization!
-  const token = authHeader.slice(7)
-  destroySession(token)
+  destroySession(req, res)
   res.json({ success: true })
 })
 
@@ -139,6 +134,10 @@ router.post('/change-password', requireAuth, (req, res) => {
   }
 
   db.prepare('UPDATE users SET passwordHash = ? WHERE id = ?').run(sha256(newPassword), currentUser.id)
+  // 清除该用户所有会话，其他设备需重新登录
+  destroyUserSessions(currentUser.id)
+  // 为当前会话重新创建（保持当前设备登录状态）
+  createSession(currentUser.id, currentUser.username, currentUser.role, res)
   res.json({ success: true })
 })
 

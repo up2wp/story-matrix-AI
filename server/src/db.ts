@@ -67,6 +67,14 @@ db.exec(`
     createdAt INTEGER NOT NULL,
     FOREIGN KEY (ownerId) REFERENCES users(id)
   );
+
+  CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    userId TEXT NOT NULL,
+    username TEXT NOT NULL,
+    role TEXT NOT NULL,
+    createdAt INTEGER NOT NULL
+  );
 `)
 
 function columnExists(database: DatabaseInstance, table: string, column: string): boolean {

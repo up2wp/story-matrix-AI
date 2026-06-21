@@ -1,33 +1,20 @@
 // ============================================================
 // API 客户端 — 替代 Dexie，通过 REST API 访问后端 SQLite
+// 认证通过 httpOnly Cookie 自动携带
 // ============================================================
 
 const API_BASE = '/api'
-const TOKEN_KEY = 'story-matrix-token'
-
-/** 获取/设置认证 token */
-export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY)
-}
-export function setToken(token: string | null) {
-  if (token) localStorage.setItem(TOKEN_KEY, token)
-  else localStorage.removeItem(TOKEN_KEY)
-}
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  const token = getToken()
-  if (token) headers['Authorization'] = `Bearer ${token}`
 
   const res = await fetch(`${API_BASE}${url}`, {
     headers,
+    credentials: 'include',
     ...options,
   })
   if (res.status === 404) return undefined as T
   if (res.status === 401) {
-    // token 过期或无效，清除本地状态
-    setToken(null)
-    localStorage.removeItem('story-matrix-session')
     window.location.href = '/login'
     throw new Error('登录已过期，请重新登录')
   }
@@ -78,6 +65,10 @@ function createTable<T extends { id: string }>(resource: string) {
   }
   return table
 }
+
+// 兼容旧代码中对 getToken/setToken 的引用（已无实际作用）
+export function getToken(): string | null { return null }
+export function setToken(_token: string | null) { /* no-op, 认证通过 cookie */ }
 
 export const db = {
   open: async () => { /* 无操作，后端自动初始化 */ },

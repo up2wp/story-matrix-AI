@@ -1,5 +1,6 @@
 import express from 'express'
 import cors from 'cors'
+import cookieParser from 'cookie-parser'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { seed } from './seed.js'
@@ -17,7 +18,8 @@ const PORT = parseInt(process.env.PORT || '3001', 10)
 
 const app = express()
 
-app.use(cors())
+app.use(cors({ origin: true, credentials: true }))
+app.use(cookieParser())
 app.use(express.json({ limit: '10mb' }))
 
 app.get('/api/health', (_req, res) => {

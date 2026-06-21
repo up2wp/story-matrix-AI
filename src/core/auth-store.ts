@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import { getToken, setToken } from './api-client'
 import type { User } from './types'
 
 // ============================================================
@@ -16,7 +15,7 @@ export async function hashPassword(password: string): Promise<string> {
 }
 
 // ============================================================
-// 认证状态管理 — 使用服务端会话认证
+// 认证状态管理 — httpOnly Cookie 会话认证
 // ============================================================
 
 interface AuthState {
@@ -41,28 +40,17 @@ export const useAuthStore = create<AuthState>((set) => ({
   isLoading: true,
 
   initSession: async () => {
-    const token = getToken()
-    if (!token) {
-      set({ isLoading: false })
-      return false
-    }
     try {
-      // 通过 token 获取当前用户信息
-      const res = await fetch('/api/auth/me', {
-        headers: { Authorization: `Bearer ${token}` },
-      })
+      const res = await fetch('/api/auth/me', { credentials: 'include' })
       if (res.ok) {
         const user = await res.json()
         set({ user, isAuthenticated: true, isLoading: false })
         return true
       } else {
-        // token 无效，清除
-        setToken(null)
         set({ isLoading: false })
         return false
       }
     } catch {
-      setToken(null)
       set({ isLoading: false })
       return false
     }
@@ -73,11 +61,11 @@ export const useAuthStore = create<AuthState>((set) => ({
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ username, password }),
       })
       if (!res.ok) return false
-      const { token, user } = await res.json()
-      setToken(token)
+      const { user } = await res.json()
       set({ user, isAuthenticated: true })
       return true
     } catch {
@@ -90,14 +78,14 @@ export const useAuthStore = create<AuthState>((set) => ({
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ username, password, displayName }),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: '注册失败' }))
         return { success: false, error: err.error || '注册失败' }
       }
-      const { token, user } = await res.json()
-      setToken(token)
+      const { user } = await res.json()
       set({ user, isAuthenticated: true })
       return { success: true }
     } catch (err: unknown) {
@@ -109,7 +97,8 @@ export const useAuthStore = create<AuthState>((set) => ({
     try {
       const res = await fetch('/api/auth/change-password', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ oldPassword, newPassword }),
       })
       if (!res.ok) {
@@ -126,7 +115,8 @@ export const useAuthStore = create<AuthState>((set) => ({
     try {
       const res = await fetch('/api/auth/profile', {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ displayName }),
       })
       if (!res.ok) {
@@ -142,16 +132,12 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   logout: async () => {
-    const token = getToken()
-    if (token) {
-      try {
-        await fetch('/api/auth/logout', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-        })
-      } catch { /* 忽略错误 */ }
-    }
-    setToken(null)
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+      })
+    } catch { /* 忽略错误 */ }
     set({ user: null, isAuthenticated: false })
   },
 }))

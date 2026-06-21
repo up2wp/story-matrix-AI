@@ -9,11 +9,13 @@
   },
   "dependencies": {
     "better-sqlite3": "^11.8.2",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "express": "^5.1.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
+    "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.18",
     "@types/express": "^5.0.2",
     "tsx": "^4.19.4",

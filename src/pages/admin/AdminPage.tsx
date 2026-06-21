@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from 'react'
 import { Table, Button, Modal, Form, Input, InputNumber, Select, Popconfirm, Space, Switch, Typography, Tag, message, Tabs, Card } from 'antd'
 import { PlusOutlined, DeleteOutlined, EditOutlined, UserOutlined, SettingOutlined, RobotOutlined, CustomerServiceOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { getToken } from '@/core/api-client'
 import { db } from '@/core/db'
 import { useAuthStore } from '@/core/auth-store'
 import { useSystemConfigStore } from '@/core/system-config-store'
@@ -41,10 +40,7 @@ function VoiceboxSettings() {
   }, [voiceboxConfig, form])
 
   const requestHeaders = () => {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    const token = getToken()
-    if (token) headers.Authorization = `Bearer ${token}`
-    return headers
+    return { 'Content-Type': 'application/json' }
   }
 
   const handleSave = async (values: VoiceboxConfig) => {
@@ -65,9 +61,9 @@ function VoiceboxSettings() {
   const handleTest = async () => {
     setTesting(true)
     try {
-      const healthResponse = await fetch('/api/voicebox/health', { headers: requestHeaders() })
+      const healthResponse = await fetch('/api/voicebox/health', { headers: requestHeaders(), credentials: 'include' })
       if (!healthResponse.ok) throw new Error(await healthResponse.text())
-      const profilesResponse = await fetch('/api/voicebox/profiles', { headers: requestHeaders() })
+      const profilesResponse = await fetch('/api/voicebox/profiles', { headers: requestHeaders(), credentials: 'include' })
       if (!profilesResponse.ok) throw new Error(await profilesResponse.text())
       const data = await profilesResponse.json() as Array<{ id?: string; profile_id?: string; name?: string; display_name?: string }>
       setProfiles(data)
@@ -449,11 +445,10 @@ function ModelSettings() {
     setLoadingModels(true)
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-      const token = getToken()
-      if (token) headers.Authorization = `Bearer ${token}`
       const response = await fetch(`/api/ai/models`, {
         method: 'POST',
         headers,
+        credentials: 'include',
         body: JSON.stringify({ config: values }),
       })
       if (!response.ok) throw new Error(await response.text())

@@ -27,7 +27,7 @@ import {
 } from '@ant-design/icons'
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { useSearchParams } from 'react-router'
-import { diffLines, diffChars } from 'diff'
+import { diffChars } from 'diff'
 import type { Chapter } from '@/core/types'
 import { generateId } from '@/utils/id'
 import { useStore } from '@/core/store'
@@ -2022,7 +2022,6 @@ export default function ChaptersPage() {
             {/* 左右对比视图 */}
             {(() => {
               void refineDiffKey
-              const displayRight = refineResult || refineOriginal
               const charParts = refineResult ? diffChars(refineOriginal, refineResult) : []
               const leftItems: { text: string; type: 'same' | 'removed' }[] = []
               const rightItems: { text: string; type: 'same' | 'added' }[] = []

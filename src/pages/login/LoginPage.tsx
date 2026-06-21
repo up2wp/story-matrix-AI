@@ -4,6 +4,7 @@ import { Form, Input, Button, Card, Typography, message } from 'antd'
 import { UserOutlined, LockOutlined } from '@ant-design/icons'
 import { useAuthStore } from '@/core/auth-store'
 import { useSystemConfigStore } from '@/core/system-config-store'
+import { useStore } from '@/core/store'
 
 const { Title, Text, Link } = Typography
 
@@ -16,6 +17,7 @@ export default function LoginPage() {
   const from = (location.state as { from?: Location })?.from?.pathname || '/works'
 
   const loadConfig = useSystemConfigStore(s => s.loadConfig)
+  const loadLastWork = useStore(s => s.loadLastWork)
 
   useEffect(() => {
     loadConfig()
@@ -26,8 +28,9 @@ export default function LoginPage() {
     try {
       const success = await login(values.username, values.password)
       if (success) {
-        // 登录成功后重新加载配置（带 token 才能获取 AI 配置）
-        await loadConfig()
+        // 登录成功后重新加载配置和作品数据（带 token 才能获取）
+        loadConfig()
+        loadLastWork()
         navigate(from, { replace: true })
       } else {
         message.error('用户名或密码错误')

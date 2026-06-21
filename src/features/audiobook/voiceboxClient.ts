@@ -1,16 +1,15 @@
-import { getToken } from '@/core/api-client'
 import type { UserVoiceAsset } from '@/core/types'
+
+// 认证通过 httpOnly Cookie 自动携带
 
 function requestHeaders(json = true) {
   const headers: Record<string, string> = {}
   if (json) headers['Content-Type'] = 'application/json'
-  const token = getToken()
-  if (token) headers.Authorization = `Bearer ${token}`
   return headers
 }
 
 async function request<T>(url: string, options?: RequestInit) {
-  const response = await fetch(`/api/voicebox${url}`, options)
+  const response = await fetch(`/api/voicebox${url}`, { credentials: 'include', ...options })
   if (!response.ok) {
     const data = await response.json().catch(() => ({ error: response.statusText })) as { error?: string }
     throw new Error(data.error || `Voicebox 请求失败: ${response.status}`)
@@ -19,7 +18,7 @@ async function request<T>(url: string, options?: RequestInit) {
 }
 
 async function apiRequest<T>(url: string, options?: RequestInit) {
-  const response = await fetch(url, options)
+  const response = await fetch(url, { credentials: 'include', ...options })
   if (!response.ok) {
     const data = await response.json().catch(() => ({ error: response.statusText })) as { error?: string }
     throw new Error(data.error || `请求失败: ${response.status}`)
@@ -86,7 +85,7 @@ export const voiceboxClient = {
   }),
   chapterAudioStatus: (jobId: string) => request<ChapterAudioSynthesisStatus>(`/chapter-audio/${encodeURIComponent(jobId)}`, { headers: requestHeaders(false) }),
   downloadChapterAudio: async (jobId: string) => {
-    const response = await fetch(`/api/voicebox/chapter-audio/${encodeURIComponent(jobId)}/audio`, { headers: requestHeaders(false) })
+    const response = await fetch(`/api/voicebox/chapter-audio/${encodeURIComponent(jobId)}/audio`, { credentials: 'include', headers: requestHeaders(false) })
     if (!response.ok) {
       const data = await response.json().catch(() => ({ error: response.statusText })) as { error?: string }
       throw new Error(data.error || `章节音频下载失败: ${response.status}`)
@@ -96,7 +95,7 @@ export const voiceboxClient = {
   audioUrl: (generationId: string) => `/api/voicebox/audio/${encodeURIComponent(generationId)}`,
   sampleUrl: (sampleId: string) => `/api/voicebox/samples/${encodeURIComponent(sampleId)}`,
   fetchMediaUrl: async (url: string) => {
-    const response = await fetch(url, { headers: requestHeaders(false) })
+    const response = await fetch(url, { credentials: 'include', headers: requestHeaders(false) })
     if (!response.ok) {
       const data = await response.json().catch(() => ({ error: response.statusText })) as { error?: string }
       throw new Error(data.error || `音频获取失败: ${response.status}`)

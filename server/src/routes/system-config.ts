@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import db from '../db.js'
-import { requireAdmin, sessions } from '../middleware/auth.js'
+import { requireAdmin, getCurrentUser } from '../middleware/auth.js'
 
 const router = Router()
 
@@ -63,18 +63,13 @@ function mergeVoiceboxConfig(fieldsConfig: ReturnType<typeof defaultVoiceboxConf
   }
 }
 
-// GET /api/system-config — 获取配置（公开，不含 API Key；管理员带 token 可获取完整配置）
+// GET /api/system-config — 获取配置（公开，不含 API Key；管理员带 cookie 可获取完整配置）
 router.get('/', (req, res) => {
   const row = db.prepare('SELECT * FROM systemConfig WHERE id = ?').get('singleton')
   if (!row) return res.status(404).json({ error: '配置不存在' })
   // 管理员可获取完整配置（含 AI Key）
-  const authHeader = req.headers.authorization
-  let isAdmin = false
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    const token = authHeader.slice(7)
-    const session = sessions.get(token)
-    isAdmin = session?.role === 'owner' || session?.role === 'admin'
-  }
+  const user = getCurrentUser(req)
+  const isAdmin = user?.role === 'owner' || user?.role === 'admin'
   res.json(rowToConfig(row, isAdmin))
 })
 

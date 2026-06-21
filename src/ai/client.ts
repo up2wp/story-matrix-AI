@@ -1,15 +1,12 @@
 import type { AIConfig } from '@/core/types'
-import { getToken } from '@/core/api-client'
 
 // ============================================================
 // AI 服务层 - 原生 fetch + SSE，完整控制 ReadableStream 生命周期
+// 认证通过 httpOnly Cookie 自动携带
 // ============================================================
 
 function requestHeaders() {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  const token = getToken()
-  if (token) headers.Authorization = `Bearer ${token}`
-  return headers
+  return { 'Content-Type': 'application/json' }
 }
 
 /**
@@ -23,6 +20,7 @@ export async function generate(prompt: string, systemPrompt: string, config: AIC
     const response = await fetch(`/api/ai/chat-completions`, {
       method: 'POST',
       headers: requestHeaders(),
+      credentials: 'include',
       body: JSON.stringify({
         config,
         messages: [
@@ -69,6 +67,7 @@ export async function generateStream(
     const response = await fetch(`/api/ai/chat-completions`, {
       method: 'POST',
       headers: requestHeaders(),
+      credentials: 'include',
       body: JSON.stringify({
         config,
         messages: [
