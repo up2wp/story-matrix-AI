@@ -391,27 +391,30 @@ export default function BasicInfoStep({ seed, onUpdate, workTitle, onTitleChange
 
       <Spin spinning={loading}>
         <Form layout="vertical">
-          <Form.Item label="作品名称（暂定）">
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 4, fontWeight: 500 }}>作品名称（暂定）</div>
             <Input
               value={workTitle}
               onChange={(e) => onTitleChange(e.target.value)}
               placeholder="为你的作品起个名字，可后续修改"
               maxLength={50}
             />
-          </Form.Item>
+          </div>
 
           <Divider />
 
-          <Form.Item label="时间背景" required>
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 4, fontWeight: 500 }}>时间背景 <span style={{ color: '#ff4d4f' }}>*</span></div>
             <TagSelect
               value={seed.timePeriod}
               groups={TIME_PERIOD_GROUPS}
               onChange={(v) => onUpdate({ timePeriod: v })}
               placeholder="时间背景"
             />
-          </Form.Item>
+          </div>
 
-          <Form.Item label="地域范围" required>
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 4, fontWeight: 500 }}>地域范围 <span style={{ color: '#ff4d4f' }}>*</span></div>
             <TagSelect
               value={seed.regions}
               groups={REGION_GROUPS}
@@ -419,9 +422,10 @@ export default function BasicInfoStep({ seed, onUpdate, workTitle, onTitleChange
               multiple
               placeholder="地域"
             />
-          </Form.Item>
+          </div>
 
-          <Form.Item label="故事类型" required>
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 4, fontWeight: 500 }}>故事类型 <span style={{ color: '#ff4d4f' }}>*</span></div>
             <Space>
               <Select
                 value={seed.genre || undefined}
@@ -443,9 +447,10 @@ export default function BasicInfoStep({ seed, onUpdate, workTitle, onTitleChange
                 />
               )}
             </Space>
-          </Form.Item>
+          </div>
 
-          <Form.Item label="基调风格">
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 4, fontWeight: 500 }}>基调风格</div>
             <CreatableSelect
               value={seed.tone}
               presets={TONES}
@@ -453,9 +458,10 @@ export default function BasicInfoStep({ seed, onUpdate, workTitle, onTitleChange
               onChange={(v) => onUpdate({ tone: v })}
               allowClear
             />
-          </Form.Item>
+          </div>
 
-          <Form.Item label="目标读者">
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 4, fontWeight: 500 }}>目标读者</div>
             <CreatableSelect
               value={seed.targetAudience}
               presets={AUDIENCES}
@@ -463,9 +469,10 @@ export default function BasicInfoStep({ seed, onUpdate, workTitle, onTitleChange
               onChange={(v) => onUpdate({ targetAudience: v })}
               allowClear
             />
-          </Form.Item>
+          </div>
 
-          <Form.Item label="叙述视角">
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 4, fontWeight: 500 }}>叙述视角</div>
             <Space orientation="vertical" size={4} style={{ width: '100%' }}>
               {POVS.map((p) => (
                 <Tag
@@ -481,7 +488,7 @@ export default function BasicInfoStep({ seed, onUpdate, workTitle, onTitleChange
                 {POVS.find((p) => p.value === seed.pov)?.desc || ''}
               </Text>
             </Space>
-          </Form.Item>
+          </div>
 
           <Divider />
 

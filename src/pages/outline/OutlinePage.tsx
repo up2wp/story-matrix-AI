@@ -1335,11 +1335,11 @@ export default function OutlinePage() {
 
       {/* 生成设置弹窗 */}
       <Modal
-        title="AI 生成大纲设置"
+        mask={{ closable: false }}
+                title="AI 生成大纲设置"
         open={genModalOpen}
         forceRender
-        mask={{ closable: false }}
-        onOk={handleGenerate}
+                onOk={handleGenerate}
         onCancel={() => setGenModalOpen(false)}
         okText="开始生成"
         cancelText="取消"
@@ -1348,7 +1348,8 @@ export default function OutlinePage() {
           <Form.Item name="volumes" label="卷数">
             <InputNumber min={1} max={10} style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item name="genMode" label="生成模式">
+          <div style={{ marginBottom: 4, fontWeight: 500 }}>生成模式</div>
+          <Form.Item name="genMode">
             <Radio.Group>
               <Radio value="volumeOnly">只生成卷（后续单独添加章）</Radio>
               <Radio value="all">一次性生成卷+章</Radio>
@@ -1368,11 +1369,11 @@ export default function OutlinePage() {
 
       {/* 编辑弹窗 */}
       <Modal
-        title={isNew ? (editing?.level === 'volume' ? '新增卷' : '新增章节') : '编辑'}
+        mask={{ closable: false }}
+                title={isNew ? (editing?.level === 'volume' ? '新增卷' : '新增章节') : '编辑'}
         open={editModalOpen}
         forceRender
-        mask={{ closable: false }}
-        onOk={isNew ? handleSaveNew : handleSave}
+                onOk={isNew ? handleSaveNew : handleSave}
         onCancel={() => setEditModalOpen(false)}
         okText="保存"
         cancelText="取消"
@@ -1402,7 +1403,8 @@ export default function OutlinePage() {
             <TextArea autoSize={{ minRows: 3, maxRows: 8 }} placeholder="100-200字的剧情概要" />
           </Form.Item>
           {storylines.length > 0 && (
-            <Form.Item name="storylineIds" label="关联故事线">
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ marginBottom: 4, fontWeight: 500 }}>关联故事线</div>
               <Space wrap>
                 {storylines.map((sl) => {
                   const selected = storylineIds.includes(sl.id)
@@ -1427,18 +1429,18 @@ export default function OutlinePage() {
                   )
                 })}
               </Space>
-            </Form.Item>
+            </div>
           )}
         </Form>
       </Modal>
 
       {/* AI 添加章节弹窗 */}
       <Modal
-        title={`AI 为「${addChaptersVolume?.title || ''}」添加章节`}
+        mask={{ closable: false }}
+                title={`AI 为「${addChaptersVolume?.title || ''}」添加章节`}
         open={addChaptersModalOpen}
         forceRender
-        mask={{ closable: false }}
-        onOk={handleAIAddChapters}
+                onOk={handleAIAddChapters}
         onCancel={() => { setAddChaptersModalOpen(false); setAddChaptersVolume(null) }}
         okText="开始生成"
         cancelText="取消"
@@ -1455,11 +1457,11 @@ export default function OutlinePage() {
 
       {/* 故事线编辑弹窗 */}
       <Modal
-        title={editingSl ? '编辑线索' : '添加线索'}
+        mask={{ closable: false }}
+                title={editingSl ? '编辑线索' : '添加线索'}
         open={slModalOpen}
         forceRender
-        mask={{ closable: false }}
-        onOk={handleSaveSl}
+                onOk={handleSaveSl}
         onCancel={() => { setSlModalOpen(false); setEditingSl(null) }}
         okText="保存"
         cancelText="取消"
@@ -1490,7 +1492,8 @@ export default function OutlinePage() {
           <Form.Item name="name" label="线索名称" rules={[{ required: true, message: '请输入线索名称' }]}>
             <Input placeholder="如：感情线、复仇线、身世之谜" />
           </Form.Item>
-          <Form.Item name="color" label="颜色">
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 4, fontWeight: 500 }}>颜色</div>
             <Space>
               {SL_COLORS.map((c) => (
                 <Tag
@@ -1506,7 +1509,7 @@ export default function OutlinePage() {
                 </Tag>
               ))}
             </Space>
-          </Form.Item>
+          </div>
           <Form.Item name="description" label="描述（可选）">
             <TextArea autoSize={{ minRows: 2, maxRows: 4 }} placeholder="这条线索的核心走向..." />
           </Form.Item>
@@ -1528,18 +1531,19 @@ export default function OutlinePage() {
 
       {/* AI 连续生成多卷弹窗 */}
       <Modal
-        title="AI 连续生成多卷章节"
+        mask={{ closable: false }}
+                title="AI 连续生成多卷章节"
         open={multiGenModalOpen}
         forceRender
         onOk={handleMultiVolumeGenerate}
         onCancel={() => setMultiGenModalOpen(false)}
         okText="开始生成"
         cancelText="取消"
-        mask={{ closable: false }}
-        confirmLoading={multiGenerating}
+                confirmLoading={multiGenerating}
       >
         <Form form={multiGenForm} layout="vertical" initialValues={{ volumeIds: [], countPerVolume: 5, allowReshuffle: true }}>
-          <Form.Item name="volumeIds" label="选择要连续生成的卷（至少 2 卷）">
+          <div style={{ marginBottom: 4, fontWeight: 500 }}>选择要连续生成的卷（至少 2 卷）</div>
+          <Form.Item name="volumeIds">
             <Checkbox.Group
               options={outline.filter((n) => n.level === 'volume').sort((a, b) => a.order - b.order).map((v, i) => ({
                 label: `第${i + 1}卷「${v.title}」`,

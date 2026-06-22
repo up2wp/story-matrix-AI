@@ -264,7 +264,6 @@ ${existingStorylines ? `已有线索（不要重复）：\n${existingStorylines}
 - name: 线索名称（简短有力，4-8字）
 - description: 线索描述（100-200字，说明起点、发展、终点）
 - color: 颜色名称（只能选以下之一：red, orange, gold, green, cyan, blue, purple, magenta）
-- keyNodes: 关键节点数组，每个包含 { chapterTitle: string, event: string }
 
 只输出 JSON，不要输出其他内容。`
 }

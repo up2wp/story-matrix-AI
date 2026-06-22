@@ -77,7 +77,7 @@ export default function ChapterAudiobookPanel({ work, chapter, writing }: Props)
         label: <><CustomerServiceOutlined /> 有声读物</>,
         children: (
           <div style={{ maxHeight: 'min(36vh, 480px)', overflowY: 'auto', overflowX: 'hidden' }}>
-      <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
         <Space wrap>
           <Button onClick={() => navigate('/character-voices')}>配置角色声音</Button>
           <Button loading={segmentingChapterId === chapter.id} disabled={writing || hasDirtySegments || generatingChapterId === chapter.id} onClick={() => segmentChapter(chapter)}>AI 分段</Button>
@@ -86,7 +86,7 @@ export default function ChapterAudiobookPanel({ work, chapter, writing }: Props)
           {segments.some((segment) => segment.status === 'failed') && <Button disabled={hasDirtySegments} loading={generatingChapterId === chapter.id} onClick={() => generateChapterAudio(chapter, true)}>重试失败片段</Button>}
         </Space>
         {progress && <Card size="small">
-          <Space direction="vertical" style={{ width: '100%' }}>
+          <Space orientation="vertical" style={{ width: '100%' }}>
             <Text>{progress.message}</Text>
             <Progress percent={progress.total ? Math.round((progress.completed / progress.total) * 100) : progress.stage === 'completed' ? 100 : 20} status={progress.stage === 'failed' || progress.stage === 'partial_failed' ? 'exception' : progress.stage === 'completed' ? 'success' : 'active'} />
             <Text type="secondary">完成 {progress.completed}/{progress.total || 1}，失败 {progress.failed}，待复核 {unresolvedCount}</Text>

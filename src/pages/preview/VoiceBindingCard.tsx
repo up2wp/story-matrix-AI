@@ -77,7 +77,7 @@ export default function VoiceBindingCard({ binding, profiles, voices = [], ready
 
   return (
     <Card size="small" title={binding.displayName} extra={<Tag color={ready ? 'green' : 'orange'}>{ready ? '已绑定' : '待绑定'}</Tag>}>
-      <Space direction="vertical" size="small" style={{ width: '100%' }}>
+      <Space orientation="vertical" size="small" style={{ width: '100%' }}>
         <Select
           allowClear
           placeholder="选择已有音色"

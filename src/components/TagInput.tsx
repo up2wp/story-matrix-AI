@@ -2,6 +2,7 @@ import { useState, useRef } from 'react'
 import { Tag, Input } from 'antd'
 
 interface TagInputProps {
+  id?: string
   value?: string[]
   onChange?: (value: string[]) => void
   placeholder?: string
@@ -13,7 +14,8 @@ interface TagInputProps {
  * 可编辑的标签输入框。
  * 点击标签 × 删除后，文本回填到输入框，方便修改后重新添加。
  */
-export default function TagInput({ value = [], onChange, placeholder, color, tokenSeparators = ['、', ','] }: TagInputProps) {
+export default function TagInput({ id, value: rawValue, onChange, placeholder, color, tokenSeparators = ['、', ','] }: TagInputProps) {
+  const value = Array.isArray(rawValue) ? rawValue : []
   const [inputValue, setInputValue] = useState('')
   const inputRef = useRef<any>(null)
 
@@ -43,6 +45,7 @@ export default function TagInput({ value = [], onChange, placeholder, color, tok
         </Tag>
       ))}
       <Input
+        id={id}
         ref={inputRef}
         value={inputValue}
         onChange={e => setInputValue(e.target.value)}

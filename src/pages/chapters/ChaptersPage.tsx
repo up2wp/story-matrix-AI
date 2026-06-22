@@ -50,6 +50,7 @@ export default function ChaptersPage() {
   const aiPanelOpen = useStore((s) => s.aiPanelOpen)
   const toggleAIPanel = useStore((s) => s.toggleAIPanel)
   const aiConfig = useSystemConfigStore((s) => s.aiConfig)
+  const voiceboxConfig = useSystemConfigStore((s) => s.voiceboxConfig)
   const [loading, setLoading] = useState(false)
   const [activeChapterId, setActiveChapterId] = useState<string | null>(null)
   const [streamingContent, setStreamingContent] = useState<string | null>(null)
@@ -585,7 +586,7 @@ export default function ChaptersPage() {
 
   // 打开卷选择弹窗
   const handleOpenCheck = () => {
-    setCheckVolumes(checkVolumeNodes.map((v) => v.id))
+    setCheckVolumes([])
     setCheckStep('select')
   }
 
@@ -1514,7 +1515,7 @@ export default function ChaptersPage() {
               />
             </Card>
 
-            {currentWork && !readOnly && (
+            {currentWork && !readOnly && voiceboxConfig.serviceUrl !== 'http://127.0.0.1:17493' && (
               <ChapterAudiobookPanel
                 work={currentWork}
                 chapter={activeChapter}
@@ -1527,7 +1528,8 @@ export default function ChaptersPage() {
 
       {/* 卷选择弹窗 */}
       <Modal
-        title="全文逻辑检查 - 选择检查范围"
+        mask={{ closable: false }}
+                title="全文逻辑检查 - 选择检查范围"
         open={checkStep === 'select'}
         onCancel={() => setCheckStep(null)}
         onOk={handleScanIssues}
@@ -1569,7 +1571,8 @@ export default function ChaptersPage() {
 
       {/* 问题清单弹窗 */}
       <Modal
-        title={`发现 ${checkIssues.length} 个问题`}
+        mask={{ closable: false }}
+                title={`发现 ${checkIssues.length} 个问题`}
         open={checkStep === 'issues'}
         onCancel={() => setCheckStep(null)}
         footer={
@@ -1631,7 +1634,8 @@ export default function ChaptersPage() {
 
       {/* 修复对比弹窗 */}
       <Modal
-        title={fixChapterTitle ? `修复：${fixChapterTitle}（${fixQueue.length} 章待处理）` : '修复中...'}
+        mask={{ closable: false }}
+                title={fixChapterTitle ? `修复：${fixChapterTitle}（${fixQueue.length} 章待处理）` : '修复中...'}
         open={checkStep === 'fixing'}
         onCancel={handleSkipFix}
         width={1000}
@@ -1820,13 +1824,13 @@ export default function ChaptersPage() {
 
       {/* 快速续写弹窗 */}
       <Modal
-        title={qwStep === 'mode' ? '快速续写 - 选择模式' : '快速续写 - 选择灵感'}
+        mask={{ closable: false }}
+                title={qwStep === 'mode' ? '快速续写 - 选择模式' : '快速续写 - 选择灵感'}
         open={qwOpen}
         onCancel={() => setQwOpen(false)}
         footer={null}
         width={qwStep === 'mode' ? 420 : 680}
-        mask={{ closable: false }}
-      >
+              >
         {qwStep === 'mode' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '8px 0' }}>
             <Text type="secondary">选择创作模式，AI 将根据你的选择生成灵感方向：</Text>
@@ -1866,7 +1870,7 @@ export default function ChaptersPage() {
                     style={{ cursor: 'pointer' }}
                     onClick={() => handlePickInspiration(insp)}
                   >
-                    <Space direction="vertical" style={{ width: '100%' }}>
+                    <Space orientation="vertical" style={{ width: '100%' }}>
                       <Text strong>{insp.title}</Text>
                       <Text type="secondary" style={{ fontSize: 13 }}>{insp.summary}</Text>
                     </Space>
@@ -1880,7 +1884,8 @@ export default function ChaptersPage() {
 
       {/* 事件簿弹窗 */}
       <Modal
-        title={`📋 事件簿 (${(currentWork?.eventLog ?? []).length} 条)`}
+        mask={{ closable: false }}
+                title={`📋 事件簿 (${(currentWork?.eventLog ?? []).length} 条)`}
         open={eventLogOpen}
         onCancel={() => setEventLogOpen(false)}
         footer={null}
@@ -1981,7 +1986,8 @@ export default function ChaptersPage() {
 
       {/* AI 微调弹窗 */}
       <Modal
-        title="AI 微调"
+        mask={{ closable: false }}
+                title="AI 微调"
         open={refineOpen}
         onCancel={() => setRefineOpen(false)}
         width={1000}

@@ -12,7 +12,6 @@ import {
   Select,
   message,
   Popconfirm,
-  Progress,
   Radio,
 } from 'antd'
 import {
@@ -21,12 +20,9 @@ import {
   DeleteOutlined,
   ExperimentOutlined,
   AimOutlined,
-  CheckCircleOutlined,
-  MinusCircleOutlined,
-  ClockCircleOutlined,
 } from '@ant-design/icons'
 import { useState, useMemo } from 'react'
-import type { Constraint, ConstraintType, ConstraintPriority, ConstraintStatus } from '@/core/types'
+import type { Constraint, ConstraintType, ConstraintPriority } from '@/core/types'
 import { generateId } from '@/utils/id'
 import { useStore } from '@/core/store'
 import { useSystemConfigStore } from '@/core/system-config-store'
@@ -44,18 +40,13 @@ const TYPE_CONFIG: Record<ConstraintType, { label: string; color: string; icon: 
   foreshadow: { label: '伏笔回收', color: 'orange', icon: <AimOutlined /> },
   rule: { label: '逻辑红线', color: 'volcano', icon: <AimOutlined /> },
   rhythm: { label: '节奏要求', color: 'blue', icon: <AimOutlined /> },
+  structure: { label: '叙事结构', color: 'cyan', icon: <AimOutlined /> },
 }
 
 const PRIORITY_CONFIG: Record<ConstraintPriority, { label: string; color: string }> = {
   required: { label: '必须', color: 'red' },
   suggested: { label: '建议', color: 'orange' },
   optional: { label: '可选', color: 'default' },
-}
-
-const STATUS_CONFIG: Record<ConstraintStatus, { label: string; color: string; icon: React.ReactNode }> = {
-  pending: { label: '待完成', color: 'default', icon: <ClockCircleOutlined /> },
-  fulfilled: { label: '已满足', color: 'success', icon: <CheckCircleOutlined /> },
-  waived: { label: '已放弃', color: 'default', icon: <MinusCircleOutlined /> },
 }
 
 export default function ConstraintsPage() {
@@ -115,11 +106,10 @@ export default function ConstraintsPage() {
       const parsed = JSON.parse(jsonMatch[0]) as Array<any>
       const generated: Constraint[] = parsed.map((item) => ({
         id: generateId(),
-        type: item.type || 'event',
+        type: item.type || 'rule',
         title: item.title || '未命名',
         description: item.description || '',
         priority: item.priority || 'suggested',
-        status: 'pending',
       }))
 
       await persistConstraints([...constraints, ...generated])
@@ -203,16 +193,6 @@ export default function ConstraintsPage() {
     })
   }, [constraints, filterType, filterPriority])
 
-  // 统计
-  const stats = useMemo(() => {
-    const total = constraints.length
-    const fulfilled = constraints.filter((c) => c.status === 'fulfilled').length
-    const waived = constraints.filter((c) => c.status === 'waived').length
-    const pending = total - fulfilled - waived
-    const percent = total > 0 ? Math.round((fulfilled / total) * 100) : 0
-    return { total, fulfilled, pending, waived, percent }
-  }, [constraints])
-
   const openEdit = (constraint: Constraint) => {
     setEditing(constraint)
     form.setFieldsValue(constraint)
@@ -233,11 +213,10 @@ export default function ConstraintsPage() {
   const handleAdd = () => {
     const newConstraint: Constraint = {
       id: generateId(),
-      type: 'event',
+      type: 'rule',
       title: '新约束',
       description: '',
       priority: 'suggested',
-      status: 'pending',
     }
     setEditing(newConstraint)
     form.setFieldsValue(newConstraint)
@@ -279,34 +258,6 @@ export default function ConstraintsPage() {
         )}
       </div>
 
-      {/* 进度统计 */}
-      {constraints.length > 0 && (
-        <Card size="small" style={{ marginBottom: 16 }}>
-          <Space size="large">
-            <div>
-              <Text type="secondary">总计</Text>
-              <div><Text strong style={{ fontSize: 20 }}>{stats.total}</Text></div>
-            </div>
-            <div>
-              <Text type="secondary">已满足</Text>
-              <div><Text strong style={{ fontSize: 20, color: '#52c41a' }}>{stats.fulfilled}</Text></div>
-            </div>
-            <div>
-              <Text type="secondary">待完成</Text>
-              <div><Text strong style={{ fontSize: 20, color: '#faad14' }}>{stats.pending}</Text></div>
-            </div>
-            <div>
-              <Text type="secondary">已放弃</Text>
-              <div><Text strong style={{ fontSize: 20, color: '#999' }}>{stats.waived}</Text></div>
-            </div>
-            <div style={{ flex: 1 }}>
-              <Text type="secondary">完成度</Text>
-              <Progress percent={stats.percent} size="small" />
-            </div>
-          </Space>
-        </Card>
-      )}
-
       {/* 筛选器 */}
       {constraints.length > 0 && (
         <Space style={{ marginBottom: 16 }} wrap>
@@ -341,14 +292,11 @@ export default function ConstraintsPage() {
             {filteredConstraints.map((constraint) => {
               const typeInfo = TYPE_CONFIG[constraint.type]
               const priorityInfo = PRIORITY_CONFIG[constraint.priority]
-              const statusInfo = STATUS_CONFIG[constraint.status]
               return (
                 <Card
                   key={constraint.id}
                   size="small"
-                  style={{
-                    borderLeft: `3px solid ${constraint.status === 'fulfilled' ? '#52c41a' : constraint.status === 'waived' ? '#999' : '#1677ff'}`,
-                  }}
+                  style={{ borderLeft: '3px solid #1677ff' }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <div style={{ flex: 1 }}>
@@ -356,7 +304,6 @@ export default function ConstraintsPage() {
                         {typeInfo.icon}
                         <Tag color={typeInfo.color}>{typeInfo.label}</Tag>
                         <Tag color={priorityInfo.color}>{priorityInfo.label}</Tag>
-                        <Tag color={statusInfo.color} icon={statusInfo.icon}>{statusInfo.label}</Tag>
                         <Text strong>{constraint.title}</Text>
                       </Space>
                       {constraint.description && (() => {
@@ -412,11 +359,11 @@ export default function ConstraintsPage() {
       </Spin>
 
       <Modal
-        title={isNew ? '新增约束' : '编辑约束'}
+        mask={{ closable: false }}
+                title={isNew ? '新增约束' : '编辑约束'}
         open={editModalOpen}
         forceRender
-        mask={{ closable: false }}
-        onOk={isNew ? handleSaveNew : handleSave}
+                onOk={isNew ? handleSaveNew : handleSave}
         onCancel={() => setEditModalOpen(false)}
         width={600}
         footer={(_, { OkBtn, CancelBtn }) => (
@@ -457,15 +404,6 @@ export default function ConstraintsPage() {
                 { label: '必须', value: 'required' },
                 { label: '建议', value: 'suggested' },
                 { label: '可选', value: 'optional' },
-              ]}
-            />
-          </Form.Item>
-          <Form.Item name="status" label="状态">
-            <Select
-              options={[
-                { label: '待完成', value: 'pending' },
-                { label: '已满足', value: 'fulfilled' },
-                { label: '已放弃', value: 'waived' },
               ]}
             />
           </Form.Item>

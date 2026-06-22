@@ -577,11 +577,11 @@ export default function CharactersPanel({ wb }: Props) {
       </Spin>
 
       <Modal
-        title={isNew ? '新增角色' : '编辑角色'}
+        mask={{ closable: false }}
+                title={isNew ? '新增角色' : '编辑角色'}
         open={editModalOpen}
         forceRender
-        mask={{ closable: false }}
-        onOk={handleSave}
+                onOk={handleSave}
         onCancel={() => setEditModalOpen(false)}
         okText="保存"
         cancelText="取消"
@@ -621,7 +621,8 @@ export default function CharactersPanel({ wb }: Props) {
           </Form.Item>
 
           {/* 性格弧线编辑 */}
-          <Form.Item label="性格弧线">
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 4, fontWeight: 500 }}>性格弧线</div>
             {editArc.map((a, i) => (
               <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8, padding: '8px 12px', background: '#fafafa', borderRadius: 6 }}>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -661,10 +662,11 @@ export default function CharactersPanel({ wb }: Props) {
             <Button type="dashed" icon={<PlusOutlined />} onClick={() => setEditArc([...editArc, { stage: '', description: '' }])} block>
               添加阶段
             </Button>
-          </Form.Item>
+          </div>
 
           {/* 关系编辑 */}
-          <Form.Item label="角色关系">
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 4, fontWeight: 500 }}>角色关系</div>
             {editRelations.map((rel, i) => (
               <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
                 <Select
@@ -689,7 +691,7 @@ export default function CharactersPanel({ wb }: Props) {
             <Button type="dashed" icon={<PlusOutlined />} onClick={addRelation} block>
               添加关系
             </Button>
-          </Form.Item>
+          </div>
         </Form>
       </Modal>
     </div>

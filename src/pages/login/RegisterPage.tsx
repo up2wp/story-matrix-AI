@@ -48,16 +48,16 @@ export default function RegisterPage() {
         </div>
         <Form onFinish={onFinish} autoComplete="off">
           <Form.Item name="username" rules={[{ required: true, message: '请输入用户名' }]}>
-            <Input prefix={<UserOutlined />} placeholder="用户名" size="large" />
+            <Input prefix={<UserOutlined />} placeholder="用户名" size="large" autoComplete="username" />
           </Form.Item>
           <Form.Item name="displayName" rules={[{ required: true, message: '请输入显示名称' }]}>
-            <Input prefix={<IdcardOutlined />} placeholder="显示名称" size="large" />
+            <Input prefix={<IdcardOutlined />} placeholder="显示名称" size="large" autoComplete="name" />
           </Form.Item>
           <Form.Item name="password" rules={[{ required: true, message: '请输入密码' }, { min: 4, message: '密码至少4位' }]}>
-            <Input.Password prefix={<LockOutlined />} placeholder="密码" size="large" />
+            <Input.Password prefix={<LockOutlined />} placeholder="密码" size="large" autoComplete="new-password" />
           </Form.Item>
           <Form.Item name="confirmPassword" rules={[{ required: true, message: '请确认密码' }]}>
-            <Input.Password prefix={<LockOutlined />} placeholder="确认密码" size="large" />
+            <Input.Password prefix={<LockOutlined />} placeholder="确认密码" size="large" autoComplete="new-password" />
           </Form.Item>
           <Form.Item>
             <Button type="primary" htmlType="submit" loading={loading} block size="large">

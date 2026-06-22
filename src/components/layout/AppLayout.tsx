@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Layout, Space, Button, Typography, Tag, Modal, Input, List, Spin, message } from 'antd'
+import { Layout, Space, Button, Typography, Tag, Modal, Input, Spin, message } from 'antd'
 import { RobotOutlined, EditOutlined } from '@ant-design/icons'
 import { Outlet, useLocation } from 'react-router'
 import Sidebar from './Sidebar'
@@ -150,10 +150,10 @@ ${context}
       {showAIPanel && <AIPanel />}
 
       <Modal
-        title="编辑标题"
-        open={titleModalOpen}
         mask={{ closable: false }}
-        onCancel={() => setTitleModalOpen(false)}
+                title="编辑标题"
+        open={titleModalOpen}
+                onCancel={() => setTitleModalOpen(false)}
         onOk={handleSaveTitle}
         okText="保存"
         cancelText="取消"
@@ -177,19 +177,17 @@ ${context}
             </Button>
           </div>
           {aiTitles.length > 0 && (
-            <List
-              size="small"
-              bordered
-              dataSource={aiTitles}
-              renderItem={(title) => (
-                <List.Item
-                  style={{ cursor: 'pointer', padding: '8px 12px' }}
+            <div style={{ border: '1px solid #d9d9d9', borderRadius: 6 }}>
+              {aiTitles.map((title, i) => (
+                <div
+                  key={i}
+                  style={{ cursor: 'pointer', padding: '8px 12px', borderBottom: i < aiTitles.length - 1 ? '1px solid #f0f0f0' : undefined }}
                   onClick={() => setTitleInput(title)}
                 >
                   {title}
-                </List.Item>
-              )}
-            />
+                </div>
+              ))}
+            </div>
           )}
           {aiLoading && <Spin size="small" />}
         </Space>

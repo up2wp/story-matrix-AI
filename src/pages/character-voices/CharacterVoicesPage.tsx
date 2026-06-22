@@ -1,8 +1,9 @@
 import { useEffect } from 'react'
 import { Alert, Button, Card, Empty, Space, Typography } from 'antd'
 import { CustomerServiceOutlined, ReloadOutlined } from '@ant-design/icons'
-import { useNavigate } from 'react-router'
+import { Navigate, useNavigate } from 'react-router'
 import { useStore } from '@/core/store'
+import { useSystemConfigStore } from '@/core/system-config-store'
 import { useAudiobook } from '@/features/audiobook/useAudiobook'
 import { useUserVoices } from '@/features/audiobook/useUserVoices'
 import VoiceBindingCard from '@/pages/preview/VoiceBindingCard'
@@ -12,6 +13,11 @@ const { Title, Text } = Typography
 export default function CharacterVoicesPage() {
   const navigate = useNavigate()
   const currentWork = useStore((state) => state.currentWork)
+  const voiceboxConfig = useSystemConfigStore((s) => s.voiceboxConfig)
+
+  if (voiceboxConfig.serviceUrl === 'http://127.0.0.1:17493') {
+    return <Navigate to="/chapters" replace />
+  }
   const { voices } = useUserVoices()
   const {
     profiles,
@@ -54,7 +60,7 @@ export default function CharacterVoicesPage() {
         description="旁白和角色声音会被本作品所有章节复用；修改声音或提示词后，相关章节音频需要重新生成。"
       />
 
-      <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
         <Card size="small" title="旁白声音">
           <VoiceBindingCard
             binding={narratorBinding}
@@ -69,7 +75,7 @@ export default function CharacterVoicesPage() {
         </Card>
 
         {bystanderBindings && <Card size="small" title="路人声音">
-          <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
             <VoiceBindingCard
               binding={bystanderBindings.male}
               profiles={profiles}
@@ -97,7 +103,7 @@ export default function CharacterVoicesPage() {
 
         <Card size="small" title="角色声音" extra={<Text type="secondary">{currentWork.characters.length} 个角色</Text>}>
           {characterBindings.length ? (
-            <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+            <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
               {characterBindings.map((binding) => (
                 <VoiceBindingCard
                   key={binding.id}

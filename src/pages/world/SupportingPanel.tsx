@@ -354,11 +354,11 @@ export default function SupportingPanel({ wb }: Props) {
       </Spin>
 
       <Modal
-        title={isNew ? '新增角色' : '编辑角色'}
+        mask={{ closable: false }}
+                title={isNew ? '新增角色' : '编辑角色'}
         open={editModalOpen}
         forceRender
-        mask={{ closable: false }}
-        onOk={handleSave}
+                onOk={handleSave}
         onCancel={() => setEditModalOpen(false)}
         okText="保存"
         cancelText="取消"
@@ -402,7 +402,8 @@ export default function SupportingPanel({ wb }: Props) {
             <TagInput placeholder="输入后回车添加" color="blue" />
           </Form.Item>
 
-          <Form.Item label="角色关系">
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 4, fontWeight: 500 }}>角色关系</div>
             {editRelations.map((rel, i) => (
               <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
                 <Select
@@ -427,21 +428,21 @@ export default function SupportingPanel({ wb }: Props) {
             <Button type="dashed" icon={<PlusOutlined />} onClick={addRelation} block>
               添加关系
             </Button>
-          </Form.Item>
+          </div>
         </Form>
       </Modal>
 
       {/* AI 生成设置弹窗 */}
       <Modal
-        title="AI 生成非主要人物"
+        mask={{ closable: false }}
+                title="AI 生成非主要人物"
         open={genModalOpen}
         forceRender
         onOk={handleAIGenerate}
         onCancel={() => setGenModalOpen(false)}
         okText="开始生成"
         cancelText="取消"
-        mask={{ closable: false }}
-      >
+              >
         <Form form={genForm} layout="vertical" initialValues={{ count: 3, hints: '' }}>
           <Form.Item name="count" label="生成数量">
             <InputNumber min={1} max={30} style={{ width: '100%' }} />

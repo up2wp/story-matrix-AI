@@ -93,7 +93,7 @@ export default function SegmentReviewTable({ segments, characters, onUpdate, onD
       render: (_, segment) => {
         const color = segment.attributionStatus === 'failed' ? 'red' : segment.needsReview ? 'gold' : segment.attributionStatus === 'manual' ? 'purple' : 'green'
         const label = segment.attributionStatus === 'failed' ? '归因失败' : segment.needsReview ? '需复核' : segment.attributionStatus === 'manual' ? '手动' : segment.attributionSource || '已归因'
-        return <Space direction="vertical" size={4}>
+        return <Space orientation="vertical" size={4}>
           <Tooltip title={segment.attributionError}><Tag color={color}>{label}</Tag></Tooltip>
           {typeof segment.attributionConfidence === 'number' && <Tag>{Math.round(segment.attributionConfidence * 100)}%</Tag>}
         </Space>
@@ -114,7 +114,7 @@ export default function SegmentReviewTable({ segments, characters, onUpdate, onD
       width: 100,
       render: (_, segment) => {
         const status = segment.status !== 'pending' ? segment.status : segment.needsReview || segment.attributionStatus === 'needs_review' ? '待复核' : segment.attributionStatus === 'attributed' || segment.attributionStatus === 'manual' ? '已确认' : '待生成'
-        return <Space direction="vertical" size={4}>
+        return <Space orientation="vertical" size={4}>
           <Tag color={segment.status === 'completed' ? 'green' : segment.status === 'failed' ? 'red' : segment.status === 'generating' ? 'blue' : status === '待复核' ? 'gold' : status === '已确认' ? 'green' : 'default'}>{status}</Tag>
           {draftsBySegmentId[segment.id] && <Tag color="orange">未保存</Tag>}
         </Space>
@@ -137,7 +137,7 @@ export default function SegmentReviewTable({ segments, characters, onUpdate, onD
     },
   ]
 
-  return <Space direction="vertical" style={{ width: '100%' }}>
+  return <Space orientation="vertical" style={{ width: '100%' }}>
     <Space wrap>
       <Button size="small" type="primary" loading={savingDrafts} disabled={!hasDirtySegments} onClick={() => void saveDrafts()}>保存修改</Button>
       <Button size="small" disabled={!hasDirtySegments || savingDrafts} onClick={() => setDraftsBySegmentId({})}>丢弃修改</Button>

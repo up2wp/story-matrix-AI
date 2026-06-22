@@ -15,7 +15,7 @@ export default function AudiobookPanel({ work }: Props) {
 
   return (
     <Card style={{ marginBottom: 16 }} title={<><CustomerServiceOutlined /> 有声读物</>}>
-      <Space direction="vertical" size="small" style={{ width: '100%' }}>
+      <Space orientation="vertical" size="small" style={{ width: '100%' }}>
         <Alert
           type="info"
           showIcon

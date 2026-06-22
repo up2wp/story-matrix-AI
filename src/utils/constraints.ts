@@ -11,4 +11,5 @@ export const CONSTRAINT_TYPE_LABELS: Record<ConstraintType, string> = {
   foreshadow: '伏笔',
   rule: '逻辑红线',
   rhythm: '节奏要求',
+  structure: '叙事结构',
 }

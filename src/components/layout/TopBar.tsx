@@ -127,10 +127,10 @@ export default function TopBar() {
       </Header>
 
       <Modal
-        title="个人资料"
-        open={profileModalOpen}
         mask={{ closable: false }}
-        onCancel={() => { setProfileModalOpen(false); profileForm.resetFields() }}
+                title="个人资料"
+        open={profileModalOpen}
+                onCancel={() => { setProfileModalOpen(false); profileForm.resetFields() }}
         onOk={() => profileForm.submit()}
         confirmLoading={profileLoading}
         okText="保存"
@@ -144,11 +144,11 @@ export default function TopBar() {
       </Modal>
 
       <Modal
-        title="修改密码"
+        mask={{ closable: false }}
+                title="修改密码"
         open={pwdModalOpen}
         forceRender
-        mask={{ closable: false }}
-        onCancel={() => { setPwdModalOpen(false); pwdForm.resetFields() }}
+                onCancel={() => { setPwdModalOpen(false); pwdForm.resetFields() }}
         onOk={() => pwdForm.submit()}
         confirmLoading={pwdLoading}
         okText="确认修改"

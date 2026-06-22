@@ -61,9 +61,8 @@ export interface Setting {
 
 // --- 核心约束 ---
 
-export type ConstraintType = 'event' | 'fate' | 'foreshadow' | 'rule' | 'rhythm'
+export type ConstraintType = 'event' | 'fate' | 'foreshadow' | 'rule' | 'rhythm' | 'structure'
 export type ConstraintPriority = 'required' | 'suggested' | 'optional'
-export type ConstraintStatus = 'pending' | 'fulfilled' | 'waived'
 
 export interface Constraint {
   id: string
@@ -71,7 +70,6 @@ export interface Constraint {
   title: string
   description: string
   priority: ConstraintPriority
-  status: ConstraintStatus
 }
 
 // --- 大纲 ---

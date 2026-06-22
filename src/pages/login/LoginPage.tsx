@@ -58,10 +58,10 @@ export default function LoginPage() {
         </div>
         <Form onFinish={onFinish} autoComplete="off">
           <Form.Item name="username" rules={[{ required: true, message: '请输入用户名' }]}>
-            <Input prefix={<UserOutlined />} placeholder="用户名" size="large" />
+            <Input prefix={<UserOutlined />} placeholder="用户名" size="large" autoComplete="username" />
           </Form.Item>
           <Form.Item name="password" rules={[{ required: true, message: '请输入密码' }]}>
-            <Input.Password prefix={<LockOutlined />} placeholder="密码" size="large" />
+            <Input.Password prefix={<LockOutlined />} placeholder="密码" size="large" autoComplete="current-password" />
           </Form.Item>
           <Form.Item>
             <Button type="primary" htmlType="submit" loading={loading} block size="large">

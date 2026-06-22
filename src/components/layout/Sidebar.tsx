@@ -13,6 +13,7 @@ import {
 import { useNavigate, useLocation } from 'react-router'
 import { useStore } from '@/core/store'
 import { useAuthStore } from '@/core/auth-store'
+import { useSystemConfigStore } from '@/core/system-config-store'
 
 const { Sider } = Layout
 const appVersion = __APP_VERSION__
@@ -26,8 +27,10 @@ export default function Sidebar() {
   const navigate = useNavigate()
   const location = useLocation()
   const user = useAuthStore((s) => s.user)
+  const voiceboxConfig = useSystemConfigStore((s) => s.voiceboxConfig)
 
   const hasWork = !!currentWork
+  const voiceboxReady = voiceboxConfig.serviceUrl !== 'http://127.0.0.1:17493'
 
   const menuItems = [
     { key: '/works', icon: <AppstoreOutlined />, label: '作品列表' },
@@ -41,7 +44,7 @@ export default function Sidebar() {
           { key: '/world', icon: <GlobalOutlined />, label: '世界构建' },
           { key: '/constraints', icon: <AimOutlined />, label: '核心约束' },
           { key: '/outline', icon: <BranchesOutlined />, label: '主线大纲' },
-          ...(!readOnly
+          ...(!readOnly && voiceboxReady
             ? [{ key: '/character-voices', icon: <CustomerServiceOutlined />, label: '角色声音' }]
             : []),
           { key: '/chapters', icon: <FileTextOutlined />, label: '章节丰盈' },

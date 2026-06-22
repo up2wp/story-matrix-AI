@@ -50,7 +50,7 @@ export default function ChapterAudioPlayer({ chapter, segments }: Props) {
 
   return (
     <Card size="small" title="章节音频" extra={<Button icon={<DownloadOutlined />} loading={synthesizing} onClick={synthesizeChapterAudio}>合成章节音频</Button>}>
-      <Space direction="vertical" style={{ width: '100%' }}>
+      <Space orientation="vertical" style={{ width: '100%' }}>
         <Text type="secondary">已生成 {completed.length} 个音频片段。可在分段列表中逐条试听、下载或重新生成；这里会在后台拼接章节音频并自动下载。</Text>
         {synthesisProgress && <div>
           <Text type="secondary">合成进度：{synthesisProgress.message}</Text>

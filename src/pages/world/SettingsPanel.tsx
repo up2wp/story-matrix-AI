@@ -280,11 +280,11 @@ export default function SettingsPanel({ wb }: Props) {
       </Spin>
 
       <Modal
-        title={settings.find((s) => s.id === editing?.id) ? '编辑设定' : '新增设定'}
+        mask={{ closable: false }}
+                title={settings.find((s) => s.id === editing?.id) ? '编辑设定' : '新增设定'}
         open={editModalOpen}
         forceRender
-        mask={{ closable: false }}
-        onOk={settings.find((s) => s.id === editing?.id) ? handleSave : handleSaveNew}
+                onOk={settings.find((s) => s.id === editing?.id) ? handleSave : handleSaveNew}
         onCancel={() => setEditModalOpen(false)}
         okText="保存"
         cancelText="取消"

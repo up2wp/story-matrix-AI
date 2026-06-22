@@ -105,7 +105,7 @@ function VoiceboxSettings() {
           </Form.Item>
         )}
         {authType === 'custom-header' && (
-          <Space direction="vertical" style={{ width: '100%' }}>
+          <Space orientation="vertical" style={{ width: '100%' }}>
             <Form.Item name="customHeaderName" label="Header 名称" rules={[{ required: true, message: '请输入 Header 名称' }]}>
               <Input placeholder="例如 Authorization 或 X-Voicebox-Key" />
             </Form.Item>
@@ -298,10 +298,10 @@ function UserManagement() {
         <Table columns={columns} dataSource={users} rowKey="id" loading={loading} pagination={false} scroll={{ x: 600 }} />
       </div>
       <div className="mobile-user-cards">
-        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+        <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
           {users.map(user => (
             <Card key={user.id} size="small" title={user.displayName} extra={renderRole(user.role)}>
-              <Space direction="vertical" size="small" style={{ width: '100%' }}>
+              <Space orientation="vertical" size="small" style={{ width: '100%' }}>
                 <Text type="secondary">用户名：{user.username}</Text>
                 <Text type="secondary">创建时间：{new Date(user.createdAt).toLocaleString('zh-CN')}</Text>
                 {user.id === currentUser?.id ? (
