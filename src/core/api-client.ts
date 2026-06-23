@@ -84,6 +84,7 @@ export const db = {
   delete: async () => { /* 无操作 */ },
 
   users: createTable<any>('users'),
+  feedback: createTable<any>('feedback'),
   works: {
     ...createTable<any>('works'),
     updateAudiobook: (id: string, audiobookChanges: any) => request<any>(`/works/${id}/audiobook`, {

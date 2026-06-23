@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { db } from './db'
-import type { AIConfig, VoiceboxConfig } from './types'
+import type { AIConfig, GitHubConfig, VoiceboxConfig } from './types'
 import { useStore } from './store'
 
 // ============================================================
@@ -11,11 +11,13 @@ interface SystemConfigState {
   registrationEnabled: boolean
   aiConfig: AIConfig
   voiceboxConfig: VoiceboxConfig
+  githubConfig: GitHubConfig
   isLoading: boolean
   loadConfig: () => Promise<void>
   toggleRegistration: () => Promise<void>
   saveAIConfig: (config: AIConfig) => Promise<void>
   saveVoiceboxConfig: (config: VoiceboxConfig) => Promise<void>
+  saveGitHubConfig: (config: GitHubConfig) => Promise<void>
 }
 
 const defaultAIConfig: AIConfig = {
@@ -41,10 +43,18 @@ export const defaultVoiceboxConfig: VoiceboxConfig = {
   generationConcurrency: 2,
 }
 
+export const defaultGitHubConfig: GitHubConfig = {
+  owner: '',
+  repo: '',
+  token: '',
+  labels: 'feedback',
+}
+
 export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
   registrationEnabled: false,
   aiConfig: { ...defaultAIConfig },
   voiceboxConfig: { ...defaultVoiceboxConfig },
+  githubConfig: { ...defaultGitHubConfig },
   isLoading: true,
 
   loadConfig: async () => {
@@ -52,12 +62,13 @@ export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
     if (config) {
       const aiConfig = config.aiConfig || { ...defaultAIConfig }
       const voiceboxConfig = { ...defaultVoiceboxConfig, ...(config.voiceboxConfig || {}) }
-      set({ registrationEnabled: config.registrationEnabled, aiConfig, voiceboxConfig, isLoading: false })
+      const githubConfig = { ...defaultGitHubConfig, ...(config.githubConfig || {}) }
+      set({ registrationEnabled: config.registrationEnabled, aiConfig, voiceboxConfig, githubConfig, isLoading: false })
       // 同步到全局 store
       useStore.getState().setAIConfig(aiConfig)
     } else {
-      await db.systemConfig.add({ id: 'singleton', registrationEnabled: false, aiConfig: { ...defaultAIConfig }, voiceboxConfig: { ...defaultVoiceboxConfig } })
-      set({ registrationEnabled: false, aiConfig: { ...defaultAIConfig }, voiceboxConfig: { ...defaultVoiceboxConfig }, isLoading: false })
+      await db.systemConfig.add({ id: 'singleton', registrationEnabled: false, aiConfig: { ...defaultAIConfig }, voiceboxConfig: { ...defaultVoiceboxConfig }, githubConfig: { ...defaultGitHubConfig } })
+      set({ registrationEnabled: false, aiConfig: { ...defaultAIConfig }, voiceboxConfig: { ...defaultVoiceboxConfig }, githubConfig: { ...defaultGitHubConfig }, isLoading: false })
     }
   },
 
@@ -76,5 +87,10 @@ export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
   saveVoiceboxConfig: async (config: VoiceboxConfig) => {
     await db.systemConfig.update('singleton', { voiceboxConfig: config })
     set({ voiceboxConfig: config })
+  },
+
+  saveGitHubConfig: async (config: GitHubConfig) => {
+    await db.systemConfig.update('singleton', { githubConfig: config })
+    set({ githubConfig: config })
   },
 }))

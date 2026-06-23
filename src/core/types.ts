@@ -168,6 +168,25 @@ export interface VoiceboxConfig {
   generationConcurrency: number
 }
 
+export interface GitHubConfig {
+  owner: string
+  repo: string
+  token: string
+  labels: string
+}
+
+export interface Feedback {
+  id: string
+  title: string
+  body: string
+  submitter?: string
+  submitterId?: string
+  status?: string
+  githubIssueUrl?: string
+  githubIssueError?: string
+  createdAt: number
+}
+
 export type VoiceBindingSource = 'profile' | 'sample' | 'pending'
 export type AudiobookSpeakerKind = 'narrator' | 'character' | 'bystanderMale' | 'bystanderFemale'
 export type BystanderVoiceKey = 'male' | 'female'
@@ -323,4 +342,5 @@ export interface SystemConfig {
   registrationEnabled: boolean
   aiConfig?: AIConfig
   voiceboxConfig?: VoiceboxConfig
+  githubConfig?: GitHubConfig
 }
