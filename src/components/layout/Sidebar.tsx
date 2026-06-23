@@ -9,6 +9,7 @@ import {
   SettingOutlined,
   ReadOutlined,
   CustomerServiceOutlined,
+  CommentOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation } from 'react-router'
 import { useStore } from '@/core/store'
@@ -34,6 +35,7 @@ export default function Sidebar() {
     ...(!readOnly
       ? [{ key: '/voices', icon: <CustomerServiceOutlined />, label: '声音管理' }]
       : []),
+    { key: '/feedback', icon: <CommentOutlined />, label: '问题反馈' },
     ...(hasWork
       ? [
           { type: 'divider' as const },
