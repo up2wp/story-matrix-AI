@@ -8,11 +8,13 @@ const router = Router()
 function rowToConfig(row: any, includeAI = false) {
   const aiConfig = row.aiConfig ? JSON.parse(row.aiConfig) : undefined
   const voiceboxConfig = row.voiceboxConfig ? JSON.parse(row.voiceboxConfig) : defaultVoiceboxConfig()
+  const novelImportConfig = row.novelImportConfig ? { ...defaultNovelImportConfig(), ...JSON.parse(row.novelImportConfig) } : defaultNovelImportConfig()
   const safeVoiceboxConfig = includeAI ? voiceboxConfig : maskVoiceboxConfig(voiceboxConfig)
   return {
     id: row.id,
     registrationEnabled: Boolean(row.registrationEnabled),
     voiceboxConfig: safeVoiceboxConfig,
+    novelImportConfig,
     ...(includeAI && { aiConfig }),
     ...(!includeAI && aiConfig && {
       aiConfig: {
@@ -23,6 +25,10 @@ function rowToConfig(row: any, includeAI = false) {
       },
     }),
   }
+}
+
+function defaultNovelImportConfig() {
+  return { enabled: false }
 }
 
 function defaultVoiceboxConfig() {
@@ -75,10 +81,10 @@ router.get('/', (req, res) => {
 
 // POST /api/system-config — 创建配置（需管理员）
 router.post('/', requireAdmin, (req, res) => {
-  const { registrationEnabled, aiConfig, voiceboxConfig } = req.body
+  const { registrationEnabled, aiConfig, voiceboxConfig, novelImportConfig } = req.body
   db.prepare(
-    'INSERT INTO systemConfig (id, registrationEnabled, aiConfig, voiceboxConfig) VALUES (?, ?, ?, ?)'
-  ).run('singleton', registrationEnabled ? 1 : 0, aiConfig ? JSON.stringify(aiConfig) : null, JSON.stringify(voiceboxConfig || defaultVoiceboxConfig()))
+    'INSERT INTO systemConfig (id, registrationEnabled, aiConfig, voiceboxConfig, novelImportConfig) VALUES (?, ?, ?, ?, ?)'
+  ).run('singleton', registrationEnabled ? 1 : 0, aiConfig ? JSON.stringify(aiConfig) : null, JSON.stringify(voiceboxConfig || defaultVoiceboxConfig()), JSON.stringify(novelImportConfig || defaultNovelImportConfig()))
   res.status(201).json(req.body)
 })
 
@@ -99,6 +105,10 @@ router.patch('/', requireAdmin, (req, res) => {
   if ('voiceboxConfig' in fields) {
     sets.push('voiceboxConfig = ?')
     values.push(fields.voiceboxConfig ? JSON.stringify(mergeVoiceboxConfig(fields.voiceboxConfig)) : JSON.stringify(defaultVoiceboxConfig()))
+  }
+  if ('novelImportConfig' in fields) {
+    sets.push('novelImportConfig = ?')
+    values.push(fields.novelImportConfig ? JSON.stringify({ ...defaultNovelImportConfig(), ...fields.novelImportConfig }) : JSON.stringify(defaultNovelImportConfig()))
   }
 
   if (sets.length === 0) return res.status(400).json({ error: '无有效字段' })

@@ -42,7 +42,8 @@ db.exec(`
     id TEXT PRIMARY KEY CHECK (id = 'singleton'),
     registrationEnabled INTEGER NOT NULL DEFAULT 0,
     aiConfig TEXT,
-    voiceboxConfig TEXT
+    voiceboxConfig TEXT,
+    novelImportConfig TEXT
   );
 
   CREATE TABLE IF NOT EXISTS userVoices (
@@ -90,6 +91,10 @@ export function migrateDatabase(database: DatabaseInstance = db) {
 
   if (!columnExists(database, 'systemConfig', 'voiceboxConfig')) {
     database.prepare('ALTER TABLE systemConfig ADD COLUMN voiceboxConfig TEXT').run()
+  }
+
+  if (!columnExists(database, 'systemConfig', 'novelImportConfig')) {
+    database.prepare('ALTER TABLE systemConfig ADD COLUMN novelImportConfig TEXT').run()
   }
 
   database.exec(`
