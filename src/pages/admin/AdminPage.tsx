@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Table, Button, Modal, Form, Input, InputNumber, Select, Popconfirm, Space, Switch, Typography, Tag, message, Tabs, Card } from 'antd'
-import { PlusOutlined, DeleteOutlined, EditOutlined, UserOutlined, SettingOutlined, RobotOutlined, CustomerServiceOutlined } from '@ant-design/icons'
+import { PlusOutlined, DeleteOutlined, EditOutlined, UserOutlined, SettingOutlined, RobotOutlined, CustomerServiceOutlined, GithubOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { getToken } from '@/core/api-client'
 import { db } from '@/core/db'
 import { useAuthStore } from '@/core/auth-store'
 import { useSystemConfigStore } from '@/core/system-config-store'
-import type { User, AIConfig, VoiceboxConfig } from '@/core/types'
+import type { User, AIConfig, GitHubConfig, VoiceboxConfig } from '@/core/types'
 
 const { Title, Text } = Typography
 
@@ -19,10 +19,57 @@ export default function AdminPage() {
           { key: 'users', label: '用户管理', icon: <UserOutlined />, children: <UserManagement /> },
           { key: 'settings', label: '系统设置', icon: <SettingOutlined />, children: <SystemSettings /> },
           { key: 'model', label: '模型管理', icon: <RobotOutlined />, children: <ModelSettings /> },
+          { key: 'github', label: 'GitHub Issue', icon: <GithubOutlined />, children: <GitHubIssueSettings /> },
           { key: 'voicebox', label: 'Voicebox', icon: <CustomerServiceOutlined />, children: <VoiceboxSettings /> },
         ]}
       />
     </div>
+  )
+}
+
+// --- GitHub Issue 设置 ---
+
+function GitHubIssueSettings() {
+  const githubConfig = useSystemConfigStore(s => s.githubConfig)
+  const saveGitHubConfig = useSystemConfigStore(s => s.saveGitHubConfig)
+  const [form] = Form.useForm()
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    form.setFieldsValue(githubConfig)
+  }, [githubConfig, form])
+
+  const handleSave = async (values: GitHubConfig) => {
+    setSaving(true)
+    try {
+      await saveGitHubConfig({
+        ...values,
+        token: values.token === '__server_configured__' ? githubConfig.token : values.token,
+      })
+      message.success('GitHub Issue 配置已保存')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Form form={form} onFinish={handleSave} layout="vertical" initialValues={githubConfig}>
+      <Card title="GitHub Issue" style={{ marginBottom: 16 }}>
+        <Form.Item name="owner" label="仓库拥有者" rules={[{ required: true, message: '请输入 GitHub owner' }]}>
+          <Input placeholder="例如 up2wp" />
+        </Form.Item>
+        <Form.Item name="repo" label="仓库名称" rules={[{ required: true, message: '请输入 GitHub repo' }]}>
+          <Input placeholder="例如 story-matrix-AI" />
+        </Form.Item>
+        <Form.Item name="token" label="访问 Token" extra="只保存在后端系统配置中，用于创建反馈 Issue。">
+          <Input.Password placeholder="ghp_..." />
+        </Form.Item>
+        <Form.Item name="labels" label="默认 Labels" extra="多个标签用英文逗号分隔。">
+          <Input placeholder="feedback,bug" />
+        </Form.Item>
+      </Card>
+      <Button type="primary" htmlType="submit" loading={saving}>保存配置</Button>
+    </Form>
   )
 }
 
