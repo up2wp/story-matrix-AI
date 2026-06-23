@@ -9,7 +9,8 @@
     "test:model-config": "node test/model-config.test.mjs",
     "test:user-management": "node test/user-management.test.mjs",
     "test:audiobook": "node test/audiobook.test.mjs",
-    "test": "npm run test:model-config && npm run test:user-management && npm run test:audiobook",
+    "test:feedback": "node test/feedback.test.mjs",
+    "test": "npm run test:model-config && npm run test:user-management && npm run test:audiobook && npm run test:feedback",
     "build": "tsc -b && vite build && cd server && npm run build",
     "lint": "eslint .",
     "preview": "vite preview"
