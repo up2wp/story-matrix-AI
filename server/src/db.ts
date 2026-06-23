@@ -42,7 +42,22 @@ db.exec(`
     id TEXT PRIMARY KEY CHECK (id = 'singleton'),
     registrationEnabled INTEGER NOT NULL DEFAULT 0,
     aiConfig TEXT,
-    voiceboxConfig TEXT
+    voiceboxConfig TEXT,
+    githubConfig TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS feedback (
+    id TEXT PRIMARY KEY,
+    userId TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    githubIssueNumber INTEGER,
+    githubIssueUrl TEXT,
+    githubError TEXT,
+    createdAt INTEGER NOT NULL,
+    updatedAt INTEGER NOT NULL,
+    FOREIGN KEY (userId) REFERENCES users(id)
   );
 
   CREATE TABLE IF NOT EXISTS userVoices (
@@ -83,6 +98,26 @@ export function migrateDatabase(database: DatabaseInstance = db) {
   if (!columnExists(database, 'systemConfig', 'voiceboxConfig')) {
     database.prepare('ALTER TABLE systemConfig ADD COLUMN voiceboxConfig TEXT').run()
   }
+
+  if (!columnExists(database, 'systemConfig', 'githubConfig')) {
+    database.prepare('ALTER TABLE systemConfig ADD COLUMN githubConfig TEXT').run()
+  }
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS feedback (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      githubIssueNumber INTEGER,
+      githubIssueUrl TEXT,
+      githubError TEXT,
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL,
+      FOREIGN KEY (userId) REFERENCES users(id)
+    )
+  `)
 
   database.exec(`
     CREATE TABLE IF NOT EXISTS userVoices (

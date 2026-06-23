@@ -8,11 +8,14 @@ const router = Router()
 function rowToConfig(row: any, includeAI = false) {
   const aiConfig = row.aiConfig ? JSON.parse(row.aiConfig) : undefined
   const voiceboxConfig = row.voiceboxConfig ? JSON.parse(row.voiceboxConfig) : defaultVoiceboxConfig()
+  const githubConfig = row.githubConfig ? JSON.parse(row.githubConfig) : defaultGitHubConfig()
   const safeVoiceboxConfig = includeAI ? voiceboxConfig : maskVoiceboxConfig(voiceboxConfig)
+  const safeGitHubConfig = includeAI ? githubConfig : maskGitHubConfig(githubConfig)
   return {
     id: row.id,
     registrationEnabled: Boolean(row.registrationEnabled),
     voiceboxConfig: safeVoiceboxConfig,
+    githubConfig: safeGitHubConfig,
     ...(includeAI && { aiConfig }),
     ...(!includeAI && aiConfig && {
       aiConfig: {
@@ -22,6 +25,22 @@ function rowToConfig(row: any, includeAI = false) {
         apiKey: aiConfig.apiKey ? '__server_configured__' : '',
       },
     }),
+  }
+}
+
+function defaultGitHubConfig() {
+  return {
+    owner: '',
+    repo: '',
+    token: '',
+    labels: ['user-feedback'],
+  }
+}
+
+function maskGitHubConfig(config: ReturnType<typeof defaultGitHubConfig>) {
+  return {
+    ...config,
+    token: config.token ? '__server_configured__' : '',
   }
 }
 
@@ -63,6 +82,20 @@ function mergeVoiceboxConfig(fieldsConfig: ReturnType<typeof defaultVoiceboxConf
   }
 }
 
+function mergeGitHubConfig(fieldsConfig: ReturnType<typeof defaultGitHubConfig>) {
+  const row = db.prepare('SELECT githubConfig FROM systemConfig WHERE id = ?').get('singleton') as { githubConfig?: string } | undefined
+  const existing = row?.githubConfig ? { ...defaultGitHubConfig(), ...JSON.parse(row.githubConfig) } as ReturnType<typeof defaultGitHubConfig> : defaultGitHubConfig()
+  const labels = Array.isArray(fieldsConfig.labels)
+    ? fieldsConfig.labels
+    : String(fieldsConfig.labels || '').split(',').map(label => label.trim()).filter(Boolean)
+  return {
+    ...existing,
+    ...fieldsConfig,
+    token: fieldsConfig.token === '__server_configured__' ? existing.token : fieldsConfig.token,
+    labels: labels.length ? labels : existing.labels,
+  }
+}
+
 // GET /api/system-config — 获取配置（公开，不含 API Key；管理员带 token 可获取完整配置）
 router.get('/', (req, res) => {
   const row = db.prepare('SELECT * FROM systemConfig WHERE id = ?').get('singleton')
@@ -80,10 +113,10 @@ router.get('/', (req, res) => {
 
 // POST /api/system-config — 创建配置（需管理员）
 router.post('/', requireAdmin, (req, res) => {
-  const { registrationEnabled, aiConfig, voiceboxConfig } = req.body
+  const { registrationEnabled, aiConfig, voiceboxConfig, githubConfig } = req.body
   db.prepare(
-    'INSERT INTO systemConfig (id, registrationEnabled, aiConfig, voiceboxConfig) VALUES (?, ?, ?, ?)'
-  ).run('singleton', registrationEnabled ? 1 : 0, aiConfig ? JSON.stringify(aiConfig) : null, JSON.stringify(voiceboxConfig || defaultVoiceboxConfig()))
+    'INSERT INTO systemConfig (id, registrationEnabled, aiConfig, voiceboxConfig, githubConfig) VALUES (?, ?, ?, ?, ?)'
+  ).run('singleton', registrationEnabled ? 1 : 0, aiConfig ? JSON.stringify(aiConfig) : null, JSON.stringify(voiceboxConfig || defaultVoiceboxConfig()), JSON.stringify(githubConfig || defaultGitHubConfig()))
   res.status(201).json(req.body)
 })
 
@@ -104,6 +137,10 @@ router.patch('/', requireAdmin, (req, res) => {
   if ('voiceboxConfig' in fields) {
     sets.push('voiceboxConfig = ?')
     values.push(fields.voiceboxConfig ? JSON.stringify(mergeVoiceboxConfig(fields.voiceboxConfig)) : JSON.stringify(defaultVoiceboxConfig()))
+  }
+  if ('githubConfig' in fields) {
+    sets.push('githubConfig = ?')
+    values.push(fields.githubConfig ? JSON.stringify(mergeGitHubConfig(fields.githubConfig)) : JSON.stringify(defaultGitHubConfig()))
   }
 
   if (sets.length === 0) return res.status(400).json({ error: '无有效字段' })

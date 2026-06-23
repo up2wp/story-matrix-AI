@@ -10,6 +10,7 @@ import systemConfigRouter from './routes/system-config.js'
 import aiRouter from './routes/ai.js'
 import voiceboxRouter from './routes/voicebox.js'
 import userVoicesRouter from './routes/user-voices.js'
+import feedbackRouter from './routes/feedback.js'
 import { requireAuth } from './middleware/auth.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -34,6 +35,7 @@ app.use('/api/works', requireAuth, worksRouter)
 app.use('/api/ai', requireAuth, aiRouter)
 app.use('/api/voicebox', requireAuth, voiceboxRouter)
 app.use('/api/user-voices', requireAuth, userVoicesRouter)
+app.use('/api/feedback', requireAuth, feedbackRouter)
 // system-config 路由：GET 公开，POST/PATCH 需管理员
 app.use('/api/system-config', systemConfigRouter)
 
