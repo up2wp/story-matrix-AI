@@ -18,7 +18,8 @@ interface WorkItem extends Work {
 }
 
 function getWorkProgress(work: WorkItem) {
-  if (work.chapters?.length) return `章节丰盈（${work.chapters.length} 章）`
+  const hasBackfilledStages = Boolean(work.characters?.length || work.settings?.length || work.constraints?.length || work.storylines?.length || work.seed?.coreConcept || work.seed?.genre || work.outline?.some(node => node.summary.trim()))
+  if (work.chapters?.length) return hasBackfilledStages ? `章节丰盈（已导入 ${work.chapters.length} 章，阶段已补充）` : `章节丰盈（已导入 ${work.chapters.length} 章，设定待确认）`
   if (work.constraints?.length) return `核心约束（${work.constraints.length} 条）`
   if (work.outline?.length) return '主线大纲'
   if (work.settings?.length) return '世界构建'

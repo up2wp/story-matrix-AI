@@ -102,11 +102,11 @@ export default function NovelImportModal({ open, ownerId, onCancel, onImported }
       await db.works.add(work)
       setCurrentWork(work)
       setReadOnly(false)
-      message.success(`已导入「${work.title}」`)
+      message.success(`已导入「${work.title}」，可继续查看章节或进入阶段反推`)
       onImported()
       reset()
       onCancel()
-      navigate('/chapters')
+      navigate('/backfill')
     } catch (err: unknown) {
       message.error(err instanceof Error ? err.message : '导入失败，请重试')
     } finally {
@@ -130,6 +130,7 @@ export default function NovelImportModal({ open, ownerId, onCancel, onImported }
       <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
         <Paragraph type="secondary" style={{ marginBottom: 0 }}>
           选择本地 .txt 或 .md 文件后，系统只在浏览器内解析章节，不会上传原文件。确认无阻断问题后才会创建新作品。
+          创建后可根据已导入正文提出阶段反推候选，未确认不会写入作品。
         </Paragraph>
 
         <Space wrap>

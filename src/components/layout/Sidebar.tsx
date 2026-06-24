@@ -9,6 +9,7 @@ import {
   SettingOutlined,
   ReadOutlined,
   CustomerServiceOutlined,
+  SafetyCertificateOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation } from 'react-router'
 import { useStore } from '@/core/store'
@@ -30,6 +31,7 @@ export default function Sidebar() {
   const voiceboxConfig = useSystemConfigStore((s) => s.voiceboxConfig)
 
   const hasWork = !!currentWork
+  const canBackfill = Boolean(currentWork?.chapters?.some(chapter => chapter.content.trim())) && !readOnly
   const voiceboxReady = voiceboxConfig.serviceUrl !== 'http://127.0.0.1:17493'
 
   const menuItems = [
@@ -44,6 +46,9 @@ export default function Sidebar() {
           { key: '/world', icon: <GlobalOutlined />, label: '世界构建' },
           { key: '/constraints', icon: <AimOutlined />, label: '核心约束' },
           { key: '/outline', icon: <BranchesOutlined />, label: '主线大纲' },
+          ...(canBackfill
+            ? [{ key: '/backfill', icon: <SafetyCertificateOutlined />, label: '阶段反推' }]
+            : []),
           ...(!readOnly && voiceboxReady
             ? [{ key: '/character-voices', icon: <CustomerServiceOutlined />, label: '角色声音' }]
             : []),
