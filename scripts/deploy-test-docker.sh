@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_DIR="${PROJECT_DIR:-${1:-$HOME/Projects/story-matrix-AI}}"
+PROJECT_DIR="${PROJECT_DIR:-$HOME/Projects/story-matrix-AI}"
+TARGET_BRANCH="${1:-}"
 IMAGE_NAME="story-matrix-ai:test"
 CONTAINER_NAME="story-matrix-ai"
 DATA_DIR="$HOME/docker/story-matrix-data"
@@ -45,6 +46,26 @@ checkout_latest_remote_branch() {
   fi
 }
 
+checkout_target_branch() {
+  local branch="$1"
+  local remote_ref="origin/$branch"
+
+  if [[ "$branch" == -* ]] || ! git check-ref-format --branch "$branch" >/dev/null 2>&1; then
+    fail "Invalid branch name: $branch"
+  fi
+
+  if ! git show-ref --verify --quiet "refs/remotes/$remote_ref"; then
+    fail "Remote branch does not exist: $remote_ref"
+  fi
+
+  if git show-ref --verify --quiet "refs/heads/$branch"; then
+    git switch "$branch"
+    git merge --ff-only "$remote_ref"
+  else
+    git switch --track -c "$branch" "$remote_ref"
+  fi
+}
+
 replace_container() {
   if docker ps -a --format '{{.Names}}' | grep -Fxq "$CONTAINER_NAME"; then
     log "Removing existing container: $CONTAINER_NAME"
@@ -74,8 +95,13 @@ main() {
   log "Fetching all remotes in $PROJECT_DIR"
   git fetch --all --prune
 
-  log "Switching to latest remote branch"
-  checkout_latest_remote_branch
+  if [[ -n "$TARGET_BRANCH" ]]; then
+    log "Switching to requested branch: $TARGET_BRANCH"
+    checkout_target_branch "$TARGET_BRANCH"
+  else
+    log "Switching to latest remote branch"
+    checkout_latest_remote_branch
+  fi
 
   log "Building Docker image: $IMAGE_NAME"
   docker build -t "$IMAGE_NAME" .
