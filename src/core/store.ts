@@ -266,7 +266,7 @@ export const useStore = create<AppState>((set) => ({
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
   setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
 
-  aiPanelOpen: true,
+  aiPanelOpen: false,
   toggleAIPanel: () => set((s) => ({ aiPanelOpen: !s.aiPanelOpen })),
 
   aiConfig: null,
