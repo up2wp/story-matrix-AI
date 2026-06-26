@@ -14,6 +14,8 @@ const topBarSource = await readFile(new URL('../src/components/layout/TopBar.tsx
 const adminRouteSource = await readFile(new URL('../src/components/auth/AdminRoute.tsx', import.meta.url), 'utf8')
 const sidebarSource = await readFile(new URL('../src/components/layout/Sidebar.tsx', import.meta.url), 'utf8')
 const chaptersPageSource = await readFile(new URL('../src/pages/chapters/ChaptersPage.tsx', import.meta.url), 'utf8')
+const importBackfillPageSource = await readFile(new URL('../src/pages/backfill/ImportBackfillPage.tsx', import.meta.url), 'utf8')
+const featurePermissionsSource = await readFile(new URL('../src/core/feature-permissions.ts', import.meta.url), 'utf8')
 const viteConfigSource = await readFile(new URL('../vite.config.ts', import.meta.url), 'utf8')
 const dockerfileSource = await readFile(new URL('../Dockerfile', import.meta.url), 'utf8')
 const dockerComposeSource = await readFile(new URL('../docker-compose.yml', import.meta.url), 'utf8')
@@ -171,8 +173,8 @@ assert.match(
 
 assert.match(
   worksPageSource,
-  /const canImportNovel = Boolean\(user && novelImportEnabled && canManageAllWorks\)/,
-  'local novel import should require both the system switch and owner/admin role',
+  /const canImportNovel = canUseFeature\(user, 'novelImport'\)/,
+  'local novel import should use the extensible feature-permission gate instead of a hard-coded role check',
 )
 
 assert.match(
@@ -269,6 +271,30 @@ assert.doesNotMatch(
   dockerignoreSource,
   /^\.git$/m,
   'docker build context should include .git so version resolution is automatic without manual version files',
+)
+
+assert.match(
+  sidebarSource,
+  /canUseFeature\(user, 'importBackfill'\)/,
+  'stage backfill navigation should require the reusable feature permission gate',
+)
+
+assert.match(
+  importBackfillPageSource,
+  /canUseFeature\(user, 'importBackfill'\)/,
+  'direct stage backfill route access should be blocked without the importBackfill feature permission',
+)
+
+assert.match(
+  featurePermissionsSource,
+  /export type|ALL_FEATURE_KEYS[\s\S]*novelImport[\s\S]*importBackfill/,
+  'feature permissions should use a central feature registry that can grow beyond one feature',
+)
+
+assert.match(
+  featurePermissionsSource,
+  /user\.role === 'owner' \|\| user\.role === 'admin'/,
+  'owner and admin roles should keep default access while ordinary users require explicit grants',
 )
 
 assert.match(

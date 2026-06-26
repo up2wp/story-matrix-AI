@@ -3,6 +3,8 @@ import { CheckOutlined, CloseOutlined, ExperimentOutlined, SafetyCertificateOutl
 import { BACKFILL_TASKS, BACKFILL_TASK_LABELS, useImportBackfill } from '@/features/backfill/useImportBackfill'
 import { formatBackfillImpact } from '@/features/backfill/applyBackfill'
 import type { BackfillCandidate } from '@/features/backfill/types'
+import { useAuthStore } from '@/core/auth-store'
+import { useSystemConfigStore } from '@/core/system-config-store'
 
 const { Title, Paragraph, Text } = Typography
 
@@ -22,6 +24,8 @@ function evidenceColor(candidate: BackfillCandidate) {
 }
 
 export default function ImportBackfillPage() {
+  const user = useAuthStore(s => s.user)
+  const canUseFeature = useSystemConfigStore(s => s.canUseFeature)
   const {
     currentWork,
     task,
@@ -41,6 +45,10 @@ export default function ImportBackfillPage() {
 
   if (!currentWork) {
     return <Empty description="请先从作品列表打开一个作品" />
+  }
+
+  if (!canUseFeature(user, 'importBackfill')) {
+    return <Alert type="warning" showIcon message="暂无阶段反推权限" description="请联系管理员在系统管理中为你的账号开启导入后阶段反推功能。" />
   }
 
   const canRun = windowResult.windows.length > 0

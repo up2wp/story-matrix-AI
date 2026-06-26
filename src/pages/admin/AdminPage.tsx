@@ -5,7 +5,8 @@ import type { ColumnsType } from 'antd/es/table'
 import { db } from '@/core/db'
 import { useAuthStore } from '@/core/auth-store'
 import { useSystemConfigStore } from '@/core/system-config-store'
-import type { User, AIConfig, VoiceboxConfig } from '@/core/types'
+import { ALL_FEATURE_KEYS, FEATURE_LABELS, grantedFeaturesForUser, setUserFeatureGrant } from '@/core/feature-permissions'
+import type { FeatureKey, User, AIConfig, VoiceboxConfig } from '@/core/types'
 
 const { Title, Text } = Typography
 
@@ -348,6 +349,28 @@ function SystemSettings() {
   const novelImportConfig = useSystemConfigStore(s => s.novelImportConfig)
   const toggleRegistration = useSystemConfigStore(s => s.toggleRegistration)
   const toggleNovelImport = useSystemConfigStore(s => s.toggleNovelImport)
+  const saveNovelImportConfig = useSystemConfigStore(s => s.saveNovelImportConfig)
+  const [users, setUsers] = useState<User[]>([])
+  const [savingPermission, setSavingPermission] = useState<string | null>(null)
+
+  const loadPermissionUsers = useCallback(async () => {
+    const allUsers = await db.users.toArray()
+    setUsers(allUsers.filter((user: User) => user.role === 'user').sort((a: User, b: User) => a.createdAt - b.createdAt))
+  }, [])
+
+  useEffect(() => {
+    void loadPermissionUsers()
+  }, [loadPermissionUsers])
+
+  const toggleUserFeature = async (userId: string, feature: FeatureKey, granted: boolean) => {
+    setSavingPermission(`${userId}:${feature}`)
+    try {
+      await saveNovelImportConfig(setUserFeatureGrant(novelImportConfig, userId, feature, granted))
+      message.success('功能权限已更新')
+    } finally {
+      setSavingPermission(null)
+    }
+  }
 
   return (
     <div>
@@ -364,10 +387,42 @@ function SystemSettings() {
           <div>
             <Text strong>允许本地小说导入</Text>
             <br />
-            <Text type="secondary">开启后，管理员和拥有者可在作品列表导入本地 .txt / .md 文件并创建新作品</Text>
+            <Text type="secondary">开启后，拥有者、管理员和已授权普通用户可使用本地导入与阶段反推功能</Text>
           </div>
           <Switch checked={novelImportConfig.enabled} onChange={toggleNovelImport} />
         </div>
+        <Card title="用户级功能权限" size="small">
+          <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
+            <Text type="secondary">全局开关关闭时所有用户都不可用；开启后，拥有者和管理员默认可用，普通用户需在这里逐项授权。后续新增功能可继续加入同一权限列表。</Text>
+            <Table
+              size="small"
+              rowKey="id"
+              pagination={false}
+              dataSource={users}
+              locale={{ emptyText: '暂无普通用户' }}
+              scroll={{ x: 720 }}
+              columns={[
+                { title: '用户', key: 'user', width: 180, render: (_: unknown, user: User) => <Space><Text strong>{user.displayName}</Text><Text type="secondary">@{user.username}</Text></Space> },
+                ...ALL_FEATURE_KEYS.map(feature => ({
+                  title: FEATURE_LABELS[feature],
+                  key: feature,
+                  width: 160,
+                  render: (_: unknown, user: User) => {
+                    const checked = grantedFeaturesForUser(novelImportConfig, user.id).includes(feature)
+                    return (
+                      <Switch
+                        checked={checked}
+                        loading={savingPermission === `${user.id}:${feature}`}
+                        disabled={!novelImportConfig.enabled}
+                        onChange={(value) => toggleUserFeature(user.id, feature, value)}
+                      />
+                    )
+                  },
+                })),
+              ]}
+            />
+          </Space>
+        </Card>
       </Space>
     </div>
   )
