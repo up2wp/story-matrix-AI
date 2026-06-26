@@ -345,7 +345,9 @@ function UserManagement() {
 
 function SystemSettings() {
   const registrationEnabled = useSystemConfigStore(s => s.registrationEnabled)
+  const novelImportConfig = useSystemConfigStore(s => s.novelImportConfig)
   const toggleRegistration = useSystemConfigStore(s => s.toggleRegistration)
+  const toggleNovelImport = useSystemConfigStore(s => s.toggleNovelImport)
 
   return (
     <div>
@@ -357,6 +359,14 @@ function SystemSettings() {
             <Text type="secondary">开启后，登录页面将显示注册链接，允许新用户自行注册</Text>
           </div>
           <Switch checked={registrationEnabled} onChange={toggleRegistration} />
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 16, background: '#fafafa', borderRadius: 8 }}>
+          <div>
+            <Text strong>允许本地小说导入</Text>
+            <br />
+            <Text type="secondary">开启后，管理员和拥有者可在作品列表导入本地 .txt / .md 文件并创建新作品</Text>
+          </div>
+          <Switch checked={novelImportConfig.enabled} onChange={toggleNovelImport} />
         </div>
       </Space>
     </div>

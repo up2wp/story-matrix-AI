@@ -171,6 +171,18 @@ assert.match(
 
 assert.match(
   worksPageSource,
+  /const canImportNovel = Boolean\(user && novelImportEnabled && canManageAllWorks\)/,
+  'local novel import should require both the system switch and owner/admin role',
+)
+
+assert.match(
+  worksPageSource,
+  /\{canImportNovel && \([\s\S]*导入小说[\s\S]*\)\}/,
+  'works page should hide the import entry when the current user cannot import',
+)
+
+assert.match(
+  worksPageSource,
   /\{canCopy\(record\) && \([\s\S]*复制[\s\S]*\)\}/,
   'works page should hide the copy action when the current user cannot copy the work',
 )
