@@ -1,13 +1,15 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router'
 import { Table, Button, Tag, Space, Switch, Popconfirm, Typography, message } from 'antd'
-import { PlusOutlined, EyeOutlined, EditOutlined, DeleteOutlined, CopyOutlined } from '@ant-design/icons'
+import { PlusOutlined, EyeOutlined, EditOutlined, DeleteOutlined, CopyOutlined, ImportOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { db } from '@/core/db'
 import { useAuthStore } from '@/core/auth-store'
 import { useStore } from '@/core/store'
 import { generateId } from '@/utils/id'
 import type { Work } from '@/core/types'
+import { useSystemConfigStore } from '@/core/system-config-store'
+import NovelImportModal from './NovelImportModal'
 
 const { Title } = Typography
 
@@ -16,7 +18,8 @@ interface WorkItem extends Work {
 }
 
 function getWorkProgress(work: WorkItem) {
-  if (work.chapters?.length) return `章节丰盈（${work.chapters.length} 章）`
+  const hasBackfilledStages = Boolean(work.characters?.length || work.settings?.length || work.constraints?.length || work.storylines?.length || work.seed?.coreConcept || work.seed?.genre || work.outline?.some(node => node.summary.trim()))
+  if (work.chapters?.length) return hasBackfilledStages ? `章节丰盈（已导入 ${work.chapters.length} 章，阶段已补充）` : `章节丰盈（已导入 ${work.chapters.length} 章，设定待确认）`
   if (work.constraints?.length) return `核心约束（${work.constraints.length} 条）`
   if (work.outline?.length) return '主线大纲'
   if (work.settings?.length) return '世界构建'
@@ -26,10 +29,12 @@ function getWorkProgress(work: WorkItem) {
 export default function WorksPage() {
   const navigate = useNavigate()
   const user = useAuthStore(s => s.user)
+  const canUseFeature = useSystemConfigStore(s => s.canUseFeature)
   const setCurrentWork = useStore(s => s.setCurrentWork)
   const setReadOnly = useStore(s => s.setReadOnly)
   const [works, setWorks] = useState<WorkItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [importOpen, setImportOpen] = useState(false)
 
   const loadWorks = useCallback(async () => {
     if (!user) return
@@ -99,6 +104,7 @@ export default function WorksPage() {
 
   const isOwner = (work: WorkItem) => user && work.ownerId === user.id
   const canManageAllWorks = user?.role === 'owner' || user?.role === 'admin'
+  const canImportNovel = canUseFeature(user, 'novelImport')
   const canView = (work: WorkItem) => isOwner(work) || canManageAllWorks || work.shared
   const canCopy = (work: WorkItem) => isOwner(work) || canManageAllWorks
 
@@ -185,9 +191,16 @@ export default function WorksPage() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <Title level={4} style={{ margin: 0 }}>作品列表</Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => { setReadOnly(false); navigate('/seed') }}>
-          新建作品
-        </Button>
+        <Space>
+          {canImportNovel && (
+            <Button icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>
+              导入小说
+            </Button>
+          )}
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => { setReadOnly(false); navigate('/seed') }}>
+            新建作品
+          </Button>
+        </Space>
       </div>
       <Table
         columns={columns}
@@ -197,6 +210,14 @@ export default function WorksPage() {
         pagination={{ pageSize: 20 }}
         scroll={{ x: 800 }}
       />
+      {user && (
+        <NovelImportModal
+          open={importOpen}
+          ownerId={user.id}
+          onCancel={() => setImportOpen(false)}
+          onImported={loadWorks}
+        />
+      )}
     </div>
   )
 }

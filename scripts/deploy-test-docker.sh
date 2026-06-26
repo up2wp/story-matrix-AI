@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-$HOME/Projects/story-matrix-AI}"
-TARGET_BRANCH="${1:-}"
+DEPLOY_BRANCH="dev"
 IMAGE_NAME="story-matrix-ai:test"
 CONTAINER_NAME="story-matrix-ai"
 DATA_DIR="$HOME/docker/story-matrix-data"
@@ -28,37 +28,29 @@ ensure_clean_worktree() {
   fi
 }
 
-checkout_latest_remote_branch() {
-  local latest_ref
-  local latest_branch
-
-  latest_ref="$(git for-each-ref refs/remotes --sort=-committerdate --format='%(refname:short)' | grep -v '/HEAD$' | head -n 1)"
-  [[ -n "$latest_ref" ]] || fail "No remote branches found after fetch."
-
-  latest_branch="${latest_ref#*/}"
-  [[ "$latest_branch" != "HEAD" ]] || fail "Latest remote ref is not a deployable branch: $latest_ref"
-
-  if git show-ref --verify --quiet "refs/heads/$latest_branch"; then
-    git switch "$latest_branch"
-    git merge --ff-only "$latest_ref"
-  else
-    git switch --track -c "$latest_branch" "$latest_ref"
-  fi
-}
-
-checkout_target_branch() {
-  local branch="$1"
+sync_dev_branch() {
+  local branch="$DEPLOY_BRANCH"
   local remote_ref="origin/$branch"
-
-  if [[ "$branch" == -* ]] || ! git check-ref-format --branch "$branch" >/dev/null 2>&1; then
-    fail "Invalid branch name: $branch"
-  fi
+  local local_commit=""
+  local remote_commit
 
   if ! git show-ref --verify --quiet "refs/remotes/$remote_ref"; then
     fail "Remote branch does not exist: $remote_ref"
   fi
 
+  remote_commit="$(git rev-parse "$remote_ref")"
+
   if git show-ref --verify --quiet "refs/heads/$branch"; then
+    local_commit="$(git rev-parse "$branch")"
+    if [[ "$local_commit" == "$remote_commit" ]]; then
+      log "No new commits on $remote_ref; skipping Docker build."
+      return 1
+    fi
+
+    if ! git merge-base --is-ancestor "$local_commit" "$remote_commit"; then
+      fail "Local $branch is not behind $remote_ref. Resolve branch divergence before deploying."
+    fi
+
     git switch "$branch"
     git merge --ff-only "$remote_ref"
   else
@@ -95,12 +87,9 @@ main() {
   log "Fetching all remotes in $PROJECT_DIR"
   git fetch --all --prune
 
-  if [[ -n "$TARGET_BRANCH" ]]; then
-    log "Switching to requested branch: $TARGET_BRANCH"
-    checkout_target_branch "$TARGET_BRANCH"
-  else
-    log "Switching to latest remote branch"
-    checkout_latest_remote_branch
+  log "Syncing deploy branch: $DEPLOY_BRANCH"
+  if ! sync_dev_branch; then
+    return 0
   fi
 
   log "Building Docker image: $IMAGE_NAME"

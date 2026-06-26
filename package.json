@@ -8,8 +8,11 @@
     "dev:server": "cd server && npm run dev",
     "test:model-config": "node test/model-config.test.mjs",
     "test:user-management": "node test/user-management.test.mjs",
+    "test:feature-permissions": "node test/feature-permissions.test.mjs",
+    "test:novel-import": "node test/novel-import.test.mjs",
+    "test:stage-backfill": "node test/stage-backfill.test.mjs",
     "test:audiobook": "node test/audiobook.test.mjs",
-    "test": "npm run test:model-config && npm run test:user-management && npm run test:audiobook",
+    "test": "npm run test:model-config && npm run test:user-management && npm run test:feature-permissions && npm run test:novel-import && npm run test:stage-backfill && npm run test:audiobook",
     "build": "tsc -b && vite build && cd server && npm run build",
     "lint": "eslint .",
     "preview": "vite preview"
