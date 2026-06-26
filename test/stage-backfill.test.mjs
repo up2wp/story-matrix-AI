@@ -133,6 +133,8 @@ assert.match(promptSource, /不要改写正文/, 'backfill prompt should forbid 
 assert.doesNotMatch(promptSource, /整章正文\$\{/, 'backfill prompt should not interpolate full chapter bodies by name')
 assert.match(importBackfillPageSource, /确认写入前不保存候选/, 'wizard should explain candidates are temporary until confirmation')
 assert.match(importBackfillPageSource, /正文 0 处修改/, 'wizard should surface write impact before confirmation')
+assert.match(importBackfillPageSource, /暂无阶段反推权限/, 'wizard should explain missing per-user backfill permission')
+assert.match(importBackfillPageSource, /canUseFeature\(user, 'importBackfill'\)/, 'wizard should gate direct access through the reusable feature permission helper')
 assert.match(useImportBackfillSource, /db\.works\.update\(currentWork\.id, applied\.patch\)/, 'confirmed write should reuse the existing works update path')
 assert.match(novelImportModalSource, /navigate\('\/backfill'\)/, 'successful import should route to the stage backfill entry')
 assert.match(packageSource, /test:stage-backfill/, 'root scripts should register the stage backfill behavior test')

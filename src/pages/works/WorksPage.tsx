@@ -29,7 +29,7 @@ function getWorkProgress(work: WorkItem) {
 export default function WorksPage() {
   const navigate = useNavigate()
   const user = useAuthStore(s => s.user)
-  const novelImportEnabled = useSystemConfigStore(s => s.novelImportConfig.enabled)
+  const canUseFeature = useSystemConfigStore(s => s.canUseFeature)
   const setCurrentWork = useStore(s => s.setCurrentWork)
   const setReadOnly = useStore(s => s.setReadOnly)
   const [works, setWorks] = useState<WorkItem[]>([])
@@ -104,7 +104,7 @@ export default function WorksPage() {
 
   const isOwner = (work: WorkItem) => user && work.ownerId === user.id
   const canManageAllWorks = user?.role === 'owner' || user?.role === 'admin'
-  const canImportNovel = Boolean(user && novelImportEnabled && canManageAllWorks)
+  const canImportNovel = canUseFeature(user, 'novelImport')
   const canView = (work: WorkItem) => isOwner(work) || canManageAllWorks || work.shared
   const canCopy = (work: WorkItem) => isOwner(work) || canManageAllWorks
 

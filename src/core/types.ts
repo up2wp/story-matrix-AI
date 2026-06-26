@@ -168,6 +168,18 @@ export interface VoiceboxConfig {
 
 export interface NovelImportConfig {
   enabled: boolean
+  featurePermissions?: FeaturePermissionConfig
+}
+
+export type FeatureKey = 'novelImport' | 'importBackfill'
+
+export interface FeaturePermissionGrant {
+  userId: string
+  features: FeatureKey[]
+}
+
+export interface FeaturePermissionConfig {
+  userGrants: FeaturePermissionGrant[]
 }
 
 export type VoiceBindingSource = 'profile' | 'sample' | 'pending'

@@ -29,9 +29,10 @@ export default function Sidebar() {
   const location = useLocation()
   const user = useAuthStore((s) => s.user)
   const voiceboxConfig = useSystemConfigStore((s) => s.voiceboxConfig)
+  const canUseFeature = useSystemConfigStore((s) => s.canUseFeature)
 
   const hasWork = !!currentWork
-  const canBackfill = Boolean(currentWork?.chapters?.some(chapter => chapter.content.trim())) && !readOnly
+  const canBackfill = Boolean(currentWork?.chapters?.some(chapter => chapter.content.trim())) && !readOnly && canUseFeature(user, 'importBackfill')
   const voiceboxReady = voiceboxConfig.serviceUrl !== 'http://127.0.0.1:17493'
 
   const menuItems = [

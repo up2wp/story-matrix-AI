@@ -8,7 +8,7 @@ const router = Router()
 function rowToConfig(row: any, includeAI = false) {
   const aiConfig = row.aiConfig ? JSON.parse(row.aiConfig) : undefined
   const voiceboxConfig = row.voiceboxConfig ? JSON.parse(row.voiceboxConfig) : defaultVoiceboxConfig()
-  const novelImportConfig = row.novelImportConfig ? { ...defaultNovelImportConfig(), ...JSON.parse(row.novelImportConfig) } : defaultNovelImportConfig()
+  const novelImportConfig = row.novelImportConfig ? normalizeNovelImportConfig({ ...defaultNovelImportConfig(), ...JSON.parse(row.novelImportConfig) }) : defaultNovelImportConfig()
   const safeVoiceboxConfig = includeAI ? voiceboxConfig : maskVoiceboxConfig(voiceboxConfig)
   return {
     id: row.id,
@@ -28,7 +28,25 @@ function rowToConfig(row: any, includeAI = false) {
 }
 
 function defaultNovelImportConfig() {
-  return { enabled: false }
+  return { enabled: false, featurePermissions: { userGrants: [] } }
+}
+
+const FEATURE_KEYS = ['novelImport', 'importBackfill']
+
+function normalizeNovelImportConfig(config: any) {
+  const grants = Array.isArray(config?.featurePermissions?.userGrants) ? config.featurePermissions.userGrants : []
+  return {
+    enabled: Boolean(config?.enabled),
+    featurePermissions: {
+      userGrants: grants
+        .filter((grant: any) => typeof grant?.userId === 'string' && grant.userId.trim())
+        .map((grant: any) => ({
+          userId: grant.userId,
+          features: Array.from(new Set(Array.isArray(grant.features) ? grant.features.filter((feature: string) => FEATURE_KEYS.includes(feature)) : [])),
+        }))
+        .filter((grant: any) => grant.features.length > 0),
+    },
+  }
 }
 
 function defaultVoiceboxConfig() {
@@ -108,7 +126,7 @@ router.patch('/', requireAdmin, (req, res) => {
   }
   if ('novelImportConfig' in fields) {
     sets.push('novelImportConfig = ?')
-    values.push(fields.novelImportConfig ? JSON.stringify({ ...defaultNovelImportConfig(), ...fields.novelImportConfig }) : JSON.stringify(defaultNovelImportConfig()))
+    values.push(fields.novelImportConfig ? JSON.stringify(normalizeNovelImportConfig({ ...defaultNovelImportConfig(), ...fields.novelImportConfig })) : JSON.stringify(defaultNovelImportConfig()))
   }
 
   if (sets.length === 0) return res.status(400).json({ error: '无有效字段' })
