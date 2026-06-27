@@ -74,6 +74,8 @@ npm run dev
 docker run -itd --name story-matrix-ai --restart always -p 3001:3001 -v story-matrix-data:/app/server/data ghcr.io/up2wp/story-matrix-ai:latest
 ```
 
+<!-- docker run -itd --name story-matrix-ai --restart always -p 3001:3001 -v ~/docker/story-matrix-data:/app/server/data ghcr.io/up2wp/story-matrix-ai:latest -->
+
 Docker 部署默认访问 `http://localhost:3001`。源码本地构建镜像部署的方法见 [Docker 部署手册](docs/docker-deploy.md)。
 
 ### 5. 默认账号

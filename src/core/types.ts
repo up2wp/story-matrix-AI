@@ -166,6 +166,22 @@ export interface VoiceboxConfig {
   generationConcurrency: number
 }
 
+export interface NovelImportConfig {
+  enabled: boolean
+  featurePermissions?: FeaturePermissionConfig
+}
+
+export type FeatureKey = 'novelImport' | 'importBackfill'
+
+export interface FeaturePermissionGrant {
+  userId: string
+  features: FeatureKey[]
+}
+
+export interface FeaturePermissionConfig {
+  userGrants: FeaturePermissionGrant[]
+}
+
 export type VoiceBindingSource = 'profile' | 'sample' | 'pending'
 export type AudiobookSpeakerKind = 'narrator' | 'character' | 'bystanderMale' | 'bystanderFemale'
 export type BystanderVoiceKey = 'male' | 'female'
@@ -333,4 +349,5 @@ export interface SystemConfig {
   aiConfigs?: AIModelConfig[]
   activeConfigId?: string
   voiceboxConfig?: VoiceboxConfig
+  novelImportConfig?: NovelImportConfig
 }

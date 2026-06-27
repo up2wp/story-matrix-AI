@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { db } from './db'
-import type { AIConfig, AIModelConfig, VoiceboxConfig } from './types'
+import type { AIConfig, AIModelConfig, FeatureKey, NovelImportConfig, User, VoiceboxConfig } from './types'
+import { canUseFeature, normalizeNovelImportConfig } from './feature-permissions'
 import { useStore } from './store'
 
 // ============================================================
@@ -13,9 +14,13 @@ interface SystemConfigState {
   aiConfigs: AIModelConfig[]
   activeConfigId: string
   voiceboxConfig: VoiceboxConfig
+  novelImportConfig: NovelImportConfig
   isLoading: boolean
   loadConfig: () => Promise<void>
   toggleRegistration: () => Promise<void>
+  toggleNovelImport: () => Promise<void>
+  saveNovelImportConfig: (config: NovelImportConfig) => Promise<void>
+  canUseFeature: (user: User | null | undefined, feature: FeatureKey) => boolean
   saveAIConfig: (config: AIConfig) => Promise<void>
   saveAIConfigs: (configs: AIModelConfig[], activeId: string) => Promise<void>
   switchAIConfig: (id: string) => Promise<void>
@@ -45,18 +50,25 @@ export const defaultVoiceboxConfig: VoiceboxConfig = {
   generationConcurrency: 2,
 }
 
+export const defaultNovelImportConfig: NovelImportConfig = {
+  enabled: false,
+  featurePermissions: { userGrants: [] },
+}
+
 export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
   registrationEnabled: false,
   aiConfig: { ...defaultAIConfig },
   aiConfigs: [],
   activeConfigId: '',
   voiceboxConfig: { ...defaultVoiceboxConfig },
+  novelImportConfig: { ...defaultNovelImportConfig },
   isLoading: true,
 
   loadConfig: async () => {
     const config = await db.systemConfig.get('singleton')
     if (config) {
       const voiceboxConfig = { ...defaultVoiceboxConfig, ...(config.voiceboxConfig || {}) }
+      const novelImportConfig = normalizeNovelImportConfig({ ...defaultNovelImportConfig, ...(config.novelImportConfig || {}) })
       const aiConfigs = config.aiConfigs || []
       const activeConfigId = config.activeConfigId || ''
       // 兼容旧数据：如果没有 aiConfigs，用现有 aiConfig 作为唯一配置
@@ -65,11 +77,11 @@ export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
         const active = aiConfigs.find((c) => c.id === activeConfigId)
         if (active) aiConfig = { provider: active.provider, apiKey: active.apiKey, baseUrl: active.baseUrl, model: active.model, maxTokens: active.maxTokens }
       }
-      set({ registrationEnabled: config.registrationEnabled, aiConfig, aiConfigs, activeConfigId, voiceboxConfig, isLoading: false })
+      set({ registrationEnabled: config.registrationEnabled, aiConfig, aiConfigs, activeConfigId, voiceboxConfig, novelImportConfig, isLoading: false })
       useStore.getState().setAIConfig(aiConfig)
     } else {
-      await db.systemConfig.add({ id: 'singleton', registrationEnabled: false, aiConfig: { ...defaultAIConfig }, aiConfigs: [], activeConfigId: '', voiceboxConfig: { ...defaultVoiceboxConfig } })
-      set({ registrationEnabled: false, aiConfig: { ...defaultAIConfig }, aiConfigs: [], activeConfigId: '', voiceboxConfig: { ...defaultVoiceboxConfig }, isLoading: false })
+      await db.systemConfig.add({ id: 'singleton', registrationEnabled: false, aiConfig: { ...defaultAIConfig }, aiConfigs: [], activeConfigId: '', voiceboxConfig: { ...defaultVoiceboxConfig }, novelImportConfig: { ...defaultNovelImportConfig } })
+      set({ registrationEnabled: false, aiConfig: { ...defaultAIConfig }, aiConfigs: [], activeConfigId: '', voiceboxConfig: { ...defaultVoiceboxConfig }, novelImportConfig: { ...defaultNovelImportConfig }, isLoading: false })
     }
   },
 
@@ -78,6 +90,21 @@ export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
     await db.systemConfig.update('singleton', { registrationEnabled: newValue })
     set({ registrationEnabled: newValue })
   },
+
+  toggleNovelImport: async () => {
+    const newValue = !get().novelImportConfig.enabled
+    const novelImportConfig = { ...get().novelImportConfig, enabled: newValue }
+    await db.systemConfig.update('singleton', { novelImportConfig })
+    set({ novelImportConfig })
+  },
+
+  saveNovelImportConfig: async (config: NovelImportConfig) => {
+    const novelImportConfig = normalizeNovelImportConfig(config)
+    await db.systemConfig.update('singleton', { novelImportConfig })
+    set({ novelImportConfig })
+  },
+
+  canUseFeature: (user, feature) => canUseFeature(user, get().novelImportConfig, feature),
 
   saveAIConfig: async (config: AIConfig) => {
     await db.systemConfig.update('singleton', { aiConfig: config })
