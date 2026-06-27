@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { db } from './db'
-import type { AIConfig, VoiceboxConfig } from './types'
+import type { AIConfig, AIModelConfig, VoiceboxConfig } from './types'
 import { useStore } from './store'
 
 // ============================================================
@@ -10,11 +10,15 @@ import { useStore } from './store'
 interface SystemConfigState {
   registrationEnabled: boolean
   aiConfig: AIConfig
+  aiConfigs: AIModelConfig[]
+  activeConfigId: string
   voiceboxConfig: VoiceboxConfig
   isLoading: boolean
   loadConfig: () => Promise<void>
   toggleRegistration: () => Promise<void>
   saveAIConfig: (config: AIConfig) => Promise<void>
+  saveAIConfigs: (configs: AIModelConfig[], activeId: string) => Promise<void>
+  switchAIConfig: (id: string) => Promise<void>
   saveVoiceboxConfig: (config: VoiceboxConfig) => Promise<void>
 }
 
@@ -44,20 +48,28 @@ export const defaultVoiceboxConfig: VoiceboxConfig = {
 export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
   registrationEnabled: false,
   aiConfig: { ...defaultAIConfig },
+  aiConfigs: [],
+  activeConfigId: '',
   voiceboxConfig: { ...defaultVoiceboxConfig },
   isLoading: true,
 
   loadConfig: async () => {
     const config = await db.systemConfig.get('singleton')
     if (config) {
-      const aiConfig = config.aiConfig || { ...defaultAIConfig }
       const voiceboxConfig = { ...defaultVoiceboxConfig, ...(config.voiceboxConfig || {}) }
-      set({ registrationEnabled: config.registrationEnabled, aiConfig, voiceboxConfig, isLoading: false })
-      // 同步到全局 store
+      const aiConfigs = config.aiConfigs || []
+      const activeConfigId = config.activeConfigId || ''
+      // 兼容旧数据：如果没有 aiConfigs，用现有 aiConfig 作为唯一配置
+      let aiConfig = config.aiConfig || { ...defaultAIConfig }
+      if (aiConfigs.length > 0 && activeConfigId) {
+        const active = aiConfigs.find((c) => c.id === activeConfigId)
+        if (active) aiConfig = { provider: active.provider, apiKey: active.apiKey, baseUrl: active.baseUrl, model: active.model, maxTokens: active.maxTokens }
+      }
+      set({ registrationEnabled: config.registrationEnabled, aiConfig, aiConfigs, activeConfigId, voiceboxConfig, isLoading: false })
       useStore.getState().setAIConfig(aiConfig)
     } else {
-      await db.systemConfig.add({ id: 'singleton', registrationEnabled: false, aiConfig: { ...defaultAIConfig }, voiceboxConfig: { ...defaultVoiceboxConfig } })
-      set({ registrationEnabled: false, aiConfig: { ...defaultAIConfig }, voiceboxConfig: { ...defaultVoiceboxConfig }, isLoading: false })
+      await db.systemConfig.add({ id: 'singleton', registrationEnabled: false, aiConfig: { ...defaultAIConfig }, aiConfigs: [], activeConfigId: '', voiceboxConfig: { ...defaultVoiceboxConfig } })
+      set({ registrationEnabled: false, aiConfig: { ...defaultAIConfig }, aiConfigs: [], activeConfigId: '', voiceboxConfig: { ...defaultVoiceboxConfig }, isLoading: false })
     }
   },
 
@@ -71,6 +83,26 @@ export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
     await db.systemConfig.update('singleton', { aiConfig: config })
     set({ aiConfig: config })
     useStore.getState().setAIConfig(config)
+  },
+
+  saveAIConfigs: async (configs: AIModelConfig[], activeId: string) => {
+    const active = configs.find((c) => c.id === activeId)
+    const aiConfig: AIConfig = active
+      ? { provider: active.provider, apiKey: active.apiKey, baseUrl: active.baseUrl, model: active.model, maxTokens: active.maxTokens }
+      : get().aiConfig
+    await db.systemConfig.update('singleton', { aiConfigs: configs, activeConfigId: activeId, aiConfig })
+    set({ aiConfigs: configs, activeConfigId: activeId, aiConfig })
+    useStore.getState().setAIConfig(aiConfig)
+  },
+
+  switchAIConfig: async (id: string) => {
+    const { aiConfigs } = get()
+    const active = aiConfigs.find((c) => c.id === id)
+    if (!active) return
+    const aiConfig: AIConfig = { provider: active.provider, apiKey: active.apiKey, baseUrl: active.baseUrl, model: active.model, maxTokens: active.maxTokens }
+    await db.systemConfig.update('singleton', { activeConfigId: id, aiConfig })
+    set({ activeConfigId: id, aiConfig })
+    useStore.getState().setAIConfig(aiConfig)
   },
 
   saveVoiceboxConfig: async (config: VoiceboxConfig) => {

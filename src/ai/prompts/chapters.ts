@@ -110,6 +110,8 @@ export function buildInspirationPrompt(
   characters: string,
   previousSummary: string,
   eventLog?: string,
+  chapterCount?: number,
+  prevTitles?: string[],
 ): string {
   const modeDesc = mode === 'newVolume'
     ? '新的一卷（全新的情节线、冲突和转折）'
@@ -121,14 +123,22 @@ export function buildInspirationPrompt(
   if (previousSummary) contextParts.push(`前文要点：\n${previousSummary}`)
   if (eventLog) contextParts.push(`已有事件：\n${eventLog}`)
 
-  return `你是一位天马行空的小说策划师。请为一部网络小说生成 5 个随机创作灵感。
+  const nextNum = (chapterCount ?? 0) + 1
+  const titleRef = prevTitles && prevTitles.length > 0
+    ? `\n【前序章节标题（请参考其命名风格和编号格式）】\n${prevTitles.map((t, i) => `${i + 1}. ${t}`).join('\n')}\n\n下一章应编号为"第${nextNum}章"，标题风格需与前序保持一致。`
+    : ''
+
+  return `你是一位天马行空的小说策划师。请为一部网络小说的"第${nextNum}章"生成 5 个不同的创作灵感。
+
+⚠️ 核心规则：5 个灵感的 title 必须都是"第${nextNum}章"开头，这是同一章的 5 种不同写法，绝对不能编成连续的 5 章！
 
 当前需要生成的是：${modeDesc}
+${titleRef}
 
 ${contextParts.join('\n\n')}
 
 请生成 5 个完全不同的灵感方向，每个灵感需要：
-- title：一个抓人眼球的章节标题（中文，4-10字）
+- title：必须以"第${nextNum}章"开头，后接不同的情节标题（如"第${nextNum}章 暗流涌动"、"第${nextNum}章 风暴前夕"）
 - summary：约300字的内容简介，描述这一章的主要情节、冲突、转折和结局
 
 要求：
@@ -136,6 +146,8 @@ ${contextParts.join('\n\n')}
 - 要有戏剧冲突、悬念和反转
 - 要与已有世界观和角色兼容
 - 要有网文的节奏感和爽感
+
+输出示例：[{"title":"第${nextNum}章 暗流涌动","summary":"..."},{"title":"第${nextNum}章 风暴前夕","summary":"..."}]
 
 严格输出 JSON 数组，每个元素包含 title 和 summary 字段。
 只输出 JSON，不要输出其他内容。`

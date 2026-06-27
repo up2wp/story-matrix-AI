@@ -5,7 +5,8 @@ import type { ColumnsType } from 'antd/es/table'
 import { db } from '@/core/db'
 import { useAuthStore } from '@/core/auth-store'
 import { useSystemConfigStore } from '@/core/system-config-store'
-import type { User, AIConfig, VoiceboxConfig } from '@/core/types'
+import type { User, AIConfig, AIModelConfig, VoiceboxConfig } from '@/core/types'
+import { generateId } from '@/utils/id'
 
 const { Title, Text } = Typography
 
@@ -371,6 +372,11 @@ const PROVIDER_PRESETS: Record<string, { label: string; baseUrl: string; models:
     baseUrl: 'https://api.openai.com/v1',
     models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
   },
+  gemini: {
+    label: 'Gemini',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    models: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash'],
+  },
   vllm: {
     label: 'vLLM',
     baseUrl: 'http://localhost:8000/v1',
@@ -383,7 +389,12 @@ const PROVIDER_PRESETS: Record<string, { label: string; baseUrl: string; models:
   },
 }
 
+const PROVIDER_LABELS: Record<string, string> = { openai: 'OpenAI', gemini: 'Gemini', vllm: 'vLLM', custom: '自定义' }
+
 function ModelSettings() {
+  const aiConfigs = useSystemConfigStore(s => s.aiConfigs)
+  const activeConfigId = useSystemConfigStore(s => s.activeConfigId)
+  const saveAIConfigs = useSystemConfigStore(s => s.saveAIConfigs)
   const aiConfig = useSystemConfigStore(s => s.aiConfig)
   const saveAIConfig = useSystemConfigStore(s => s.saveAIConfig)
   const [form] = Form.useForm()
@@ -391,63 +402,93 @@ function ModelSettings() {
   const [testing, setTesting] = useState(false)
   const [loadingModels, setLoadingModels] = useState(false)
   const [modelOptions, setModelOptions] = useState(PROVIDER_PRESETS.openai.models)
+  const [editingId, setEditingId] = useState<string | null>(null)
 
+  // 初始化：如果没有多模型配置，用当前 aiConfig 创建第一个
   useEffect(() => {
-    form.setFieldsValue(aiConfig)
-  }, [aiConfig, form])
+    if (aiConfigs.length === 0 && aiConfig.apiKey) {
+      const id = generateId()
+      const initial = { id, name: '默认模型', ...aiConfig }
+      saveAIConfigs([initial], id)
+      setEditingId(id)
+    } else if (aiConfigs.length > 0 && !editingId) {
+      setEditingId(activeConfigId || aiConfigs[0].id)
+    }
+  }, [aiConfigs, activeConfigId, aiConfig, editingId, saveAIConfigs])
+
+  // 编辑项变化时填充表单
+  useEffect(() => {
+    if (!editingId) return
+    const config = aiConfigs.find(c => c.id === editingId)
+    if (config) form.setFieldsValue(config)
+  }, [editingId, aiConfigs, form])
 
   const handleProviderChange = (provider: string) => {
     const preset = PROVIDER_PRESETS[provider]
     if (preset) {
-      form.setFieldsValue({
-        baseUrl: preset.baseUrl,
-        model: preset.models[0] || '',
-      })
+      form.setFieldsValue({ baseUrl: preset.baseUrl, model: preset.models[0] || '' })
+      setModelOptions(preset.models)
     }
   }
 
-  const handleSave = async (values: AIConfig) => {
+  const handleSave = async () => {
+    const values = form.getFieldsValue()
+    if (!editingId) return
     setSaving(true)
     try {
-      await saveAIConfig(values)
-      message.success('模型配置已保存')
+      const updated = aiConfigs.map(c => c.id === editingId ? { ...c, ...values } : c)
+      await saveAIConfigs(updated, activeConfigId || editingId)
+      message.success('已保存')
     } finally {
       setSaving(false)
     }
   }
 
+  const handleAdd = () => {
+    const id = generateId()
+    const newConfig = { id, name: '新模型', provider: 'openai' as const, apiKey: '', baseUrl: 'https://api.openai.com/v1', model: '', maxTokens: 8192 }
+    const updated = [...aiConfigs, newConfig]
+    saveAIConfigs(updated, activeConfigId || id)
+    setEditingId(id)
+  }
+
+  const handleDelete = (id: string) => {
+    if (aiConfigs.length <= 1) { message.warning('至少保留一个模型配置'); return }
+    const updated = aiConfigs.filter(c => c.id !== id)
+    const newActive = activeConfigId === id ? updated[0].id : activeConfigId
+    saveAIConfigs(updated, newActive)
+    if (editingId === id) setEditingId(updated[0].id)
+  }
+
+  const handleSetActive = async (id: string) => {
+    await saveAIConfigs(aiConfigs, id)
+    message.success('已切换当前模型')
+  }
+
   const handleTest = async () => {
-    const values = form.getFieldsValue() as AIConfig
-    if (!values.apiKey && values.provider === 'openai') {
-      message.warning('请先填写 API Key')
-      return
-    }
-    if (!values.model) {
-      message.warning('请填写模型名称')
-      return
-    }
+    const values = form.getFieldsValue()
+    if (!values.apiKey && values.provider === 'openai') { message.warning('请先填写 API Key'); return }
+    if (!values.model) { message.warning('请填写模型名称'); return }
     setTesting(true)
     try {
       const { generate } = await import('@/ai/client')
       const result = await generate('说"测试成功"', '你是一个测试助手，只需回复用户要求的内容。', values)
       message.success(`测试成功: ${result.slice(0, 50)}`)
     } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : '未知错误'
-      message.error(`测试失败: ${errMsg}`)
+      message.error(`测试失败: ${err instanceof Error ? err.message : '未知错误'}`)
     } finally {
       setTesting(false)
     }
   }
 
   const loadModels = async () => {
-    const values = form.getFieldsValue() as AIConfig
+    const values = form.getFieldsValue()
     if (!values.baseUrl) return
     setLoadingModels(true)
     try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-      const response = await fetch(`/api/ai/models`, {
+      const response = await fetch('/api/ai/models', {
         method: 'POST',
-        headers,
+        headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ config: values }),
       })
@@ -455,8 +496,7 @@ function ModelSettings() {
       const data = await response.json() as { models?: string[] }
       if (data.models?.length) setModelOptions(data.models)
     } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : '未知错误'
-      message.error(`模型列表获取失败: ${errMsg}`)
+      message.error(`模型列表获取失败: ${err instanceof Error ? err.message : '未知错误'}`)
     } finally {
       setLoadingModels(false)
     }
@@ -465,75 +505,104 @@ function ModelSettings() {
   const provider = Form.useWatch('provider', form) || 'openai'
 
   return (
-    <Form form={form} onFinish={handleSave} layout="vertical" initialValues={aiConfig}>
-      <Card title="模型提供商" style={{ marginBottom: 16 }}>
-        <Form.Item name="provider" label="提供商类型" rules={[{ required: true }]}>
-          <Select onChange={handleProviderChange}>
-            <Select.Option value="openai">OpenAI</Select.Option>
-            <Select.Option value="vllm">vLLM</Select.Option>
-            <Select.Option value="custom">自定义 (OpenAI 兼容)</Select.Option>
-          </Select>
-        </Form.Item>
-
-        {provider === 'openai' && (
-          <Form.Item name="apiKey" label="API Key" rules={[{ required: true, message: '请输入 API Key' }]}>
-            <Input.Password placeholder="sk-..." />
-          </Form.Item>
-        )}
-
-        {provider === 'vllm' && (
-          <Form.Item name="apiKey" label="API Key（可选）">
-            <Input.Password placeholder="如果 vLLM 启用了认证，请填写" />
-          </Form.Item>
-        )}
-
-        {provider === 'custom' && (
-          <Form.Item name="apiKey" label="API Key（可选）">
-            <Input.Password placeholder="如果服务需要认证，请填写" />
-          </Form.Item>
-        )}
-
-        <Form.Item name="baseUrl" label="API 地址" rules={[{ required: true, message: '请输入 API 地址' }]}>
-          <Input placeholder="https://api.openai.com/v1" />
-        </Form.Item>
-
-        <Form.Item name="model" label="模型名称" rules={[{ required: true, message: '请输入模型名称' }]}>
-          {provider === 'openai' ? (
-            <Select
-              showSearch
-              allowClear
-              loading={loadingModels}
-              onSearch={(value) => form.setFieldValue('model', value)}
-              onDropdownVisibleChange={(open) => { if (open) loadModels() }}
-              options={modelOptions.map(m => ({ label: m, value: m }))}
-              placeholder="选择或输入模型名称"
-            />
-          ) : (
-            <Input placeholder="例如: llama-3-8b, qwen2-7b" />
-          )}
-        </Form.Item>
-
-        <Form.Item name="maxTokens" label="最大输出 Token 数" extra="控制 AI 单次最大输出长度，8192 约 4000-6000 中文字。设为 0 则使用模型默认值。">
-          <InputNumber min={0} max={128000} step={1024} style={{ width: '100%' }} placeholder="8192" />
-        </Form.Item>
+    <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+      {/* 左侧：模型列表 */}
+      <Card size="small" style={{ width: 240, flexShrink: 0 }} title="模型列表"
+        extra={<Button size="small" type="link" onClick={handleAdd}>新增</Button>}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {aiConfigs.map(config => (
+            <div
+              key={config.id}
+              style={{
+                padding: '8px 10px',
+                borderRadius: 6,
+                border: editingId === config.id ? '2px solid #1677ff' : '1px solid #d9d9d9',
+                cursor: 'pointer',
+                background: editingId === config.id ? '#f0f5ff' : '#fff',
+              }}
+              onClick={() => setEditingId(config.id)}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text strong style={{ fontSize: 13 }}>{config.name || '未命名'}</Text>
+                {activeConfigId === config.id && <Tag color="blue" style={{ margin: 0 }}>当前</Tag>}
+              </div>
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                {PROVIDER_LABELS[config.provider] || config.provider} · {config.model || '未设置'}
+              </Text>
+              <div style={{ marginTop: 4, display: 'flex', gap: 4 }}>
+                {activeConfigId !== config.id && (
+                  <Button size="small" type="link" style={{ padding: 0, fontSize: 11 }} onClick={(e) => { e.stopPropagation(); handleSetActive(config.id) }}>
+                    设为当前
+                  </Button>
+                )}
+                <Button size="small" type="link" danger style={{ padding: 0, fontSize: 11 }} onClick={(e) => { e.stopPropagation(); handleDelete(config.id) }}>
+                  删除
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
       </Card>
 
-      <Space>
-        <Button type="primary" htmlType="submit" loading={saving}>
-          保存配置
-        </Button>
-        <Button type="default" htmlType="button" onClick={handleTest} loading={testing}>
-          测试连接
-        </Button>
-      </Space>
-
-      <Card title="使用说明" size="small" style={{ marginTop: 16 }}>
-        <ul style={{ margin: 0, paddingLeft: 20, color: '#666' }}>
-          <li><Text type="secondary">OpenAI：填写官方 API Key，选择模型即可</Text></li>
-          <li><Text type="secondary">vLLM：填写 vLLM 服务地址（如 http://192.168.1.100:8000/v1），模型名称与 vLLM 加载的模型一致</Text></li>
-          <li><Text type="secondary">自定义：任何兼容 OpenAI API 格式的服务（如 Ollama、LiteLLM 等）</Text></li>
-        </ul>
-      </Card>
-    </Form>
+      {/* 右侧：编辑表单 */}
+      {editingId && (
+        <Card size="small" style={{ flex: 1 }} title="编辑模型">
+          <Form form={form} layout="vertical" onFinish={handleSave}>
+            <Form.Item name="name" label="显示名称" rules={[{ required: true, message: '请输入名称' }]}>
+              <Input placeholder="例如：GPT-4o、Claude Sonnet" />
+            </Form.Item>
+            <Form.Item name="provider" label="提供商类型" rules={[{ required: true }]}>
+              <Select onChange={handleProviderChange}>
+                <Select.Option value="openai">OpenAI</Select.Option>
+                <Select.Option value="gemini">Gemini</Select.Option>
+                <Select.Option value="vllm">vLLM</Select.Option>
+                <Select.Option value="custom">自定义 (OpenAI 兼容)</Select.Option>
+              </Select>
+            </Form.Item>
+            {(provider === 'openai' || provider === 'gemini') && (
+              <Form.Item name="apiKey" label="API Key" rules={[{ required: true, message: '请输入 API Key' }]}>
+                <Input.Password placeholder={provider === 'gemini' ? 'AIza...' : 'sk-...'} />
+              </Form.Item>
+            )}
+            {provider === 'vllm' && (
+              <Form.Item name="apiKey" label="API Key（可选）">
+                <Input.Password placeholder="如果 vLLM 启用了认证，请填写" />
+              </Form.Item>
+            )}
+            {provider === 'custom' && (
+              <Form.Item name="apiKey" label="API Key（可选）">
+                <Input.Password placeholder="如果服务需要认证，请填写" />
+              </Form.Item>
+            )}
+            <Form.Item name="baseUrl" label="API 地址" rules={[{ required: true, message: '请输入 API 地址' }]}>
+              <Input placeholder="https://api.openai.com/v1" />
+            </Form.Item>
+            <Form.Item name="model" label="模型名称" rules={[{ required: true, message: '请输入模型名称' }]}>
+              {(provider === 'openai' || provider === 'gemini') ? (
+                <Select
+                  showSearch
+                  allowClear
+                  loading={loadingModels}
+                  onSearch={(value) => form.setFieldValue('model', value)}
+                  onDropdownVisibleChange={(open) => { if (open) loadModels() }}
+                  options={modelOptions.map(m => ({ label: m, value: m }))}
+                  placeholder="选择或输入模型名称"
+                />
+              ) : (
+                <Input placeholder="例如: llama-3-8b, qwen2-7b" />
+              )}
+            </Form.Item>
+            <Form.Item name="maxTokens" label="最大输出 Token 数" extra="8192 约 4000-6000 中文字。设为 0 使用模型默认值。">
+              <InputNumber min={0} max={128000} step={1024} style={{ width: '100%' }} placeholder="8192" />
+            </Form.Item>
+            <Space>
+              <Button type="primary" htmlType="submit" loading={saving}>保存</Button>
+              <Button onClick={handleTest} loading={testing}>测试连接</Button>
+            </Space>
+          </Form>
+        </Card>
+      )}
+    </div>
   )
 }

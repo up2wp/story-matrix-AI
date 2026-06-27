@@ -24,7 +24,7 @@ import {
   BookOutlined,
   FileTextOutlined,
 } from '@ant-design/icons'
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useRef, useLayoutEffect } from 'react'
 import type { OutlineNode, Storyline } from '@/core/types'
 import { generateId } from '@/utils/id'
 import { useStore } from '@/core/store'
@@ -37,6 +37,42 @@ import { OUTLINE_SYSTEM_PROMPT, buildOutlinePrompt, buildOutlineNodePolishPrompt
 const { Title, Text } = Typography
 const { TextArea } = Input
 
+/** 自动检测溢出的折叠文本组件 */
+function CollapsibleText({ text, maxHeight, fontSize }: { text: string; maxHeight: number; fontSize?: number }) {
+  const [expanded, setExpanded] = useState(false)
+  const [overflowing, setOverflowing] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    if (ref.current) {
+      setOverflowing(ref.current.scrollHeight > maxHeight + 2)
+    }
+  }, [text, maxHeight])
+
+  return (
+    <div>
+      <div
+        ref={ref}
+        style={{
+          color: '#666',
+          fontSize: fontSize || 14,
+          lineHeight: 1.8,
+          whiteSpace: 'pre-wrap',
+          overflow: 'hidden',
+          maxHeight: expanded ? 'none' : maxHeight,
+        }}
+      >{text}</div>
+      {overflowing && (
+        <Button type="link" size="small" style={{ padding: 0, fontSize: fontSize ? fontSize - 1 : 12 }}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? '收起' : '展开全部'}
+        </Button>
+      )}
+    </div>
+  )
+}
+
 export default function OutlinePage() {
   const currentWork = useStore((s) => s.currentWork)
   const setCurrentWork = useStore((s) => s.setCurrentWork)
@@ -47,7 +83,6 @@ export default function OutlinePage() {
   const aiConfig = useSystemConfigStore((s) => s.aiConfig)
   const [loading, setLoading] = useState(false)
   const [polishing, setPolishing] = useState(false)
-  const [expandedSummaries, setExpandedSummaries] = useState<Set<string>>(new Set())
   const [editModalOpen, setEditModalOpen] = useState(false)
   const [genModalOpen, setGenModalOpen] = useState(false)
   const [addChaptersModalOpen, setAddChaptersModalOpen] = useState(false)
@@ -1226,27 +1261,7 @@ export default function OutlinePage() {
                 >
                   {vol.summary && (
                     <div style={{ marginBottom: 16 }}>
-                      <div
-                        style={{
-                          color: '#666',
-                          fontSize: 14,
-                          lineHeight: 1.8,
-                          whiteSpace: 'pre-wrap',
-                          overflow: 'hidden',
-                          maxHeight: expandedSummaries.has(vol.id) ? 'none' : 80,
-                        }}
-                      >{vol.summary}</div>
-                      {vol.summary.length > 100 && (
-                        <Button type="link" size="small" style={{ padding: 0, fontSize: 12 }}
-                          onClick={() => setExpandedSummaries((prev) => {
-                            const next = new Set(prev)
-                            next.has(vol.id) ? next.delete(vol.id) : next.add(vol.id)
-                            return next
-                          })}
-                        >
-                          {expandedSummaries.has(vol.id) ? '收起' : '展开全部'}
-                        </Button>
-                      )}
+                      <CollapsibleText text={vol.summary} maxHeight={80} />
                     </div>
                   )}
 
@@ -1278,30 +1293,7 @@ export default function OutlinePage() {
                             ) : undefined
                           }
                         >
-                          <div>
-                            <div
-                              style={{
-                                margin: 0,
-                                whiteSpace: 'pre-wrap',
-                                overflow: 'hidden',
-                                maxHeight: expandedSummaries.has(ch.id) ? 'none' : 66,
-                                fontSize: 13,
-                              }}
-                            >
-                              {ch.summary || '暂无剧情简述'}
-                            </div>
-                            {(ch.summary || '').length > 100 && (
-                              <Button type="link" size="small" style={{ padding: 0, fontSize: 11 }}
-                                onClick={() => setExpandedSummaries((prev) => {
-                                  const next = new Set(prev)
-                                  next.has(ch.id) ? next.delete(ch.id) : next.add(ch.id)
-                                  return next
-                                })}
-                              >
-                                {expandedSummaries.has(ch.id) ? '收起' : '展开'}
-                              </Button>
-                            )}
-                          </div>
+                          <CollapsibleText text={ch.summary || '暂无剧情简述'} maxHeight={66} fontSize={13} />
                           {/* 故事线标记 */}
                           {ch.storylineIds && ch.storylineIds.length > 0 && (
                             <div style={{ display: 'flex', gap: 4, marginTop: 8, flexWrap: 'wrap' }}>
@@ -1403,6 +1395,11 @@ export default function OutlinePage() {
             <TextArea autoSize={{ minRows: 3, maxRows: 8 }} placeholder="100-200字的剧情概要" />
           </Form.Item>
           {storylines.length > 0 && (
+            <Form.Item name="storylineIds" hidden>
+              <input />
+            </Form.Item>
+          )}
+          {storylines.length > 0 && (
             <div style={{ marginBottom: 16 }}>
               <div style={{ marginBottom: 4, fontWeight: 500 }}>关联故事线</div>
               <Space wrap>
@@ -1412,6 +1409,7 @@ export default function OutlinePage() {
                     <Tooltip key={sl.id} title={sl.description || '暂无描述'} placement="top">
                       <Tag
                         color={selected ? sl.color : undefined}
+                        bordered={selected}
                         style={{ cursor: 'pointer', margin: 0 }}
                         onClick={() => {
                           form.setFieldsValue({
@@ -1509,6 +1507,7 @@ export default function OutlinePage() {
                 </Tag>
               ))}
             </Space>
+            <Form.Item name="color" hidden><Input /></Form.Item>
           </div>
           <Form.Item name="description" label="描述（可选）">
             <TextArea autoSize={{ minRows: 2, maxRows: 4 }} placeholder="这条线索的核心走向..." />

@@ -24,6 +24,10 @@ import {
   DeleteOutlined,
   ThunderboltOutlined,
   PlusOutlined,
+  EditOutlined,
+  RobotOutlined,
+  SearchOutlined,
+  SwapOutlined,
 } from '@ant-design/icons'
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { useSearchParams } from 'react-router'
@@ -77,7 +81,27 @@ export default function ChaptersPage() {
   const [refineLoading, setRefineLoading] = useState(false)
   const [refineDone, setRefineDone] = useState(false)
   const [refineDiffKey, setRefineDiffKey] = useState(0)
+  // AI 提问
+  const [questionOpen, setQuestionOpen] = useState(false)
+  const [questionInput, setQuestionInput] = useState('')
+  const [questionLoading, setQuestionLoading] = useState(false)
+  const [questionHistory, setQuestionHistory] = useState<{ q: string; a: string }[]>([])
+  // 大纲摘要编辑
+  const [editingSummary, setEditingSummary] = useState(false)
+  const [summaryDraft, setSummaryDraft] = useState('')
+  // 章节标题编辑
+  const [titleModalOpen, setTitleModalOpen] = useState(false)
+  const [titleInput, setTitleInput] = useState('')
+  const [aiTitles, setAiTitles] = useState<string[]>([])
+  const [aiTitleLoading, setAiTitleLoading] = useState(false)
   const [refineEditing, setRefineEditing] = useState(false)
+  // 全文查找替换
+  const [findReplaceOpen, setFindReplaceOpen] = useState(false)
+  const [findText, setFindText] = useState('')
+  const [replaceText, setReplaceText] = useState('')
+  const [findResults, setFindResults] = useState<{ chapterId: string; chapterTitle: string; matches: { index: number; context: string }[] }[]>([])
+  const [selectedMatches, setSelectedMatches] = useState<Set<string>>(new Set()) // "chapterId:index" format
+  const [findLoading, setFindLoading] = useState(false)
   // 全文检查
   const [checkStep, setCheckStep] = useState<'select' | 'scanning' | 'issues' | 'fixing' | null>(null)
   const [checkVolumes, setCheckVolumes] = useState<string[]>([])
@@ -204,14 +228,20 @@ export default function ChaptersPage() {
     setDirectionOpen(false)
   }, [activeChapterId])
 
-  // 持久化（始终从 store 取最新 currentWork）
+  // 持久化（检查 updatedAt 防止旧数据覆盖新数据）
   const persistChapters = useCallback(
     async (newChapters: Chapter[]) => {
       const work = useStore.getState().currentWork
       if (!work) return
-      const updated = { ...work, chapters: newChapters, updatedAt: Date.now() }
-      await db.works.update(work.id, { chapters: newChapters })
-      setCurrentWork(updated)
+      // 从数据库读取最新版本，防止多标签页冲突
+      const latest = await db.works.get(work.id)
+      if (latest && latest.updatedAt > work.updatedAt) {
+        message.warning('检测到其他页面已修改，请刷新后再操作')
+        return
+      }
+      const now = Date.now()
+      await db.works.update(work.id, { chapters: newChapters, updatedAt: now })
+      setCurrentWork({ ...work, chapters: newChapters, updatedAt: now })
     },
     [setCurrentWork],
   )
@@ -370,7 +400,7 @@ export default function ChaptersPage() {
       const currentOutlineIdx = sortedOutline.findIndex((n) => n.id === chapter.outlineId)
       const prevOutlineNode = currentOutlineIdx > 0 ? sortedOutline[currentOutlineIdx - 1] : null
       const prevChapter = prevOutlineNode ? currentChapters.find((c) => c.outlineId === prevOutlineNode.id) : null
-      const prevSummary = prevChapter ? prevChapter.content.slice(-500) : ''
+      const prevSummary = prevChapter ? prevChapter.content : ''
 
       // 事件簿上下文（排除当前章及后续章节的事件，避免重写时泄漏未来信息）
       const allOutline = currentOutline.filter((n) => n.level === 'chapter')
@@ -554,6 +584,92 @@ export default function ChaptersPage() {
   // 找到大纲节点
   const getOutlineNode = (outlineId: string) =>
     outline.find((n) => n.id === outlineId)
+
+  // 保存大纲摘要
+  const handleSaveSummary = useCallback(async () => {
+    if (!currentWork || !activeChapter) return
+    const node = getOutlineNode(activeChapter.outlineId)
+    if (!node) return
+    const newOutline = outline.map((n) => n.id === node.id ? { ...n, summary: summaryDraft } : n)
+    await db.works.update(currentWork.id, { outline: newOutline, updatedAt: Date.now() })
+    setCurrentWork({ ...currentWork, outline: newOutline, updatedAt: Date.now() })
+    setEditingSummary(false)
+    message.success('摘要已更新')
+  }, [currentWork, activeChapter, outline, summaryDraft, setCurrentWork])
+
+  // 章节标题编辑
+  const openTitleModal = () => {
+    if (!activeChapter) return
+    setTitleInput(activeChapter.title)
+    setAiTitles([])
+    setTitleModalOpen(true)
+  }
+
+  const handleSaveTitle = async () => {
+    if (!currentWork || !activeChapter || !titleInput.trim()) return
+    const newTitle = titleInput.trim()
+    // 同步更新 chapter 和 outline
+    const newChapters = chapters.map((c) => c.id === activeChapter.id ? { ...c, title: newTitle } : c)
+    const node = getOutlineNode(activeChapter.outlineId)
+    const newOutline = node ? outline.map((n) => n.id === node.id ? { ...n, title: newTitle } : n) : outline
+    const now = Date.now()
+    await db.works.update(currentWork.id, { chapters: newChapters, outline: newOutline, updatedAt: now })
+    setCurrentWork({ ...currentWork, chapters: newChapters, outline: newOutline, updatedAt: now })
+    setTitleModalOpen(false)
+    message.success('标题已更新')
+  }
+
+  const handleAITitles = async () => {
+    if (!activeChapter || !aiConfig?.apiKey) {
+      message.warning('请先配置 AI API Key')
+      return
+    }
+    setAiTitleLoading(true)
+    try {
+      // 取前3章标题作为格式参考
+      const sortedChapters = [...chapters].sort((a, b) => {
+        const aNode = getOutlineNode(a.outlineId)
+        const bNode = getOutlineNode(b.outlineId)
+        return (aNode?.order ?? 0) - (bNode?.order ?? 0)
+      })
+      const currentIdx = sortedChapters.findIndex((c) => c.id === activeChapter.id)
+      const prev3 = sortedChapters.slice(Math.max(0, currentIdx - 3), currentIdx)
+      const prevTitlesStr = prev3.map((c, i) => `${i + 1}. ${c.title}`).join('\n') || '（无前序章节）'
+
+      const contentPreview = (activeChapter.content || '').slice(0, 3000)
+
+      const prompt = `请为以下章节推荐 8 个标题。
+
+【前序章节标题（请参考其命名风格和格式）】
+${prevTitlesStr}
+
+【当前章节正文（前3000字）】
+${contentPreview || '（暂无正文）'}
+
+要求：
+- 与前序章节的标题风格保持一致（如字数、句式、用词习惯）
+- 体现本章核心情节或冲突
+- 每个标题不超过 15 个字
+- 严格输出 JSON 字符串数组，如：["标题一", "标题二", ...]
+- 只输出 JSON，不要输出其他内容`
+
+      const text = await generate(prompt, '你是一位资深的小说编辑，擅长为章节起标题。', aiConfig)
+      let jsonStr = text
+      const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
+      if (codeBlockMatch) jsonStr = codeBlockMatch[1]
+      const jsonMatch = jsonStr.match(/\[[\s\S]*\]/)
+      if (jsonMatch) {
+        const titles = JSON.parse(jsonMatch[0]) as string[]
+        setAiTitles(titles.filter((t) => typeof t === 'string'))
+      } else {
+        message.error('AI 返回格式异常')
+      }
+    } catch (err: any) {
+      message.error(`生成失败：${err.message}`)
+    } finally {
+      setAiTitleLoading(false)
+    }
+  }
 
   // 章节统计（只统计有关联大纲节点的章节，排除孤儿）
   const stats = useMemo(() => {
@@ -907,6 +1023,14 @@ export default function ChaptersPage() {
     setRefineOpen(true)
   }
 
+  // === AI 提问 ===
+  const handleOpenQuestion = () => {
+    if (!activeChapter) return
+    setQuestionInput('')
+    setQuestionHistory([])
+    setQuestionOpen(true)
+  }
+
   const handleRefine = async () => {
     if (!activeChapter || !refineInstruction.trim()) return
     if (!aiConfig?.apiKey) { message.warning('请先配置 AI API Key'); return }
@@ -972,6 +1096,184 @@ export default function ChaptersPage() {
     }
   }
 
+  // === AI 提问 ===
+  const handleQuestion = async (inputOverride?: string) => {
+    const q = (inputOverride ?? questionInput).trim()
+    if (!activeChapter || !q) return
+    if (!aiConfig?.apiKey) { message.warning('请先配置 AI API Key'); return }
+
+    setQuestionInput('')
+    setQuestionLoading(true)
+    // 立刻把问题加入历史（回答暂为空）
+    setQuestionHistory((prev) => [...prev, { q, a: '' }])
+    try {
+      // 构建与微调相同的上下文
+      const work = useStore.getState().currentWork
+      let prevChaptersText = ''
+      if (work) {
+        const outline = work.outline ?? []
+        const chapters = work.chapters ?? []
+        const currentOutlineNode = outline.find((n) => n.id === activeChapter.outlineId)
+        if (currentOutlineNode) {
+          const parentVolume = outline.find((n) => n.id === currentOutlineNode.parentId)
+          if (parentVolume) {
+            const siblingNodes = outline
+              .filter((n) => n.parentId === parentVolume.id && n.level === 'chapter' && n.order < currentOutlineNode.order)
+              .sort((a, b) => a.order - b.order)
+            const parts: string[] = []
+            for (const node of siblingNodes) {
+              const ch = chapters.find((c) => c.outlineId === node.id)
+              if (ch?.content) {
+                parts.push(`【${node.title}】\n${ch.content}`)
+              }
+            }
+            prevChaptersText = parts.join('\n\n')
+          }
+        }
+      }
+
+      const prevSection = prevChaptersText ? `\n\n前文参考（当前卷之前的章节）：\n${prevChaptersText}` : ''
+      const prompt = `你是一位专业的小说编辑顾问。用户正在创作一部小说，当前章节如下。请根据用户的问题，结合正文内容给出专业、具体的回答。
+
+用户问题：
+${q}
+${prevSection}
+
+【当前章节正文】：
+${activeChapter.content || '（暂无正文）'}
+【正文结束】
+
+要求：
+1. 回答要具体、有针对性，结合正文中的实际内容
+2. 如果是剧情相关问题，分析人物动机、情节逻辑、伏笔等
+3. 如果是写作技巧问题，给出具体建议和示例
+4. 回答简洁明了，不超过 500 字`
+
+      const text = await generateStream(prompt, '你是一位专业的小说编辑顾问，擅长分析剧情和写作技巧。', aiConfig, (_chunk, fullText) => {
+        // 流式更新最后一条历史的回答
+        setQuestionHistory((prev) => {
+          const updated = [...prev]
+          updated[updated.length - 1] = { q, a: fullText }
+          return updated
+        })
+      })
+      if (text) {
+        setQuestionHistory((prev) => {
+          const updated = [...prev]
+          updated[updated.length - 1] = { q, a: text }
+          return updated
+        })
+      }
+    } catch (err: any) {
+      message.error('提问失败：' + err.message)
+      // 出错时移除空回答的历史条目
+      setQuestionHistory((prev) => prev.filter((item) => item.a !== ''))
+    } finally {
+      setQuestionLoading(false)
+    }
+  }
+
+  // === 全文查找替换 ===
+  const handleFind = useCallback(() => {
+    if (!findText.trim() || !currentWork) return
+    setFindLoading(true)
+    const results: typeof findResults = []
+    const allChapters = currentWork.chapters ?? []
+    const allOutline = currentWork.outline ?? []
+
+    for (const ch of allChapters) {
+      if (!ch.content) continue
+      const matches: { index: number; context: string }[] = []
+      const content = ch.content
+      const searchStr = findText.trim()
+      let idx = 0
+      while (idx < content.length) {
+        const found = content.indexOf(searchStr, idx)
+        if (found === -1) break
+        const start = Math.max(0, found - 20)
+        const end = Math.min(content.length, found + searchStr.length + 20)
+        matches.push({ index: found, context: content.slice(start, end) })
+        idx = found + 1
+      }
+      if (matches.length > 0) {
+        const node = allOutline.find((n) => n.id === ch.outlineId)
+        results.push({ chapterId: ch.id, chapterTitle: node?.title || ch.title, matches })
+      }
+    }
+    setFindResults(results)
+    setSelectedMatches(new Set())
+    setFindLoading(false)
+  }, [findText, currentWork])
+
+  const handleReplace = useCallback(async () => {
+    const work = useStore.getState().currentWork
+    if (!work) return
+    if (selectedMatches.size === 0) {
+      message.warning('请先点击匹配项选中要替换的内容')
+      return
+    }
+    const searchStr = findText.trim()
+    let replaceCount = 0
+
+    // 建立 chapterId -> matchIndex -> 实际位置 的映射
+    const posMap = new Map<string, number>()
+    for (const result of findResults) {
+      result.matches.forEach((m, i) => {
+        posMap.set(`${result.chapterId}:${i}`, m.index)
+      })
+    }
+
+    const allChapters = (work.chapters ?? []).map((ch) => {
+      const chMatches = [...selectedMatches]
+        .filter((key) => key.startsWith(ch.id + ':'))
+        .map((key) => posMap.get(key))
+        .filter((pos): pos is number => pos !== undefined)
+        .sort((a, b) => b - a) // 从后往前替换
+
+      if (chMatches.length === 0) return ch
+
+      let content = ch.content || ''
+      for (const pos of chMatches) {
+        content = content.slice(0, pos) + replaceText + content.slice(pos + searchStr.length)
+        replaceCount++
+      }
+      return { ...ch, content, wordCount: content.replace(/\s/g, '').length }
+    })
+
+    if (replaceCount === 0) {
+      message.warning('未找到可替换的内容')
+      return
+    }
+
+    await persistChapters(allChapters)
+    message.success(`已替换 ${replaceCount} 处`)
+    setSelectedMatches(new Set())
+    // 重新查找
+    setTimeout(() => handleFind(), 100)
+  }, [findText, replaceText, selectedMatches, findResults, persistChapters, handleFind])
+
+  const toggleMatch = useCallback((key: string) => {
+    setSelectedMatches((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
+
+  const toggleChapterMatches = useCallback((chapterId: string, matchCount: number) => {
+    setSelectedMatches((prev) => {
+      const next = new Set(prev)
+      const allSelected = Array.from({ length: matchCount }, (_, i) => `${chapterId}:${i}`).every((k) => next.has(k))
+      for (let i = 0; i < matchCount; i++) {
+        const key = `${chapterId}:${i}`
+        if (allSelected) next.delete(key)
+        else next.add(key)
+      }
+      return next
+    })
+  }, [])
+
   const handleQuickWrite = async (mode: 'newVolume' | 'continue') => {
     if (!currentWork) return
     if (!aiConfig?.apiKey) { message.warning('请先配置 AI API Key'); return }
@@ -990,16 +1292,21 @@ export default function ChaptersPage() {
       const chars = charactersContext(currentWork.characters, 'major')
       const eventLog = eventLogContext(currentWork.eventLog ?? [])
 
-      // 前文摘要：取最后一章的内容前500字
+      // 前文：取最后一章完整内容
       const sortedChapters = [...chapters].sort((a, b) => {
         const aNode = outline.find((n) => n.id === a.outlineId)
         const bNode = outline.find((n) => n.id === b.outlineId)
         return (aNode?.order ?? 0) - (bNode?.order ?? 0)
       })
       const lastChapter = sortedChapters[sortedChapters.length - 1]
-      const prevSummary = lastChapter?.content?.slice(0, 500) || ''
+      const prevSummary = lastChapter?.content || ''
 
-      const prompt = buildInspirationPrompt(mode, seed, world, chars, prevSummary, eventLog)
+      // 取前3章标题作为格式参考
+      const prev3Titles = sortedChapters.slice(-3).map((c) => c.title)
+      // 只统计"第X章"格式的章节，排除序章、番外等
+      const chapterCount = outline.filter((n) => n.level === 'chapter' && /第[一二三四五六七八九十百\d]+章/.test(n.title)).length
+
+      const prompt = buildInspirationPrompt(mode, seed, world, chars, prevSummary, eventLog, chapterCount, prev3Titles)
       const text = await generateStream(prompt, CHAPTER_SYSTEM_PROMPT, aiConfig, (_chunk, fullText) => {
         setAIStream(true, fullText)
       })
@@ -1204,21 +1511,23 @@ export default function ChaptersPage() {
     }
   }
 
-  // 按章节分组的事件簿
+  // 按章节分组的事件簿（用 chapterId 分组，标题动态查找）
   const groupedEvents = useMemo(() => {
     const eventLog = currentWork?.eventLog ?? []
-    const groups: { chapterTitle: string; events: typeof eventLog }[] = []
+    const chapters = currentWork?.chapters ?? []
     const map = new Map<string, typeof eventLog>()
     for (const e of eventLog) {
-      const key = e.chapterTitle
+      const key = e.chapterId
       if (!map.has(key)) map.set(key, [])
       map.get(key)!.push(e)
     }
-    for (const [chapterTitle, events] of map) {
-      groups.push({ chapterTitle, events })
+    const groups: { chapterTitle: string; events: typeof eventLog }[] = []
+    for (const [chapterId, events] of map) {
+      const ch = chapters.find((c) => c.id === chapterId)
+      if (ch) groups.push({ chapterTitle: ch.title, events })
     }
     return groups
-  }, [currentWork?.eventLog])
+  }, [currentWork?.eventLog, currentWork?.chapters])
 
   // 事件类型标签颜色
   const eventTypeColor: Record<string, string> = {
@@ -1320,50 +1629,51 @@ export default function ChaptersPage() {
           )}
         </div>
 
-        {/* 快速续写 */}
-        {!readOnly && (
-          <div style={{ flexShrink: 0, paddingTop: 8, borderTop: '1px solid #f0f0f0', textAlign: 'center' }}>
-            <Button
-              type="primary"
-              icon={<ThunderboltOutlined />}
-              block
-              onClick={() => { setQwStep('mode'); setQwInspirations([]); setQwOpen(true) }}
-            >
-              快速续写
-            </Button>
-          </div>
-        )}
-
-        {/* 全文逻辑检查 */}
-        {chapters.some((c) => c.wordCount > 0) && (
-          <div style={{ flexShrink: 0, paddingTop: 8, borderTop: '1px solid #f0f0f0', textAlign: 'center' }}>
-            <Button
-              icon={<ExperimentOutlined />}
-              block
-              loading={checkStep === 'scanning' || checkStep === 'fixing'}
-              onClick={handleOpenCheck}
-            >
-              全文逻辑检查
-            </Button>
-          </div>
-        )}
-
-        {/* 清空所有正文 */}
-        {!readOnly && chapters.length > 0 && (
-          <div style={{ flexShrink: 0, paddingTop: 8, borderTop: '1px solid #f0f0f0', textAlign: 'center' }}>
-            <Popconfirm
-              title="确定清空所有已写正文？此操作不可恢复"
-              onConfirm={handleClearAll}
-              okText="确认清空"
-              cancelText="取消"
-              okButtonProps={{ danger: true }}
-            >
-              <Button type="link" size="small" danger style={{ fontSize: 12 }}>
-                清空所有正文
+        {/* 操作按钮 2x2 网格 */}
+        <div style={{ flexShrink: 0, paddingTop: 8, borderTop: '1px solid #f0f0f0' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+            {!readOnly && (
+              <Button
+                type="primary"
+                icon={<ThunderboltOutlined />}
+                size="small"
+                onClick={() => { setQwStep('mode'); setQwInspirations([]); setQwOpen(true) }}
+              >
+                快速续写
               </Button>
-            </Popconfirm>
+            )}
+            {chapters.some((c) => c.wordCount > 0) && (
+              <Button
+                icon={<ExperimentOutlined />}
+                size="small"
+                loading={checkStep === 'scanning' || checkStep === 'fixing'}
+                onClick={handleOpenCheck}
+              >
+                逻辑检查
+              </Button>
+            )}
+            <Button
+              icon={<SearchOutlined />}
+              size="small"
+              onClick={() => setFindReplaceOpen(true)}
+            >
+              查找替换
+            </Button>
+            {!readOnly && chapters.length > 0 && (
+              <Popconfirm
+                title="确定清空所有已写正文？此操作不可恢复"
+                onConfirm={handleClearAll}
+                okText="确认清空"
+                cancelText="取消"
+                okButtonProps={{ danger: true }}
+              >
+                <Button size="small" danger icon={<DeleteOutlined />}>
+                  清空正文
+                </Button>
+              </Popconfirm>
+            )}
           </div>
-        )}
+        </div>
       </div>
 
       {/* 右侧：编辑区 */}
@@ -1374,15 +1684,23 @@ export default function ChaptersPage() {
           </div>
         ) : (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexShrink: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexShrink: 0, flexWrap: 'wrap', gap: 8 }}>
               <Space>
-                <Title level={4} style={{ margin: 0 }}>{activeChapter.title}</Title>
+                <Title level={4} style={{ margin: 0 }}>
+                  {activeChapter.title}
+                  {!readOnly && (
+                    <EditOutlined
+                      style={{ fontSize: 14, marginLeft: 8, cursor: 'pointer', color: '#999' }}
+                      onClick={openTitleModal}
+                    />
+                  )}
+                </Title>
                 {writingChapterId === activeChapter.id && (
                   <Tag color="processing" icon={<LoadingOutlined />}>写作中</Tag>
                 )}
               </Space>
               {!readOnly && (
-                <Space>
+                <Space wrap>
                   {countdown > 0 && (
                     <Space>
                       <Text type="secondary">{countdown} 秒后开始下一章</Text>
@@ -1396,20 +1714,44 @@ export default function ChaptersPage() {
                   >
                     完成后自动开始下一章
                   </Checkbox>
-                  <Button
-                    icon={<ExperimentOutlined />}
-                    onClick={() => handleAIWrite(activeChapter)}
-                    loading={loading}
-                  >
-                    AI 生成正文
-                  </Button>
-                  {activeChapter.wordCount > 0 && (
+                  {activeChapter.wordCount > 0 ? (
+                    <Popconfirm
+                      title="重写会覆盖当前正文，确定继续？"
+                      onConfirm={() => handleAIWrite(activeChapter)}
+                      okText="确定重写"
+                      cancelText="取消"
+                    >
+                      <Button
+                        icon={<ExperimentOutlined />}
+                        loading={loading}
+                      >
+                        AI 重写正文
+                      </Button>
+                    </Popconfirm>
+                  ) : (
                     <Button
                       icon={<ExperimentOutlined />}
-                      onClick={handleOpenRefine}
+                      onClick={() => handleAIWrite(activeChapter)}
+                      loading={loading}
                     >
-                      AI 微调
+                      AI 生成正文
                     </Button>
+                  )}
+                  {activeChapter.wordCount > 0 && (
+                    <>
+                      <Button
+                        icon={<ExperimentOutlined />}
+                        onClick={handleOpenRefine}
+                      >
+                        AI 微调
+                      </Button>
+                      <Button
+                        icon={<span style={{ fontWeight: 'bold', fontSize: 14 }}>?</span>}
+                        onClick={handleOpenQuestion}
+                      >
+                        AI 提问
+                      </Button>
+                    </>
                   )}
                 </Space>
               )}
@@ -1459,13 +1801,39 @@ export default function ChaptersPage() {
             )}
 
             {/* 大纲摘要 */}
-            {getOutlineNode(activeChapter.outlineId)?.summary && (
-              <Card size="small" style={{ marginBottom: 16, background: '#fafafa' }}>
-                <div style={{ maxHeight: 120, overflow: 'auto' }}>
-                  <Text type="secondary" style={{ fontSize: 13, whiteSpace: 'pre-wrap' }}>
-                    大纲摘要：{getOutlineNode(activeChapter.outlineId)!.summary}
-                  </Text>
-                </div>
+            {getOutlineNode(activeChapter.outlineId) && (
+              <Card
+                size="small"
+                style={{ marginBottom: 16, background: '#fafafa', cursor: editingSummary ? 'default' : 'pointer' }}
+                onClick={() => {
+                  if (!editingSummary && !readOnly) {
+                    setSummaryDraft(getOutlineNode(activeChapter.outlineId)!.summary || '')
+                    setEditingSummary(true)
+                  }
+                }}
+              >
+                {editingSummary ? (
+                  <div>
+                    <Input.TextArea
+                      value={summaryDraft}
+                      onChange={(e) => setSummaryDraft(e.target.value)}
+                      autoSize={{ minRows: 2, maxRows: 6 }}
+                      style={{ fontSize: 13 }}
+                      onClick={(e) => e.stopPropagation()}
+                      autoFocus
+                    />
+                    <Space style={{ marginTop: 8 }}>
+                      <Button size="small" type="primary" onClick={(e) => { e.stopPropagation(); handleSaveSummary() }}>保存</Button>
+                      <Button size="small" onClick={(e) => { e.stopPropagation(); setEditingSummary(false) }}>取消</Button>
+                    </Space>
+                  </div>
+                ) : (
+                  <div style={{ maxHeight: 120, overflow: 'auto' }}>
+                    <Text type="secondary" style={{ fontSize: 13, whiteSpace: 'pre-wrap' }}>
+                      {getOutlineNode(activeChapter.outlineId)!.summary || '点击添加大纲摘要...'}
+                    </Text>
+                  </div>
+                )}
               </Card>
             )}
 
@@ -1700,12 +2068,16 @@ export default function ChaptersPage() {
                 if (current.length) paragraphs.push(current)
                 return paragraphs.map((para, pi) => (
                   <div key={pi} style={{ minHeight: 22, padding: '2px 8px', lineHeight: 1.8, fontSize: 13 }}>
-                    {para.map((item, ii) => (
-                      <span key={ii} style={{
-                        background: item.type === highlightType ? (highlightType === 'removed' ? '#fff1f0' : '#f6ffed') : undefined,
-                        borderBottom: item.type === highlightType ? `2px solid ${color}` : undefined,
-                      }}>{item.text || '\u00a0'}</span>
-                    ))}
+                    {para.map((item, ii) => {
+                      // \u8df3\u8fc7\u7a7a\u7684 same \u5360\u4f4d\u7b26\uff0c\u907f\u514d\u4ea7\u751f\u591a\u4f59\u7a7a\u683c
+                      if (item.type !== highlightType && !item.text) return null
+                      return (
+                        <span key={ii} style={{
+                          background: item.type === highlightType ? (highlightType === 'removed' ? '#fff1f0' : '#f6ffed') : undefined,
+                          borderBottom: item.type === highlightType ? `2px solid ${color}` : undefined,
+                        }}>{item.text || '\u00a0'}</span>
+                      )
+                    })}
                   </div>
                 ))
               }
@@ -1720,9 +2092,13 @@ export default function ChaptersPage() {
               lp = 0
               for (const item of rightItems) { const lc = item.text.split('\n').length || 1; if (item.type === 'added') addedRanges.push({ start: lp / totalLines * 100, end: (lp + lc) / totalLines * 100 }); lp += lc }
 
+              // 单个标记最大高度 4%，不合并区间
+              const capRanges = (ranges: { start: number; end: number }[], maxH = 4) =>
+                ranges.map(r => ({ start: r.start, end: Math.min(r.end, r.start + maxH) }))
+
               const renderMinimap = (ranges: { start: number; end: number }[], color: string) => (
                 <div style={{ width: 10, background: '#f5f5f5', borderLeft: '1px solid #e8e8e8', position: 'relative', flexShrink: 0 }}>
-                  {ranges.map((r, i) => (
+                  {capRanges(ranges).map((r, i) => (
                     <div key={i} style={{ position: 'absolute', left: 1, right: 1, top: `${r.start}%`, height: `${Math.max(r.end - r.start, 1.5)}%`, background: color, borderRadius: 2, opacity: 0.8 }} />
                   ))}
                 </div>
@@ -1987,7 +2363,7 @@ export default function ChaptersPage() {
       {/* AI 微调弹窗 */}
       <Modal
         mask={{ closable: false }}
-                title="AI 微调"
+        title="AI 微调"
         open={refineOpen}
         onCancel={() => setRefineOpen(false)}
         width={1000}
@@ -2002,7 +2378,6 @@ export default function ChaptersPage() {
         }
       >
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 8 }}>
-            {/* 微调指令 */}
             <div style={{ flexShrink: 0 }}>
               <div style={{ display: 'flex', gap: 8 }}>
                 <Input.TextArea
@@ -2012,6 +2387,7 @@ export default function ChaptersPage() {
                   placeholder="例如：让对话更自然、增加环境描写、调整节奏..."
                   disabled={refineLoading}
                   style={{ flex: 1 }}
+                  onPressEnter={(e) => { if (!e.shiftKey) { e.preventDefault(); handleRefine() } }}
                 />
                 <Button
                   type="primary"
@@ -2025,7 +2401,6 @@ export default function ChaptersPage() {
                 </Button>
               </div>
             </div>
-            {/* 左右对比视图 */}
             {(() => {
               void refineDiffKey
               const charParts = refineResult ? diffChars(refineOriginal, refineResult) : []
@@ -2045,7 +2420,6 @@ export default function ChaptersPage() {
                   }
                 }
               } else {
-                // 无结果时，左侧显示原文，右侧也显示原文（无高亮）
                 leftItems.push({ text: refineOriginal, type: 'same' })
                 rightItems.push({ text: '', type: 'same' })
               }
@@ -2063,12 +2437,15 @@ export default function ChaptersPage() {
                 if (current.length) paragraphs.push(current)
                 return paragraphs.map((para, pi) => (
                   <div key={pi} style={{ minHeight: 22, padding: '2px 8px', lineHeight: 1.8, fontSize: 13 }}>
-                    {para.map((item, ii) => (
-                      <span key={ii} style={{
-                        background: item.type === highlightType ? (highlightType === 'removed' ? '#fff1f0' : '#f6ffed') : undefined,
-                        borderBottom: item.type === highlightType ? `2px solid ${color}` : undefined,
-                      }}>{item.text || ' '}</span>
-                    ))}
+                    {para.map((item, ii) => {
+                      if (item.type !== highlightType && !item.text) return null
+                      return (
+                        <span key={ii} style={{
+                          background: item.type === highlightType ? (highlightType === 'removed' ? '#fff1f0' : '#f6ffed') : undefined,
+                          borderBottom: item.type === highlightType ? `2px solid ${color}` : undefined,
+                        }}>{item.text || ' '}</span>
+                      )
+                    })}
                   </div>
                 ))
               }
@@ -2083,9 +2460,12 @@ export default function ChaptersPage() {
               lp = 0
               for (const item of rightItems) { const lc = item.text.split('\n').length || 1; if (item.type === 'added') addedRanges.push({ start: lp / totalLines * 100, end: (lp + lc) / totalLines * 100 }); lp += lc }
 
+              const capRanges = (ranges: { start: number; end: number }[], maxH = 4) =>
+                ranges.map(r => ({ start: r.start, end: Math.min(r.end, r.start + maxH) }))
+
               const renderMinimap = (ranges: { start: number; end: number }[], color: string) => (
                 <div style={{ width: 10, background: '#f5f5f5', borderLeft: '1px solid #e8e8e8', position: 'relative', flexShrink: 0 }}>
-                  {ranges.map((r, i) => (
+                  {capRanges(ranges).map((r, i) => (
                     <div key={i} style={{ position: 'absolute', left: 1, right: 1, top: `${r.start}%`, height: `${Math.max(r.end - r.start, 1.5)}%`, background: color, borderRadius: 2, opacity: 0.8 }} />
                   ))}
                 </div>
@@ -2124,7 +2504,7 @@ export default function ChaptersPage() {
                 <div style={{ display: 'flex', gap: 2, flex: 1, border: '1px solid #d9d9d9', borderRadius: 6, overflow: 'hidden', minHeight: 0 }}>
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                     <div style={{ padding: '6px 12px', borderBottom: '1px solid #f0f0f0', fontWeight: 600, fontSize: 12, color: '#999', flexShrink: 0 }}>
-                      {refineEditing ? '原文（高亮标记修改位置）' : '原文（红色 = 将被删除）'}
+                      原文（红色 = 将被删除）
                     </div>
                     <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
                       <div ref={refineDiffLeftRef} style={{ flex: 1, overflow: 'auto', background: '#fafafa' }} onScroll={handleRefineDiffScroll('left')}>
@@ -2183,6 +2563,191 @@ export default function ChaptersPage() {
               )
             })()}
           </div>
+      </Modal>
+
+      {/* AI 提问弹窗 */}
+      <Modal
+        mask={{ closable: false }}
+        title="AI 提问"
+        open={questionOpen}
+        onCancel={() => setQuestionOpen(false)}
+        width={700}
+        styles={{ body: { height: '60vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' } }}
+        footer={null}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 8 }}>
+            <div style={{ flexShrink: 0 }}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <Input.TextArea
+                  rows={2}
+                  value={questionInput}
+                  onChange={(e) => setQuestionInput(e.target.value)}
+                  placeholder="例如：这个角色的动机合理吗？这段情节逻辑有没有问题？"
+                  disabled={questionLoading}
+                  style={{ flex: 1 }}
+                  onPressEnter={(e) => { if (!e.shiftKey) { e.preventDefault(); handleQuestion() } }}
+                />
+                <Button
+                  type="primary"
+                  icon={<span style={{ fontWeight: 'bold', fontSize: 14 }}>?</span>}
+                  loading={questionLoading}
+                  disabled={!questionInput.trim()}
+                  onClick={() => handleQuestion()}
+                  style={{ alignSelf: 'flex-end' }}
+                >
+                  提问
+                </Button>
+              </div>
+            </div>
+            <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 12, padding: '8px 0' }}>
+              {questionHistory.length === 0 && (
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#bbb', fontSize: 13 }}>
+                  输入问题后点击「提问」，AI 将结合正文内容回答
+                </div>
+              )}
+              {questionHistory.map((item, i) => (
+                <div key={i}>
+                  <div style={{ marginBottom: 4 }}>
+                    <Tag color="blue">问</Tag>
+                    <Text style={{ fontSize: 13 }}>{item.q}</Text>
+                  </div>
+                  {item.a ? (
+                    <div style={{ background: '#f6ffed', padding: '8px 12px', borderRadius: 6, fontSize: 13, whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
+                      {item.a}
+                    </div>
+                  ) : (
+                    <div style={{ padding: '8px 12px' }}><Spin size="small" /></div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+      </Modal>
+
+      {/* 全文查找替换弹窗 */}
+      <Modal
+        title="全文查找替换"
+        open={findReplaceOpen}
+        onCancel={() => { setFindReplaceOpen(false); setFindResults([]); setSelectedMatches(new Set()); }}
+        width={700}
+        mask={{ closable: false }}
+        footer={null}
+        styles={{ body: { maxHeight: '60vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' } }}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 12 }}>
+          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+            <Input
+              placeholder="查找内容"
+              value={findText}
+              onChange={(e) => setFindText(e.target.value)}
+              onPressEnter={handleFind}
+              style={{ flex: 1 }}
+            />
+            <Input
+              placeholder="替换为"
+              value={replaceText}
+              onChange={(e) => setReplaceText(e.target.value)}
+              style={{ flex: 1 }}
+            />
+            <Button icon={<SearchOutlined />} onClick={handleFind} loading={findLoading}>查找</Button>
+            <Button
+              icon={<SwapOutlined />}
+              type="primary"
+              disabled={selectedMatches.size === 0}
+              onClick={handleReplace}
+            >
+              替换 ({selectedMatches.size})
+            </Button>
+          </div>
+          <div style={{ flex: 1, overflow: 'auto', border: '1px solid #d9d9d9', borderRadius: 6, padding: 8 }}>
+            {findResults.length === 0 && !findLoading && (
+              <div style={{ textAlign: 'center', color: '#bbb', padding: 24, fontSize: 13 }}>
+                输入关键词后点击「查找」
+              </div>
+            )}
+            {findResults.map((result) => {
+              const allKeys = result.matches.map((_, i) => `${result.chapterId}:${i}`)
+              const allSelected = allKeys.every((k) => selectedMatches.has(k))
+              return (
+                <div key={result.chapterId} style={{ marginBottom: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <Checkbox
+                      checked={allSelected}
+                      indeterminate={!allSelected && allKeys.some((k) => selectedMatches.has(k))}
+                      onChange={() => toggleChapterMatches(result.chapterId, result.matches.length)}
+                    />
+                    <Text strong style={{ fontSize: 13 }}>{result.chapterTitle}</Text>
+                    <Text type="secondary" style={{ fontSize: 11 }}>({result.matches.length} 处)</Text>
+                  </div>
+                  {result.matches.map((match, i) => {
+                    const key = `${result.chapterId}:${i}`
+                    return (
+                      <div
+                        key={i}
+                        style={{
+                          padding: '4px 8px 4px 32px',
+                          fontSize: 12,
+                          cursor: 'pointer',
+                          background: selectedMatches.has(key) ? '#e6f4ff' : undefined,
+                          borderRadius: 4,
+                        }}
+                        onClick={() => toggleMatch(key)}
+                      >
+                        <Checkbox checked={selectedMatches.has(key)} style={{ marginRight: 8 }} />
+                        ...{match.context}...
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </Modal>
+
+      {/* 编辑章节标题 */}
+      <Modal
+        title="编辑章节标题"
+        open={titleModalOpen}
+        onCancel={() => setTitleModalOpen(false)}
+        onOk={handleSaveTitle}
+        okText="保存"
+        cancelText="取消"
+        mask={{ closable: false }}
+        width={500}
+      >
+        <Space orientation="vertical" style={{ width: '100%' }} size="middle">
+          <Input
+            value={titleInput}
+            onChange={(e) => setTitleInput(e.target.value)}
+            placeholder="输入章节标题"
+            onPressEnter={handleSaveTitle}
+          />
+          <div>
+            <Button
+              icon={<RobotOutlined />}
+              onClick={handleAITitles}
+              loading={aiTitleLoading}
+              size="small"
+            >
+              AI 推荐标题
+            </Button>
+          </div>
+          {aiTitles.length > 0 && (
+            <div style={{ border: '1px solid #d9d9d9', borderRadius: 6 }}>
+              {aiTitles.map((title, i) => (
+                <div
+                  key={i}
+                  style={{ cursor: 'pointer', padding: '8px 12px', borderBottom: i < aiTitles.length - 1 ? '1px solid #f0f0f0' : undefined }}
+                  onClick={() => setTitleInput(title)}
+                >
+                  {title}
+                </div>
+              ))}
+            </div>
+          )}
+          {aiTitleLoading && <Spin size="small" />}
+        </Space>
       </Modal>
     </div>
   )
