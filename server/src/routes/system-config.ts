@@ -1,6 +1,13 @@
 import { Router } from 'express'
 import db from '../db.js'
 import { requireAdmin, getCurrentUser } from '../middleware/auth.js'
+import {
+  defaultImageGenerationConfig,
+  maskImageGenerationConfigForAdmin,
+  maskImageGenerationConfigForUser,
+  mergeImageGenerationConfig as mergeImageGenerationConfigFromService,
+  normalizeImageGenerationConfig,
+} from '../services/image-generation-config.js'
 
 const router = Router()
 
@@ -9,7 +16,7 @@ function rowToConfig(row: any, includeAI = false) {
   const aiConfig = row.aiConfig ? JSON.parse(row.aiConfig) : undefined
   const voiceboxConfig = row.voiceboxConfig ? JSON.parse(row.voiceboxConfig) : defaultVoiceboxConfig()
   const novelImportConfig = row.novelImportConfig ? normalizeNovelImportConfig({ ...defaultNovelImportConfig(), ...JSON.parse(row.novelImportConfig) }) : defaultNovelImportConfig()
-  const imageGenerationConfig = row.imageGenerationConfig ? normalizeImageGenerationConfig({ ...defaultImageGenerationConfig(), ...JSON.parse(row.imageGenerationConfig) }) : defaultImageGenerationConfig()
+  const imageGenerationConfig = row.imageGenerationConfig ? normalizeImageGenerationConfig(JSON.parse(row.imageGenerationConfig)) : defaultImageGenerationConfig()
   const safeVoiceboxConfig = includeAI ? voiceboxConfig : maskVoiceboxConfig(voiceboxConfig)
   const safeImageGenerationConfig = includeAI ? maskImageGenerationConfigForAdmin(imageGenerationConfig) : maskImageGenerationConfigForUser(imageGenerationConfig)
   return {
@@ -69,130 +76,10 @@ function defaultVoiceboxConfig() {
   }
 }
 
-function defaultImageGenerationConfig() {
-  return {
-    enabled: false,
-    defaultModelId: '',
-    models: [],
-    storageMode: 'local',
-    immich: {
-      serviceUrl: '',
-      apiKey: '',
-      projectName: '',
-      allowPrivateNetwork: false,
-    },
-  }
-}
-
-function normalizeImageGenerationConfig(config: any) {
-  const models = Array.isArray(config?.models) ? config.models : []
-  const seenIds = new Set<string>()
-  const normalizedModels = models
-    .map((model: any) => ({
-      id: String(model?.id || '').trim(),
-      label: String(model?.label || model?.id || '').trim(),
-      provider: model?.provider === 'custom' ? 'custom' : 'openai',
-      baseUrl: String(model?.baseUrl || '').trim(),
-      apiKey: String(model?.apiKey || ''),
-      model: String(model?.model || '').trim(),
-      enabled: Boolean(model?.enabled),
-      capabilities: {
-        sizes: normalizeStringList(model?.capabilities?.sizes),
-        qualities: normalizeStringList(model?.capabilities?.qualities),
-        formats: normalizeStringList(model?.capabilities?.formats),
-      },
-    }))
-    .filter((model: any) => {
-      if (!model.id || seenIds.has(model.id)) return false
-      seenIds.add(model.id)
-      return true
-    })
-
-  const defaultModelId = String(config?.defaultModelId || '').trim()
-  const enabledModelIds = new Set(normalizedModels.filter((model: any) => model.enabled).map((model: any) => model.id))
-  const storageMode = config?.storageMode === 'immich' ? 'immich' : 'local'
-  return {
-    enabled: Boolean(config?.enabled),
-    defaultModelId: enabledModelIds.has(defaultModelId) ? defaultModelId : (normalizedModels.find((model: any) => model.enabled)?.id || ''),
-    models: normalizedModels,
-    storageMode,
-    immich: {
-      serviceUrl: String(config?.immich?.serviceUrl || '').trim(),
-      apiKey: String(config?.immich?.apiKey || ''),
-      projectName: String(config?.immich?.projectName || '').trim(),
-      allowPrivateNetwork: Boolean(config?.immich?.allowPrivateNetwork),
-    },
-  }
-}
-
-function normalizeStringList(value: unknown) {
-  if (typeof value === 'string') return Array.from(new Set(value.split(',').map(item => item.trim()).filter(Boolean)))
-  if (!Array.isArray(value)) return []
-  return Array.from(new Set(value.map(item => String(item || '').trim()).filter(Boolean)))
-}
-
-function validateImageGenerationConfig(config: ReturnType<typeof defaultImageGenerationConfig>) {
-  if (!config.enabled) return
-  const enabledModels = config.models.filter((model: any) => model.enabled)
-  if (enabledModels.length === 0) throw new Error('开启生图功能前至少需要启用一个生图模型')
-  for (const model of enabledModels as any[]) {
-    if (!model.id || !model.label || !model.baseUrl || !model.model) throw new Error('启用的生图模型必须包含 ID、名称、API 地址和模型名')
-    if (!model.apiKey) throw new Error(`生图模型 ${model.label} 缺少 API Key`)
-  }
-  if (config.storageMode === 'immich') {
-    if (!config.immich.serviceUrl || !config.immich.apiKey || !config.immich.projectName) throw new Error('启用 Immich 存储前需要填写服务地址、API Key 和项目名称')
-  }
-}
-
-function maskImageGenerationConfigForAdmin(config: any) {
-  return {
-    ...config,
-    models: config.models.map((model: any) => ({
-      ...model,
-      apiKey: model.apiKey ? '__server_configured__' : '',
-    })),
-    immich: {
-      ...config.immich,
-      apiKey: config.immich?.apiKey ? '__server_configured__' : '',
-    },
-  }
-}
-
-function maskImageGenerationConfigForUser(config: any) {
-  return {
-    enabled: config.enabled,
-    defaultModelId: config.defaultModelId,
-    storageMode: config.storageMode,
-    models: config.models
-      .filter((model: any) => model.enabled)
-      .map((model: any) => ({
-        id: model.id,
-        label: model.label,
-        provider: model.provider,
-        model: model.model,
-        enabled: model.enabled,
-        capabilities: model.capabilities,
-      })),
-  }
-}
-
 function mergeImageGenerationConfig(fieldsConfig: any) {
   const row = db.prepare('SELECT imageGenerationConfig FROM systemConfig WHERE id = ?').get('singleton') as { imageGenerationConfig?: string } | undefined
-  const existing = row?.imageGenerationConfig ? normalizeImageGenerationConfig({ ...defaultImageGenerationConfig(), ...JSON.parse(row.imageGenerationConfig) }) : defaultImageGenerationConfig()
-  const merged = normalizeImageGenerationConfig({ ...existing, ...fieldsConfig })
-  merged.models = merged.models.map((model: any) => {
-    const existingModel = (existing.models as any[]).find(item => item.id === model.id)
-    return {
-      ...model,
-      apiKey: model.apiKey === '__server_configured__' ? existingModel?.apiKey || '' : model.apiKey,
-    }
-  })
-  merged.immich = {
-    ...merged.immich,
-    apiKey: merged.immich.apiKey === '__server_configured__' ? existing.immich?.apiKey || '' : merged.immich.apiKey,
-  }
-  validateImageGenerationConfig(merged)
-  return merged
+  const existing = row?.imageGenerationConfig ? JSON.parse(row.imageGenerationConfig) : defaultImageGenerationConfig()
+  return mergeImageGenerationConfigFromService(fieldsConfig, existing)
 }
 
 function maskVoiceboxConfig(config: ReturnType<typeof defaultVoiceboxConfig>) {

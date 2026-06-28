@@ -6,11 +6,19 @@ import { fileURLToPath } from 'url'
 import db from '../db.js'
 import type { AuthenticatedRequest } from '../middleware/auth.js'
 import { ImmichClient } from '../services/immich-client.js'
+import {
+  defaultImageGenerationConfig,
+  normalizeImageGenerationConfig,
+  resolveEnabledImageModel,
+  type ImageGenerationConfig,
+  type ImageGenerationModelConfig,
+  type ImageGenerationProviderConfig,
+} from '../services/image-generation-config.js'
+import { discoverProviderModels, generateProviderImages } from '../services/image-providers.js'
 
 const router = Router()
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ASSET_DIR = path.join(__dirname, '..', '..', 'data', 'image-assets')
-const IMAGE_UPSTREAM_TIMEOUT_MS = 360000
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024
 const IMMICH_UPLOAD_RETRY_LIMIT = 3
 
@@ -19,30 +27,6 @@ interface AIConfigPayload {
   baseUrl?: string
   model?: string
   maxTokens?: number
-}
-
-interface ImageModelConfig {
-  id: string
-  label: string
-  provider: 'openai' | 'custom'
-  baseUrl: string
-  apiKey?: string
-  model: string
-  enabled: boolean
-  capabilities?: { sizes?: string[]; qualities?: string[]; formats?: string[] }
-}
-
-interface ImageGenerationConfig {
-  enabled: boolean
-  defaultModelId: string
-  models: ImageModelConfig[]
-  storageMode?: 'local' | 'immich'
-  immich?: {
-    serviceUrl?: string
-    apiKey?: string
-    projectName?: string
-    allowPrivateNetwork?: boolean
-  }
 }
 
 interface WorkRow {
@@ -64,19 +48,7 @@ interface ImageAssetRecord {
 
 function loadImageGenerationConfig(): ImageGenerationConfig {
   const row = db.prepare('SELECT imageGenerationConfig FROM systemConfig WHERE id = ?').get('singleton') as { imageGenerationConfig?: string } | undefined
-  const parsed = row?.imageGenerationConfig ? JSON.parse(row.imageGenerationConfig) : { enabled: false, defaultModelId: '', models: [] }
-  return {
-    enabled: Boolean(parsed.enabled),
-    defaultModelId: parsed.defaultModelId || '',
-    models: Array.isArray(parsed.models) ? parsed.models : [],
-    storageMode: parsed.storageMode === 'immich' ? 'immich' : 'local',
-    immich: {
-      serviceUrl: parsed.immich?.serviceUrl || '',
-      apiKey: parsed.immich?.apiKey || '',
-      projectName: parsed.immich?.projectName || '',
-      allowPrivateNetwork: Boolean(parsed.immich?.allowPrivateNetwork),
-    },
-  }
+  return normalizeImageGenerationConfig(row?.imageGenerationConfig ? JSON.parse(row.imageGenerationConfig) : defaultImageGenerationConfig())
 }
 
 function loadSystemAIConfig(): AIConfigPayload | null {
@@ -97,31 +69,13 @@ function canUseImageGeneration(req: AuthenticatedRequest, config: ImageGeneratio
   return loadFeaturePermissions().some(grant => grant.userId === user.id && grant.features?.includes('imageGeneration'))
 }
 
-function normalizeBaseUrl(baseUrl: string) {
-  const parsed = new URL(baseUrl)
-  if (parsed.protocol !== 'https:') throw new Error('生图 Provider 地址必须使用 HTTPS')
-  if (isUnsafeHostname(parsed.hostname)) throw new Error('生图 Provider 地址不能指向本机、内网或保留地址')
-  return parsed.toString().replace(/\/+$/, '')
-}
-
-function isUnsafeHostname(hostname: string) {
-  const lower = hostname.toLowerCase()
-  if (lower === 'localhost' || lower.endsWith('.localhost')) return true
-  if (lower === 'metadata.google.internal') return true
-  if (/^(127|10|0)\./.test(lower)) return true
-  if (/^169\.254\./.test(lower)) return true
-  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(lower)) return true
-  if (/^192\.168\./.test(lower)) return true
-  if (lower === '::1' || lower === '[::1]') return true
-  return false
-}
-
-function safeGenerationOptions(body: Record<string, unknown>, model: ImageModelConfig) {
+function safeGenerationOptions(body: Record<string, unknown>, model: ImageGenerationModelConfig) {
   const options: Record<string, string | number> = {}
   const capabilities = model.capabilities || {}
   if (typeof body.size === 'string' && capabilities.sizes?.includes(body.size)) options.size = body.size
   if (typeof body.quality === 'string' && capabilities.qualities?.includes(body.quality)) options.quality = body.quality
-  if (typeof body.format === 'string' && capabilities.formats?.includes(body.format)) options.output_format = body.format
+  if (typeof body.format === 'string' && capabilities.formats?.includes(body.format)) options.format = body.format
+  if (typeof body.aspectRatio === 'string' && capabilities.aspectRatios?.includes(body.aspectRatio)) options.aspect_ratio = body.aspectRatio
   if (typeof body.n === 'number' && body.n > 0 && body.n <= 4) options.n = Math.floor(body.n)
   return options
 }
@@ -261,23 +215,36 @@ async function uploadToImmichWithRetry(client: ImmichClient, buffer: Buffer, fil
   throw lastError instanceof Error ? lastError : new Error('Immich 上传失败')
 }
 
-async function bufferFromUrl(url: string) {
-  const parsed = new URL(url)
-  if (parsed.protocol !== 'https:') throw new Error('Provider 图片 URL 必须使用 HTTPS')
-  if (isUnsafeHostname(parsed.hostname)) throw new Error('Provider 图片 URL 不能指向本机、内网或保留地址')
-  const response = await fetch(parsed, { redirect: 'error' })
-  if (!response.ok) throw new Error(await readProviderError(response))
-  const contentType = response.headers.get('content-type') || ''
-  if (!contentType.startsWith('image/')) throw new Error('Provider URL 返回的不是图片')
-  const buffer = Buffer.from(await response.arrayBuffer())
-  return buffer
+function providerFromDiscoveryDraft(body: Record<string, unknown>, existing: ImageGenerationConfig): ImageGenerationProviderConfig | null {
+  const providerId = String(body.providerId || '').trim()
+  const savedProvider = providerId ? existing.providers.find(provider => provider.id === providerId) : undefined
+  const draft = typeof body.provider === 'object' && body.provider ? body.provider as Record<string, unknown> : undefined
+  if (!draft) return savedProvider || null
+  const normalized = normalizeImageGenerationConfig({ providers: [{ ...savedProvider, ...draft, id: providerId || draft.id || savedProvider?.id || 'draft-provider' }], models: [] })
+  const provider = normalized.providers[0]
+  if (provider.apiKey === '__server_configured__' && savedProvider?.apiKey) provider.apiKey = savedProvider.apiKey
+  return provider
 }
 
-async function normalizeProviderImage(item: { b64_json?: string; url?: string }) {
-  if (item.b64_json) return Buffer.from(item.b64_json, 'base64')
-  if (item.url) return bufferFromUrl(item.url)
-  throw new Error('Provider 未返回可用图片')
-}
+router.post('/providers/discover-models', async (req, res) => {
+  const request = req as unknown as AuthenticatedRequest
+  if (!request.currentUser || !['owner', 'admin'].includes(request.currentUser.role)) return res.status(403).json({ error: '需要管理员权限' })
+  try {
+    const config = loadImageGenerationConfig()
+    const provider = providerFromDiscoveryDraft(req.body as Record<string, unknown>, config)
+    if (!provider) return res.status(400).json({ error: '缺少生图厂商配置' })
+    const candidates = (await discoverProviderModels(provider)).map(candidate => ({
+      providerModel: candidate.providerModel,
+      label: candidate.label,
+      capabilities: candidate.capabilities,
+      source: candidate.source,
+      requiresConfirmation: candidate.requiresConfirmation,
+    }))
+    res.json({ candidates })
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : '模型列表获取失败' })
+  }
+})
 
 router.post('/generate', async (req, res) => {
   const request = req as unknown as AuthenticatedRequest
@@ -291,27 +258,17 @@ router.post('/generate', async (req, res) => {
   if (!canUseImageGeneration(request, config)) return res.status(403).json({ error: '未授权使用生图功能' })
   const access = workAccess(request, workId, true)
   if (access.status !== 200) return res.status(access.status).json({ error: access.error })
-  const model = config.models.find(item => item.id === String(body.modelId || config.defaultModelId) && item.enabled)
-  if (!model) return res.status(400).json({ error: '生图模型不可用' })
-  if (!model.apiKey) return res.status(400).json({ error: '生图模型未配置 API Key' })
+  const resolved = resolveEnabledImageModel(config, String(body.modelId || config.defaultModelId))
+  if (!resolved) return res.status(400).json({ error: '生图模型不可用' })
+  const { provider, model } = resolved
+  if (!provider.apiKey) return res.status(400).json({ error: '生图厂商未配置 API Key' })
 
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), IMAGE_UPSTREAM_TIMEOUT_MS)
   try {
     const storageMode = config.storageMode === 'immich' ? 'immich' : 'local'
     const immichClient = storageMode === 'immich' ? immichClientFromConfig(config) : undefined
     if (immichClient) await immichClient.assertReadyForUpload()
-    const response = await fetch(`${normalizeBaseUrl(model.baseUrl)}/images/generations`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${model.apiKey}` },
-      body: JSON.stringify({ model: model.model, prompt, response_format: 'b64_json', ...safeGenerationOptions(body, model) }),
-      signal: controller.signal,
-    })
-    if (!response.ok) return res.status(response.status).json({ error: await readProviderError(response) })
-    const data = await response.json() as { data?: Array<{ b64_json?: string; url?: string }> }
-    const first = data.data?.[0]
-    if (!first) return res.status(502).json({ error: 'Provider 未返回图片' })
-    const buffer = await normalizeProviderImage(first)
+    const generated = await generateProviderImages(provider, model, prompt, safeGenerationOptions(body, model))
+    const buffer = generated[0].buffer
     const mimeType = detectMime(buffer)
     if (storageMode === 'local') {
       const saved = saveImageAsset(workId, buffer)
@@ -357,10 +314,8 @@ router.post('/generate', async (req, res) => {
       })
     }
   } catch (error) {
-    const message = error instanceof Error && error.name === 'AbortError' ? '生图上游请求超时' : error instanceof Error ? error.message : '生图请求失败'
+    const message = error instanceof Error ? error.message : '生图请求失败'
     res.status(502).json({ error: message })
-  } finally {
-    clearTimeout(timeoutId)
   }
 })
 
