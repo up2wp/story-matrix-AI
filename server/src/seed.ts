@@ -16,7 +16,13 @@ export function seed() {
       apiKey: '',
       baseUrl: '',
       model: 'gpt-4o-mini',
-    }), JSON.stringify({ enabled: false }), JSON.stringify({ enabled: false, defaultModelId: '', models: [] }))
+    }), JSON.stringify({ enabled: false }), JSON.stringify({
+      enabled: false,
+      defaultModelId: '',
+      models: [],
+      storageMode: 'local',
+      immich: { serviceUrl: '', apiKey: '', projectName: '', allowPrivateNetwork: false },
+    }))
     console.log('[seed] 已创建默认系统配置')
   }
 

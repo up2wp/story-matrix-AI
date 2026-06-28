@@ -190,10 +190,22 @@ export interface ImageGenerationModelConfig {
   capabilities: ImageGenerationModelCapability
 }
 
+export type ImageStorageMode = 'local' | 'immich'
+export type ImageStorageStatus = 'succeeded' | 'pendingImmichUpload' | 'storageUploadFailed' | 'failed'
+
+export interface ImmichImageStorageConfig {
+  serviceUrl: string
+  apiKey?: string
+  projectName: string
+  allowPrivateNetwork: boolean
+}
+
 export interface ImageGenerationConfig {
   enabled: boolean
   defaultModelId: string
   models: ImageGenerationModelConfig[]
+  storageMode: ImageStorageMode
+  immich: ImmichImageStorageConfig
 }
 
 export type FeatureKey = 'novelImport' | 'importBackfill' | 'imageGeneration'
@@ -311,7 +323,7 @@ export interface WorkAudiobookConfig {
   chapterAudio: Record<string, ChapterAudioState>
 }
 
-export type ImagePromptType = 'characterFace' | 'chapterObject' | 'characterFullBody'
+export type ImagePromptType = 'characterFace' | 'chapterObject' | 'chapterClothing' | 'chapterProp' | 'characterFullBody'
 export type ImagePromptStatus = 'empty' | 'draft' | 'dirty' | 'saving' | 'saved' | 'saveFailed' | 'generatingImage' | 'imageFailed' | 'imageSucceeded'
 
 export interface VisualPromptRecord {
@@ -338,9 +350,16 @@ export interface ImageAssetRecord {
   mimeType: string
   width?: number
   height?: number
-  assetUrl: string
+  storageMode: ImageStorageMode
+  storageStatus: ImageStorageStatus
+  assetUrl?: string
+  localAssetId?: string
+  immichAssetId?: string
+  immichFilename?: string
+  thumbnailUrl: string
+  originalUrl: string
   createdAt: number
-  status: 'succeeded' | 'failed'
+  status: ImageStorageStatus
   error?: string
 }
 

@@ -57,6 +57,22 @@ export const defaultImageGenerationConfig: ImageGenerationConfig = {
   enabled: false,
   defaultModelId: '',
   models: [],
+  storageMode: 'local',
+  immich: {
+    serviceUrl: '',
+    apiKey: '',
+    projectName: '',
+    allowPrivateNetwork: false,
+  },
+}
+
+function normalizeImageGenerationConfig(config: ImageGenerationConfig): ImageGenerationConfig {
+  return {
+    ...defaultImageGenerationConfig,
+    ...config,
+    storageMode: config.storageMode === 'immich' ? 'immich' : 'local',
+    immich: { ...defaultImageGenerationConfig.immich, ...(config.immich || {}) },
+  }
 }
 
 export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
@@ -73,7 +89,7 @@ export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
       const aiConfig = config.aiConfig || { ...defaultAIConfig }
       const voiceboxConfig = { ...defaultVoiceboxConfig, ...(config.voiceboxConfig || {}) }
       const novelImportConfig = normalizeNovelImportConfig({ ...defaultNovelImportConfig, ...(config.novelImportConfig || {}) })
-      const imageGenerationConfig = { ...defaultImageGenerationConfig, ...(config.imageGenerationConfig || {}) }
+      const imageGenerationConfig = normalizeImageGenerationConfig({ ...defaultImageGenerationConfig, ...(config.imageGenerationConfig || {}) })
       set({ registrationEnabled: config.registrationEnabled, aiConfig, voiceboxConfig, novelImportConfig, imageGenerationConfig, isLoading: false })
       // 同步到全局 store
       useStore.getState().setAIConfig(aiConfig)
@@ -103,7 +119,7 @@ export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
   },
 
   saveImageGenerationConfig: async (config: ImageGenerationConfig) => {
-    const imageGenerationConfig = { ...defaultImageGenerationConfig, ...config }
+    const imageGenerationConfig = normalizeImageGenerationConfig(config)
     await db.systemConfig.update('singleton', { imageGenerationConfig })
     set({ imageGenerationConfig })
   },

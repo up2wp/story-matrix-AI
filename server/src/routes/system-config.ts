@@ -70,7 +70,18 @@ function defaultVoiceboxConfig() {
 }
 
 function defaultImageGenerationConfig() {
-  return { enabled: false, defaultModelId: '', models: [] }
+  return {
+    enabled: false,
+    defaultModelId: '',
+    models: [],
+    storageMode: 'local',
+    immich: {
+      serviceUrl: '',
+      apiKey: '',
+      projectName: '',
+      allowPrivateNetwork: false,
+    },
+  }
 }
 
 function normalizeImageGenerationConfig(config: any) {
@@ -99,10 +110,18 @@ function normalizeImageGenerationConfig(config: any) {
 
   const defaultModelId = String(config?.defaultModelId || '').trim()
   const enabledModelIds = new Set(normalizedModels.filter((model: any) => model.enabled).map((model: any) => model.id))
+  const storageMode = config?.storageMode === 'immich' ? 'immich' : 'local'
   return {
     enabled: Boolean(config?.enabled),
     defaultModelId: enabledModelIds.has(defaultModelId) ? defaultModelId : (normalizedModels.find((model: any) => model.enabled)?.id || ''),
     models: normalizedModels,
+    storageMode,
+    immich: {
+      serviceUrl: String(config?.immich?.serviceUrl || '').trim(),
+      apiKey: String(config?.immich?.apiKey || ''),
+      projectName: String(config?.immich?.projectName || '').trim(),
+      allowPrivateNetwork: Boolean(config?.immich?.allowPrivateNetwork),
+    },
   }
 }
 
@@ -120,6 +139,9 @@ function validateImageGenerationConfig(config: ReturnType<typeof defaultImageGen
     if (!model.id || !model.label || !model.baseUrl || !model.model) throw new Error('启用的生图模型必须包含 ID、名称、API 地址和模型名')
     if (!model.apiKey) throw new Error(`生图模型 ${model.label} 缺少 API Key`)
   }
+  if (config.storageMode === 'immich') {
+    if (!config.immich.serviceUrl || !config.immich.apiKey || !config.immich.projectName) throw new Error('启用 Immich 存储前需要填写服务地址、API Key 和项目名称')
+  }
 }
 
 function maskImageGenerationConfigForAdmin(config: any) {
@@ -129,6 +151,10 @@ function maskImageGenerationConfigForAdmin(config: any) {
       ...model,
       apiKey: model.apiKey ? '__server_configured__' : '',
     })),
+    immich: {
+      ...config.immich,
+      apiKey: config.immich?.apiKey ? '__server_configured__' : '',
+    },
   }
 }
 
@@ -136,6 +162,7 @@ function maskImageGenerationConfigForUser(config: any) {
   return {
     enabled: config.enabled,
     defaultModelId: config.defaultModelId,
+    storageMode: config.storageMode,
     models: config.models
       .filter((model: any) => model.enabled)
       .map((model: any) => ({
@@ -160,6 +187,10 @@ function mergeImageGenerationConfig(fieldsConfig: any) {
       apiKey: model.apiKey === '__server_configured__' ? existingModel?.apiKey || '' : model.apiKey,
     }
   })
+  merged.immich = {
+    ...merged.immich,
+    apiKey: merged.immich.apiKey === '__server_configured__' ? existing.immich?.apiKey || '' : merged.immich.apiKey,
+  }
   validateImageGenerationConfig(merged)
   return merged
 }
