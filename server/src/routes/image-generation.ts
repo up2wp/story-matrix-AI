@@ -201,7 +201,12 @@ function readLocalImageAsset(workId: string, assetId: string) {
   if (!fileName) throw new Error('图片不存在')
   const filePath = path.join(workDir, fileName)
   const buffer = fs.readFileSync(filePath)
-  return { buffer, mimeType: detectMime(buffer) }
+  return { buffer, mimeType: detectMime(buffer), filePath }
+}
+
+function deleteLocalStagedImageAsset(workId: string, assetId: string) {
+  const local = readLocalImageAsset(workId, assetId)
+  fs.unlinkSync(local.filePath)
 }
 
 function slugPart(value: string | undefined, fallback: string) {
@@ -382,6 +387,20 @@ router.post('/prompt', async (req, res) => {
   }
 })
 
+router.post('/immich/health', async (req, res) => {
+  const request = req as unknown as AuthenticatedRequest
+  if (!request.currentUser || !['owner', 'admin'].includes(request.currentUser.role)) return res.status(403).json({ error: '需要管理员权限' })
+  try {
+    const config = loadImageGenerationConfig()
+    const client = immichClientFromConfig(config)
+    await client.assertReadyForUpload()
+    const albumId = await client.ensureProjectAlbum()
+    res.json({ ok: true, albumId, projectName: config.immich?.projectName })
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error instanceof Error ? error.message : 'Immich 连接检查失败' })
+  }
+})
+
 router.post('/assets/:workId/:assetId/retry-immich', async (req, res) => {
   const request = req as unknown as AuthenticatedRequest
   const access = workAccess(request, req.params.workId, true)
@@ -397,12 +416,15 @@ router.post('/assets/:workId/:assetId/retry-immich', async (req, res) => {
     const albumId = await client.ensureProjectAlbum()
     const local = readLocalImageAsset(req.params.workId, image.localAssetId)
     const uploaded = await uploadToImmichWithRetry(client, local.buffer, image.immichFilename, local.mimeType, albumId)
+    deleteLocalStagedImageAsset(req.params.workId, image.localAssetId)
     res.json({
       storageMode: 'immich',
       storageStatus: 'succeeded',
       status: 'succeeded',
       immichAssetId: uploaded.assetId,
       immichFilename: uploaded.filename,
+      localAssetId: undefined,
+      assetUrl: undefined,
       thumbnailUrl: `/api/image-generation/assets/${encodeURIComponent(req.params.workId)}/${encodeURIComponent(req.params.assetId)}/thumbnail`,
       originalUrl: `/api/image-generation/assets/${encodeURIComponent(req.params.workId)}/${encodeURIComponent(req.params.assetId)}/original`,
       error: undefined,

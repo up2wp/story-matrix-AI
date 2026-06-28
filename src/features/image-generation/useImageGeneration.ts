@@ -142,7 +142,7 @@ export function useImageGeneration() {
     if (!currentWork) return undefined
     try {
       const result = await imageGenerationClient.retryImmichUpload({ workId: currentWork.id, imageId: image.id })
-      const nextImage: ImageAssetRecord = { ...image, ...result, error: result.error }
+      const nextImage: ImageAssetRecord = { ...image, ...result, localAssetId: result.localAssetId, assetUrl: result.assetUrl, error: result.error }
       await persistVisualAssets({
         ...visualAssets,
         images: { ...visualAssets.images, [image.id]: nextImage },
