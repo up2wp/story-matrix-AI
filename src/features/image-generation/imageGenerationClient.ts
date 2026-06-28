@@ -1,6 +1,9 @@
 export interface ImageGenerateRequest {
   workId: string
   modelId: string
+  promptId: string
+  characterId?: string
+  chapterId?: string
   prompt: string
   size?: string
   quality?: string
@@ -10,10 +13,19 @@ export interface ImageGenerateRequest {
 export interface ImageGenerateResponse {
   id: string
   mimeType: string
-  assetUrl: string
+  storageMode: 'local' | 'immich'
+  storageStatus: 'succeeded' | 'pendingImmichUpload' | 'storageUploadFailed' | 'failed'
+  assetUrl?: string
+  localAssetId?: string
+  immichAssetId?: string
+  immichFilename?: string
+  thumbnailUrl: string
+  originalUrl: string
   modelId: string
   modelName: string
   provider: 'openai' | 'custom'
+  status: 'succeeded' | 'pendingImmichUpload' | 'storageUploadFailed' | 'failed'
+  error?: string
 }
 
 export interface ImagePromptRequest {
@@ -21,6 +33,11 @@ export interface ImagePromptRequest {
   systemPrompt: string
   instruction: string
   context: string
+}
+
+export interface ImageRetryUploadRequest {
+  workId: string
+  imageId: string
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -45,4 +62,11 @@ export const imageGenerationClient = {
     method: 'POST',
     body: JSON.stringify(payload),
   }),
+  retryImmichUpload: (payload: ImageRetryUploadRequest) => request<Partial<ImageGenerateResponse>>(`/assets/${encodeURIComponent(payload.workId)}/${encodeURIComponent(payload.imageId)}/retry-immich`, {
+    method: 'POST',
+  }),
+}
+
+export function getImageAssetDisplayUrl(image: { id: string; assetUrl?: string; thumbnailUrl?: string; originalUrl?: string }, variant: 'thumbnail' | 'original' = 'thumbnail') {
+  return variant === 'original' ? (image.originalUrl || image.assetUrl || '') : (image.thumbnailUrl || image.assetUrl || '')
 }

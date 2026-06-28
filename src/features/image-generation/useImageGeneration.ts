@@ -19,7 +19,9 @@ function promptId(type: ImagePromptType, characterId?: string, chapterId?: strin
 
 function promptTitle(type: ImagePromptType) {
   if (type === 'characterFace') return '角色高清面部特写'
-  if (type === 'chapterObject') return '章节服饰/道具'
+  if (type === 'chapterObject') return '章节服饰/道具（旧）'
+  if (type === 'chapterClothing') return '章节服饰'
+  if (type === 'chapterProp') return '章节道具'
   return '多视角全身图'
 }
 
@@ -99,7 +101,7 @@ export function useImageGeneration() {
     }
     setGeneratingImagePromptId(record.id)
     try {
-      const result = await imageGenerationClient.generate({ workId: currentWork.id, modelId, prompt: record.prompt, ...options })
+      const result = await imageGenerationClient.generate({ workId: currentWork.id, modelId, promptId: record.id, characterId: record.characterId, chapterId: record.chapterId, prompt: record.prompt, ...options })
       const image: ImageAssetRecord = {
         id: result.id,
         promptId: record.id,
@@ -108,13 +110,21 @@ export function useImageGeneration() {
         modelId: result.modelId,
         modelName: result.modelName,
         mimeType: result.mimeType,
+        storageMode: result.storageMode,
+        storageStatus: result.storageStatus,
         assetUrl: result.assetUrl,
+        localAssetId: result.localAssetId,
+        immichAssetId: result.immichAssetId,
+        immichFilename: result.immichFilename,
+        thumbnailUrl: result.thumbnailUrl,
+        originalUrl: result.originalUrl,
         createdAt: now(),
-        status: 'succeeded',
+        status: result.status,
+        error: result.error,
       }
       await persistVisualAssets({
         ...visualAssets,
-        prompts: { ...visualAssets.prompts, [record.id]: { ...record, status: 'imageSucceeded', error: undefined, updatedAt: now() } },
+        prompts: { ...visualAssets.prompts, [record.id]: { ...record, status: result.status === 'succeeded' ? 'imageSucceeded' : 'imageFailed', error: result.error, updatedAt: now() } },
         images: { ...visualAssets.images, [image.id]: image },
         updatedAt: now(),
       })
@@ -128,6 +138,24 @@ export function useImageGeneration() {
     }
   }
 
+  const retryImmichUpload = async (image: ImageAssetRecord) => {
+    if (!currentWork) return undefined
+    try {
+      const result = await imageGenerationClient.retryImmichUpload({ workId: currentWork.id, imageId: image.id })
+      const nextImage: ImageAssetRecord = { ...image, ...result, error: result.error }
+      await persistVisualAssets({
+        ...visualAssets,
+        images: { ...visualAssets.images, [image.id]: nextImage },
+        updatedAt: now(),
+      })
+      message.success('Immich 重传成功')
+      return nextImage
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'Immich 重传失败')
+      return undefined
+    }
+  }
+
   return {
     imageGenerationConfig,
     visualAssets,
@@ -136,5 +164,6 @@ export function useImageGeneration() {
     generatePromptDraft,
     savePrompt,
     generateImage,
+    retryImmichUpload,
   }
 }
