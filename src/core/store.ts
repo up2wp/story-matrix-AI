@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Work, AIConfig, WorkAudiobookConfig, Chapter, VoiceBinding, AudiobookSegment } from './types'
+import type { Work, AIConfig, WorkAudiobookConfig, Chapter, VoiceBinding, AudiobookSegment, WorkVisualAssetsConfig } from './types'
 import { db } from './db'
 
 type LegacyRecord = Record<string, unknown>
@@ -73,6 +73,13 @@ function migrateWork(work: Work): Work {
     chapterBindings: {},
     segmentsByChapter: {},
     chapterAudio: {},
+  }
+  const defaultVisualAssets: WorkVisualAssetsConfig = {
+    prompts: {},
+    images: {},
+    promptIdsByCharacter: {},
+    promptIdsByChapter: {},
+    updatedAt: timestamp,
   }
 
   const migrateBinding = (binding: unknown): VoiceBinding => {
@@ -165,10 +172,14 @@ function migrateWork(work: Work): Work {
       changed = true
     }
   }
+  if (!work.visualAssets) {
+    work = { ...work, visualAssets: defaultVisualAssets }
+    changed = true
+  }
   if (changed) {
     const migrated = { ...work, constraints, outline }
     // 异步持久化迁移结果
-    db.works.update(work.id, { constraints, outline, eventLog: migrated.eventLog, audiobook: migrated.audiobook }).catch(() => {})
+    db.works.update(work.id, { constraints, outline, eventLog: migrated.eventLog, audiobook: migrated.audiobook, visualAssets: migrated.visualAssets }).catch(() => {})
     return migrated
   }
   return work

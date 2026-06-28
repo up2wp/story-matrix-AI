@@ -74,6 +74,23 @@ function mergeAudiobook(current: unknown, patch: Record<string, unknown>): Recor
   }
 }
 
+function defaultVisualAssets(): Record<string, unknown> {
+  return { prompts: {}, images: {}, promptIdsByCharacter: {}, promptIdsByChapter: {}, updatedAt: Date.now() }
+}
+
+function mergeVisualAssets(current: unknown, patch: Record<string, unknown>): Record<string, unknown> {
+  const existing = current && typeof current === 'object' && !Array.isArray(current) ? current as Record<string, unknown> : defaultVisualAssets()
+  const next = {
+    ...existing,
+    prompts: mergeRecord(existing.prompts, patch.prompts),
+    images: mergeRecord(existing.images, patch.images),
+    promptIdsByCharacter: mergeRecord(existing.promptIdsByCharacter, patch.promptIdsByCharacter),
+    promptIdsByChapter: mergeRecord(existing.promptIdsByChapter, patch.promptIdsByChapter),
+    updatedAt: Date.now(),
+  }
+  return next
+}
+
 const SEGMENT_PATCH_FIELDS = new Set([
   'speakerKind',
   'characterId',
@@ -183,6 +200,20 @@ router.patch('/:id/audiobook', (req, res) => {
   res.json({ audiobook: merged.audiobook, updatedAt })
 })
 
+router.patch('/:id/visual-assets', (req, res) => {
+  const currentUser = getAuthenticatedUser(req as unknown as AuthenticatedRequest)
+  const existing = db.prepare('SELECT * FROM works WHERE id = ?').get(req.params.id) as WorkRow | undefined
+  if (!existing) return res.status(404).json({ error: '作品不存在' })
+  if (existing.ownerId !== currentUser.id) return res.status(403).json({ error: '无权修改该作品' })
+  const existingData = JSON.parse(existing.data)
+  const visualAssetPatch = req.body as Record<string, unknown>
+  const updatedAt = Date.now()
+  const nextVisualAssets = mergeVisualAssets(existingData.visualAssets, visualAssetPatch)
+  const merged = { ...existingData, visualAssets: nextVisualAssets }
+  db.prepare('UPDATE works SET updatedAt = ?, data = ? WHERE id = ?').run(updatedAt, JSON.stringify(merged), req.params.id)
+  res.json({ visualAssets: merged.visualAssets, updatedAt })
+})
+
 // PATCH /api/works/:id — 部分更新
 router.patch('/:id', (req, res) => {
   const currentUser = getAuthenticatedUser(req as unknown as AuthenticatedRequest)
@@ -203,7 +234,7 @@ router.patch('/:id', (req, res) => {
   }
 
   // 嵌套字段合并到 data JSON
-  const nestedKeys = ['seed', 'characters', 'settings', 'constraints', 'storylines', 'outline', 'chapters', 'eventLog', 'eventLogConfig', 'audiobook']
+  const nestedKeys = ['seed', 'characters', 'settings', 'constraints', 'storylines', 'outline', 'chapters', 'eventLog', 'eventLogConfig', 'audiobook', 'visualAssets']
   const hasNested = nestedKeys.some((k) => k in fields)
   if (hasNested) {
     const existingData = JSON.parse(existing.data)
