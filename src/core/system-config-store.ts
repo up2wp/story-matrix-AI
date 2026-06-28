@@ -56,6 +56,7 @@ export const defaultNovelImportConfig: NovelImportConfig = {
 export const defaultImageGenerationConfig: ImageGenerationConfig = {
   enabled: false,
   defaultModelId: '',
+  providers: [],
   models: [],
   storageMode: 'local',
   immich: {
@@ -67,9 +68,27 @@ export const defaultImageGenerationConfig: ImageGenerationConfig = {
 }
 
 function normalizeImageGenerationConfig(config: ImageGenerationConfig): ImageGenerationConfig {
+  const providers = Array.isArray(config.providers) ? config.providers : []
   return {
     ...defaultImageGenerationConfig,
     ...config,
+    providers,
+    models: (Array.isArray(config.models) ? config.models : []).map(model => {
+      const provider = providers.find(item => item.id === model.providerId)
+      return {
+        ...model,
+        providerId: model.providerId || provider?.id || '',
+        providerModel: model.providerModel || model.model,
+        baseUrl: provider?.baseUrl || model.baseUrl,
+        apiKey: provider?.apiKey || model.apiKey,
+        capabilities: {
+          sizes: model.capabilities?.sizes || [],
+          qualities: model.capabilities?.qualities || [],
+          formats: model.capabilities?.formats || [],
+          aspectRatios: model.capabilities?.aspectRatios || [],
+        },
+      }
+    }),
     storageMode: config.storageMode === 'immich' ? 'immich' : 'local',
     immich: { ...defaultImageGenerationConfig.immich, ...(config.immich || {}) },
   }

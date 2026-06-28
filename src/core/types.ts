@@ -171,21 +171,38 @@ export interface NovelImportConfig {
   featurePermissions?: FeaturePermissionConfig
 }
 
-export type ImageProviderType = 'openai' | 'custom'
+export type ImageProviderType = 'openai' | 'openai-compatible' | 'custom' | 'minimax'
+
+export type ImageProviderProtocol = 'openai-images' | 'openai-compatible-images' | 'minimax-image-generation'
 
 export interface ImageGenerationModelCapability {
   sizes: string[]
   qualities: string[]
   formats: string[]
+  aspectRatios?: string[]
+}
+
+export interface ImageGenerationProviderConfig {
+  id: string
+  type: ImageProviderType
+  label: string
+  baseUrl: string
+  apiKey?: string
+  protocol: ImageProviderProtocol
+  enabled: boolean
+  status?: 'untested' | 'ready' | 'failed'
+  statusMessage?: string
 }
 
 export interface ImageGenerationModelConfig {
   id: string
   label: string
   provider: ImageProviderType
+  providerId?: string
   baseUrl: string
   apiKey?: string
   model: string
+  providerModel?: string
   enabled: boolean
   capabilities: ImageGenerationModelCapability
 }
@@ -203,6 +220,7 @@ export interface ImmichImageStorageConfig {
 export interface ImageGenerationConfig {
   enabled: boolean
   defaultModelId: string
+  providers: ImageGenerationProviderConfig[]
   models: ImageGenerationModelConfig[]
   storageMode: ImageStorageMode
   immich: ImmichImageStorageConfig
