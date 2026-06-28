@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Table, Button, Modal, Form, Input, InputNumber, Select, Popconfirm, Space, Switch, Typography, Tag, message, Tabs, Card } from 'antd'
-import { PlusOutlined, DeleteOutlined, EditOutlined, UserOutlined, SettingOutlined, RobotOutlined, CustomerServiceOutlined } from '@ant-design/icons'
+import { PlusOutlined, DeleteOutlined, EditOutlined, UserOutlined, SettingOutlined, RobotOutlined, CustomerServiceOutlined, PictureOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { db } from '@/core/db'
 import { useAuthStore } from '@/core/auth-store'
 import { useSystemConfigStore } from '@/core/system-config-store'
 import { ALL_FEATURE_KEYS, FEATURE_LABELS, grantedFeaturesForUser, setUserFeatureGrant } from '@/core/feature-permissions'
-import type { FeatureKey, User, AIConfig, VoiceboxConfig } from '@/core/types'
+import type { FeatureKey, User, AIConfig, VoiceboxConfig, ImageGenerationConfig, ImageGenerationModelConfig } from '@/core/types'
 
 const { Title, Text } = Typography
 
@@ -19,10 +19,164 @@ export default function AdminPage() {
           { key: 'users', label: '用户管理', icon: <UserOutlined />, children: <UserManagement /> },
           { key: 'settings', label: '系统设置', icon: <SettingOutlined />, children: <SystemSettings /> },
           { key: 'model', label: '模型管理', icon: <RobotOutlined />, children: <ModelSettings /> },
+          { key: 'image-generation', label: '生图模型', icon: <PictureOutlined />, children: <ImageGenerationSettings /> },
           { key: 'voicebox', label: 'Voicebox', icon: <CustomerServiceOutlined />, children: <VoiceboxSettings /> },
         ]}
       />
     </div>
+  )
+}
+
+// --- 生图模型设置 ---
+
+function normalizeCapabilityInput(value: unknown) {
+  if (Array.isArray(value)) return value.map(item => String(item).trim()).filter(Boolean)
+  return String(value || '').split(',').map(item => item.trim()).filter(Boolean)
+}
+
+function serializeImageConfigForForm(config: ImageGenerationConfig) {
+  return {
+    ...config,
+    models: config.models.map(model => ({
+      ...model,
+      capabilities: {
+        sizes: model.capabilities.sizes.join(', '),
+        qualities: model.capabilities.qualities.join(', '),
+        formats: model.capabilities.formats.join(', '),
+      },
+    })),
+  }
+}
+
+function normalizeImageConfigFromForm(values: ImageGenerationConfig): ImageGenerationConfig {
+  const models = (values.models || []).map((model: ImageGenerationModelConfig) => ({
+    ...model,
+    id: model.id?.trim(),
+    label: model.label?.trim(),
+    baseUrl: model.baseUrl?.trim(),
+    model: model.model?.trim(),
+    capabilities: {
+      sizes: normalizeCapabilityInput(model.capabilities?.sizes),
+      qualities: normalizeCapabilityInput(model.capabilities?.qualities),
+      formats: normalizeCapabilityInput(model.capabilities?.formats),
+    },
+  })).filter(model => model.id)
+  const enabledModelIds = new Set(models.filter(model => model.enabled).map(model => model.id))
+  return {
+    enabled: Boolean(values.enabled),
+    defaultModelId: enabledModelIds.has(values.defaultModelId) ? values.defaultModelId : (models.find(model => model.enabled)?.id || ''),
+    models,
+  }
+}
+
+function ImageGenerationSettings() {
+  const imageGenerationConfig = useSystemConfigStore(s => s.imageGenerationConfig)
+  const saveImageGenerationConfig = useSystemConfigStore(s => s.saveImageGenerationConfig)
+  const [form] = Form.useForm()
+  const [saving, setSaving] = useState(false)
+  const watchedModels = Form.useWatch('models', form) || []
+  const defaultModelOptions = watchedModels
+    .filter((model: Partial<ImageGenerationModelConfig>) => model?.id && model?.enabled)
+    .map((model: Partial<ImageGenerationModelConfig>) => ({ value: model.id, label: model.label || model.id }))
+
+  useEffect(() => {
+    form.setFieldsValue(serializeImageConfigForForm(imageGenerationConfig))
+  }, [imageGenerationConfig, form])
+
+  const handleSave = async (values: ImageGenerationConfig) => {
+    const normalized = normalizeImageConfigFromForm(values)
+    const duplicateIds = normalized.models.map(model => model.id).filter((id, index, ids) => ids.indexOf(id) !== index)
+    if (duplicateIds.length) {
+      message.error(`模型 ID 重复：${duplicateIds.join(', ')}`)
+      return
+    }
+    if (normalized.enabled && !normalized.models.some(model => model.enabled)) {
+      message.error('开启生图功能前至少需要启用一个模型')
+      return
+    }
+    setSaving(true)
+    try {
+      await saveImageGenerationConfig(normalized)
+      message.success('生图配置已保存')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Form form={form} onFinish={handleSave} layout="vertical" initialValues={serializeImageConfigForForm(imageGenerationConfig)}>
+      <Card title="生图功能" style={{ marginBottom: 16 }}>
+        <Form.Item name="enabled" valuePropName="checked" extra="关闭后，所有用户都不能执行提示词生成或图片生成。已有作品视觉资产仍可按作品权限查看。">
+          <Switch checkedChildren="已开启" unCheckedChildren="已关闭" />
+        </Form.Item>
+        <Form.Item name="defaultModelId" label="默认模型" extra="只可选择已启用模型。普通用户只能看到模型名称、能力和默认模型，不会看到 API 地址或密钥。">
+          <Select allowClear options={defaultModelOptions} placeholder="选择默认生图模型" />
+        </Form.Item>
+      </Card>
+
+      <Card title="可用模型" style={{ marginBottom: 16 }}>
+        <Form.List name="models">
+          {(fields, { add, remove }) => (
+            <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
+              {fields.map(field => (
+                <Card
+                  key={field.key}
+                  size="small"
+                  title={`模型 ${field.name + 1}`}
+                  extra={<Button danger type="link" onClick={() => remove(field.name)}>移除</Button>}
+                >
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <Space wrap style={{ width: '100%' }}>
+                      <Form.Item {...field} name={[field.name, 'enabled']} valuePropName="checked" style={{ marginBottom: 0 }}>
+                        <Switch checkedChildren="启用" unCheckedChildren="停用" />
+                      </Form.Item>
+                      <Form.Item {...field} name={[field.name, 'provider']} label="提供商" rules={[{ required: true }]} style={{ minWidth: 180, flex: 1, marginBottom: 0 }}>
+                        <Select options={[{ value: 'openai', label: 'OpenAI Images' }, { value: 'custom', label: 'OpenAI 兼容' }]} />
+                      </Form.Item>
+                      <Form.Item {...field} name={[field.name, 'id']} label="模型 ID" rules={[{ required: true, message: '请输入唯一模型 ID' }]} style={{ minWidth: 180, flex: 1, marginBottom: 0 }}>
+                        <Input placeholder="openai-gpt-image" />
+                      </Form.Item>
+                      <Form.Item {...field} name={[field.name, 'label']} label="显示名称" rules={[{ required: true, message: '请输入显示名称' }]} style={{ minWidth: 180, flex: 1, marginBottom: 0 }}>
+                        <Input placeholder="GPT Image" />
+                      </Form.Item>
+                    </Space>
+                    <Form.Item {...field} name={[field.name, 'baseUrl']} label="API 地址" rules={[{ required: true, message: '请输入 API 地址' }]} extra="仅服务端使用，普通用户配置响应会隐藏该地址。">
+                      <Input placeholder="https://api.openai.com/v1" />
+                    </Form.Item>
+                    <Space wrap style={{ width: '100%' }}>
+                      <Form.Item {...field} name={[field.name, 'model']} label="上游模型名" rules={[{ required: true, message: '请输入上游模型名' }]} style={{ minWidth: 220, flex: 1, marginBottom: 0 }}>
+                        <Input placeholder="gpt-image-2" />
+                      </Form.Item>
+                      <Form.Item {...field} name={[field.name, 'apiKey']} label="API Key" rules={[{ required: true, message: '请输入 API Key' }]} style={{ minWidth: 260, flex: 1, marginBottom: 0 }} extra="保存后以掩码回显，浏览器不会在用户端拿到真实密钥。">
+                        <Input.Password placeholder="sk-..." />
+                      </Form.Item>
+                    </Space>
+                    <Space wrap style={{ width: '100%' }}>
+                      <Form.Item {...field} name={[field.name, 'capabilities', 'sizes']} label="尺寸" style={{ minWidth: 220, flex: 1, marginBottom: 0 }}>
+                        <Input placeholder="1024x1024, 1536x1024" />
+                      </Form.Item>
+                      <Form.Item {...field} name={[field.name, 'capabilities', 'qualities']} label="质量" style={{ minWidth: 180, flex: 1, marginBottom: 0 }}>
+                        <Input placeholder="standard, high" />
+                      </Form.Item>
+                      <Form.Item {...field} name={[field.name, 'capabilities', 'formats']} label="格式" style={{ minWidth: 180, flex: 1, marginBottom: 0 }}>
+                        <Input placeholder="png, jpeg, webp" />
+                      </Form.Item>
+                    </Space>
+                  </Space>
+                </Card>
+              ))}
+              <Button type="dashed" icon={<PlusOutlined />} onClick={() => add({ provider: 'openai', enabled: true, capabilities: { sizes: '1024x1024', qualities: 'standard', formats: 'png' } })}>
+                添加生图模型
+              </Button>
+            </Space>
+          )}
+        </Form.List>
+      </Card>
+
+      <Space>
+        <Button type="primary" htmlType="submit" loading={saving}>保存生图配置</Button>
+      </Space>
+    </Form>
   )
 }
 

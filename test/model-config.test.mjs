@@ -9,6 +9,12 @@ const systemConfigRoute = await readFile(new URL('../server/src/routes/system-co
 const systemConfigStore = await readFile(new URL('../src/core/system-config-store.ts', import.meta.url), 'utf8')
 const featurePermissionsSource = await readFile(new URL('../src/core/feature-permissions.ts', import.meta.url), 'utf8')
 
+function functionBody(source, name) {
+  const start = source.indexOf(`function ${name}`)
+  const next = source.indexOf('\nfunction ', start + 1)
+  return source.slice(start, next === -1 ? source.length : next)
+}
+
 assert.match(
   aiClient,
   /fetch\(`\/api\/ai\/chat-completions`/,
@@ -64,6 +70,12 @@ assert.match(
 )
 
 assert.match(
+  dbSource,
+  /ALTER TABLE systemConfig ADD COLUMN imageGenerationConfig TEXT/,
+  'database migration should add image generation config with an additive column',
+)
+
+assert.match(
   systemConfigRoute,
   /novelImportConfig/,
   'system config route should read and write the novel import feature switch',
@@ -76,15 +88,51 @@ assert.match(
 )
 
 assert.match(
+  systemConfigStore,
+  /defaultImageGenerationConfig[\s\S]*enabled: false[\s\S]*defaultModelId: ''[\s\S]*models: \[\]/,
+  'browser system config should default image generation to disabled with no exposed models',
+)
+
+assert.match(
   adminPage,
   /用户级功能权限[\s\S]*ALL_FEATURE_KEYS[\s\S]*FEATURE_LABELS/,
   'admin system settings should expose user-level feature permission controls from the central feature registry',
 )
 
 assert.match(
+  adminPage,
+  /生图模型[\s\S]*ImageGenerationSettings/,
+  'admin system settings should expose image generation model configuration separately from text AI models',
+)
+
+assert.match(
   systemConfigRoute,
   /normalizeNovelImportConfig[\s\S]*featurePermissions[\s\S]*userGrants/,
   'system config route should normalize extensible user feature grants before storing them',
+)
+
+assert.match(
+  systemConfigRoute,
+  /maskImageGenerationConfigForUser[\s\S]*\.filter\(\(model: any\) => model\.enabled\)[\s\S]*capabilities/,
+  'ordinary users should receive only enabled image models and capability metadata',
+)
+
+assert.doesNotMatch(
+  functionBody(systemConfigRoute, 'maskImageGenerationConfigForUser'),
+  /maskImageGenerationConfigForUser[\s\S]*apiKey/,
+  'ordinary image generation config responses should never include provider API keys',
+)
+
+assert.doesNotMatch(
+  functionBody(systemConfigRoute, 'maskImageGenerationConfigForUser'),
+  /baseUrl/,
+  'ordinary image generation config responses should never include provider base URLs',
+)
+
+assert.match(
+  systemConfigRoute,
+  /mergeImageGenerationConfig[\s\S]*__server_configured__[\s\S]*existingModel\?\.apiKey/,
+  'image generation config should preserve existing provider keys when admins save masked secrets',
 )
 
 assert.match(
