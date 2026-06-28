@@ -23,9 +23,22 @@ export interface ImageGenerateResponse {
   originalUrl: string
   modelId: string
   modelName: string
-  provider: 'openai' | 'custom'
+  provider: 'openai' | 'openai-compatible' | 'custom' | 'minimax'
   status: 'succeeded' | 'pendingImmichUpload' | 'storageUploadFailed' | 'failed'
   error?: string
+}
+
+export interface ImageProviderDiscoveryRequest {
+  providerId?: string
+  provider?: Record<string, unknown>
+}
+
+export interface ImageProviderModelCandidate {
+  providerModel: string
+  label: string
+  capabilities: { sizes: string[]; qualities: string[]; formats: string[]; aspectRatios?: string[] }
+  source: 'provider' | 'preset' | 'manual'
+  requiresConfirmation: boolean
 }
 
 export interface ImagePromptRequest {
@@ -64,6 +77,10 @@ export const imageGenerationClient = {
   }),
   retryImmichUpload: (payload: ImageRetryUploadRequest) => request<Partial<ImageGenerateResponse>>(`/assets/${encodeURIComponent(payload.workId)}/${encodeURIComponent(payload.imageId)}/retry-immich`, {
     method: 'POST',
+  }),
+  discoverProviderModels: (payload: ImageProviderDiscoveryRequest) => request<{ candidates: ImageProviderModelCandidate[] }>('/providers/discover-models', {
+    method: 'POST',
+    body: JSON.stringify(payload),
   }),
 }
 

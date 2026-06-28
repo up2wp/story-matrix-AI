@@ -6,7 +6,9 @@ import { db } from '@/core/db'
 import { useAuthStore } from '@/core/auth-store'
 import { useSystemConfigStore } from '@/core/system-config-store'
 import { ALL_FEATURE_KEYS, FEATURE_LABELS, grantedFeaturesForUser, setUserFeatureGrant } from '@/core/feature-permissions'
-import type { FeatureKey, User, AIConfig, VoiceboxConfig, ImageGenerationConfig, ImageGenerationModelConfig } from '@/core/types'
+import type { FeatureKey, User, AIConfig, VoiceboxConfig, ImageGenerationConfig, ImageGenerationModelConfig, ImageGenerationProviderConfig, ImageProviderProtocol, ImageProviderType } from '@/core/types'
+import { imageGenerationClient } from '@/features/image-generation/imageGenerationClient'
+import type { ImageProviderModelCandidate } from '@/features/image-generation/imageGenerationClient'
 
 const { Title, Text } = Typography
 
@@ -34,38 +36,201 @@ function normalizeCapabilityInput(value: unknown) {
   return String(value || '').split(',').map(item => item.trim()).filter(Boolean)
 }
 
+const IMAGE_PROVIDER_PRESETS: Record<string, { label: string; type: ImageProviderType; protocol: ImageProviderProtocol; baseUrl: string; models: string[] }> = {
+  openai: { label: 'OpenAI Images', type: 'openai', protocol: 'openai-images', baseUrl: 'https://api.openai.com/v1', models: [] },
+  compatible: { label: 'OpenAI 兼容', type: 'openai-compatible', protocol: 'openai-compatible-images', baseUrl: '', models: [] },
+  custom: { label: '自定义端点', type: 'custom', protocol: 'openai-compatible-images', baseUrl: '', models: [] },
+  minimax: { label: 'MiniMax 中国', type: 'minimax', protocol: 'minimax-image-generation', baseUrl: 'https://api.minimaxi.com', models: ['image-01', 'image-01-live'] },
+}
+
+function slugImageConfigId(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'provider'
+}
+
+function uniqueImageConfigId(base: string, seen: Set<string>) {
+  const slug = slugImageConfigId(base)
+  let next = slug
+  let count = 2
+  while (seen.has(next)) {
+    next = `${slug}-${count}`
+    count += 1
+  }
+  seen.add(next)
+  return next
+}
+
+function providerTypeFromValue(value: unknown): ImageProviderType {
+  if (value === 'minimax') return 'minimax'
+  if (value === 'openai-compatible') return 'openai-compatible'
+  if (value === 'custom') return 'custom'
+  return 'openai'
+}
+
+function protocolForProvider(type: ImageProviderType): ImageProviderProtocol {
+  if (type === 'minimax') return 'minimax-image-generation'
+  if (type === 'openai-compatible' || type === 'custom') return 'openai-compatible-images'
+  return 'openai-images'
+}
+
+function providerPresetForType(type: ImageProviderType) {
+  if (type === 'minimax') return IMAGE_PROVIDER_PRESETS.minimax
+  if (type === 'openai-compatible') return IMAGE_PROVIDER_PRESETS.compatible
+  if (type === 'custom') return IMAGE_PROVIDER_PRESETS.custom
+  return IMAGE_PROVIDER_PRESETS.openai
+}
+
+function providerFingerprint(provider: Pick<ImageGenerationProviderConfig, 'type' | 'baseUrl'> & { apiKey?: string }) {
+  return [provider.type, provider.baseUrl.replace(/\/+$/, ''), provider.apiKey || ''].join('|')
+}
+
+function defaultCapabilitiesForProvider(type: ImageProviderType) {
+  if (type === 'minimax') {
+    return { sizes: '1024x1024, 1792x1024, 1024x1792', qualities: 'standard', formats: 'png', aspectRatios: '1:1, 16:9, 4:3, 3:2, 2:3, 3:4, 9:16, 21:9' }
+  }
+  return { sizes: '1024x1024', qualities: 'standard', formats: 'png' }
+}
+
+function candidateProviderModel(candidate: ImageProviderModelCandidate & { model?: string }) {
+  return String(candidate.providerModel || candidate.model || '').trim()
+}
+
+function createModelFromCandidate(provider: ImageGenerationProviderConfig, candidate: ImageProviderModelCandidate & { model?: string }, seen: Set<string>): ImageGenerationModelConfig {
+  const providerModel = candidateProviderModel(candidate)
+  return {
+    id: uniqueImageConfigId(`${provider.id}-${providerModel || 'model'}`, seen),
+    label: candidate.label || providerModel,
+    provider: provider.type,
+    providerId: provider.id,
+    baseUrl: provider.baseUrl,
+    apiKey: provider.apiKey,
+    model: providerModel,
+    providerModel,
+    enabled: true,
+    capabilities: {
+      sizes: candidate.capabilities?.sizes || [],
+      qualities: candidate.capabilities?.qualities || [],
+      formats: candidate.capabilities?.formats || [],
+      aspectRatios: candidate.capabilities?.aspectRatios || [],
+    },
+  }
+}
+
+function createProviderFromPreset(presetKey: keyof typeof IMAGE_PROVIDER_PRESETS, seen: Set<string>): ImageGenerationProviderConfig {
+  const preset = IMAGE_PROVIDER_PRESETS[presetKey]
+  return {
+    id: uniqueImageConfigId(presetKey === 'compatible' ? 'openai-compatible' : presetKey, seen),
+    type: preset.type,
+    label: preset.label,
+    baseUrl: preset.baseUrl,
+    apiKey: '',
+    protocol: preset.protocol,
+    enabled: true,
+    status: 'untested',
+    statusMessage: '',
+  }
+}
+
+function normalizeProviderDraft(raw: Partial<ImageGenerationProviderConfig> | undefined, seen: Set<string>): ImageGenerationProviderConfig {
+  const type = providerTypeFromValue(raw?.type)
+  const preset = providerPresetForType(type)
+  const protocol = raw?.protocol === 'minimax-image-generation' || raw?.protocol === 'openai-compatible-images' || raw?.protocol === 'openai-images' ? raw.protocol : protocolForProvider(type)
+  return {
+    id: uniqueImageConfigId(String(raw?.id || raw?.label || preset.label), seen),
+    type,
+    label: String(raw?.label || preset.label).trim(),
+    baseUrl: String(raw?.baseUrl || preset.baseUrl).trim(),
+    apiKey: raw?.apiKey || '',
+    protocol,
+    enabled: raw?.enabled !== false,
+    status: raw?.status === 'ready' || raw?.status === 'failed' ? raw.status : 'untested',
+    statusMessage: String(raw?.statusMessage || ''),
+  }
+}
+
+function buildProvidersForForm(config: ImageGenerationConfig) {
+  const seen = new Set<string>()
+  const providers = (config.providers || []).map(provider => normalizeProviderDraft(provider, seen))
+  const providerByKey = new Map(providers.map(provider => [providerFingerprint(provider), provider]))
+  for (const model of config.models || []) {
+    if (model.providerId && providers.some(provider => provider.id === model.providerId)) continue
+    const type = providerTypeFromValue(model.provider)
+    const providerDraft = normalizeProviderDraft({
+      id: model.providerId || `${type}-${providers.length + 1}`,
+      type,
+      label: type === 'minimax' ? 'MiniMax 中国' : type === 'openai' ? 'OpenAI Images' : 'OpenAI 兼容',
+      baseUrl: model.baseUrl,
+      apiKey: model.apiKey,
+      protocol: protocolForProvider(type),
+      enabled: true,
+    }, seen)
+    const key = providerFingerprint(providerDraft)
+    const existingProvider = providerByKey.get(key)
+    if (existingProvider) continue
+    providers.push(providerDraft)
+    providerByKey.set(key, providerDraft)
+  }
+  return providers
+}
+
+function serializeCapabilitiesForForm(capabilities: ImageGenerationModelConfig['capabilities']) {
+  return {
+    sizes: (capabilities?.sizes || []).join(', '),
+    qualities: (capabilities?.qualities || []).join(', '),
+    formats: (capabilities?.formats || []).join(', '),
+    aspectRatios: (capabilities?.aspectRatios || []).join(', '),
+  }
+}
+
 function serializeImageConfigForForm(config: ImageGenerationConfig) {
+  const providers = buildProvidersForForm(config)
+  const providerByKey = new Map(providers.map(provider => [providerFingerprint(provider), provider]))
   return {
     ...config,
     immich: { ...config.immich },
+    providers,
     models: config.models.map(model => ({
       ...model,
+      providerId: model.providerId || providerByKey.get(providerFingerprint({ type: providerTypeFromValue(model.provider), baseUrl: model.baseUrl || '', apiKey: model.apiKey }))?.id || '',
+      providerModel: model.providerModel || model.model,
       capabilities: {
-        sizes: model.capabilities.sizes.join(', '),
-        qualities: model.capabilities.qualities.join(', '),
-        formats: model.capabilities.formats.join(', '),
+        ...serializeCapabilitiesForForm(model.capabilities),
       },
     })),
   }
 }
 
 function normalizeImageConfigFromForm(values: ImageGenerationConfig): ImageGenerationConfig {
-  const models = (values.models || []).map((model: ImageGenerationModelConfig) => ({
-    ...model,
-    id: model.id?.trim(),
-    label: model.label?.trim(),
-    baseUrl: model.baseUrl?.trim(),
-    model: model.model?.trim(),
-    capabilities: {
-      sizes: normalizeCapabilityInput(model.capabilities?.sizes),
-      qualities: normalizeCapabilityInput(model.capabilities?.qualities),
-      formats: normalizeCapabilityInput(model.capabilities?.formats),
-    },
-  })).filter(model => model.id)
+  const providerIds = new Set<string>()
+  const providers = (values.providers || []).map(provider => normalizeProviderDraft(provider, providerIds)).filter(provider => provider.id)
+  const providerById = new Map(providers.map(provider => [provider.id, provider]))
+  const models: ImageGenerationModelConfig[] = []
+  for (const model of values.models || []) {
+    const provider = providerById.get(String(model.providerId || '').trim())
+    const providerModel = String(model.providerModel || model.model || '').trim()
+    if (!provider || !model.id || !providerModel) continue
+    models.push({
+      ...model,
+      id: model.id.trim(),
+      label: model.label?.trim(),
+      provider: provider.type,
+      providerId: provider.id,
+      baseUrl: provider.baseUrl,
+      apiKey: provider.apiKey || '',
+      model: providerModel,
+      providerModel,
+      capabilities: {
+        sizes: normalizeCapabilityInput(model.capabilities?.sizes),
+        qualities: normalizeCapabilityInput(model.capabilities?.qualities),
+        formats: normalizeCapabilityInput(model.capabilities?.formats),
+        aspectRatios: normalizeCapabilityInput(model.capabilities?.aspectRatios),
+      },
+    })
+  }
   const enabledModelIds = new Set(models.filter(model => model.enabled).map(model => model.id))
   return {
     enabled: Boolean(values.enabled),
     defaultModelId: enabledModelIds.has(values.defaultModelId) ? values.defaultModelId : (models.find(model => model.enabled)?.id || ''),
+    providers,
     storageMode: values.storageMode === 'immich' ? 'immich' : 'local',
     immich: {
       serviceUrl: values.immich?.serviceUrl?.trim() || '',
@@ -83,11 +248,16 @@ function ImageGenerationSettings() {
   const [form] = Form.useForm()
   const [saving, setSaving] = useState(false)
   const [testingImmich, setTestingImmich] = useState(false)
+  const [discoveringProviderId, setDiscoveringProviderId] = useState<string | null>(null)
   const storageMode = Form.useWatch('storageMode', form) || 'local'
   const watchedModels = Form.useWatch('models', form) || []
+  const watchedProviders = Form.useWatch('providers', form) || []
   const defaultModelOptions = watchedModels
     .filter((model: Partial<ImageGenerationModelConfig>) => model?.id && model?.enabled)
     .map((model: Partial<ImageGenerationModelConfig>) => ({ value: model.id, label: model.label || model.id }))
+  const providerOptions = watchedProviders
+    .filter((provider: Partial<ImageGenerationProviderConfig>) => provider?.id)
+    .map((provider: Partial<ImageGenerationProviderConfig>) => ({ value: provider.id, label: provider.label || provider.id }))
 
   useEffect(() => {
     form.setFieldsValue(serializeImageConfigForForm(imageGenerationConfig))
@@ -95,9 +265,14 @@ function ImageGenerationSettings() {
 
   const handleSave = async (values: ImageGenerationConfig) => {
     const normalized = normalizeImageConfigFromForm(values)
+    const duplicateProviders = normalized.providers.map(provider => provider.id).filter((id, index, ids) => ids.indexOf(id) !== index)
+    if (duplicateProviders.length) {
+      message.error(`厂商内部标识重复：${duplicateProviders.join(', ')}`)
+      return
+    }
     const duplicateIds = normalized.models.map(model => model.id).filter((id, index, ids) => ids.indexOf(id) !== index)
     if (duplicateIds.length) {
-      message.error(`模型 ID 重复：${duplicateIds.join(', ')}`)
+      message.error(`内部标识重复：${duplicateIds.join(', ')}`)
       return
     }
     if (normalized.enabled && !normalized.models.some(model => model.enabled)) {
@@ -114,6 +289,58 @@ function ImageGenerationSettings() {
       message.success('生图配置已保存')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleProviderPresetChange = (fieldName: number, presetKey: keyof typeof IMAGE_PROVIDER_PRESETS) => {
+    const preset = IMAGE_PROVIDER_PRESETS[presetKey]
+    const providers = form.getFieldValue('providers') || []
+    form.setFieldValue(['providers', fieldName], {
+      ...providers[fieldName],
+      type: preset.type,
+      label: preset.label,
+      baseUrl: preset.baseUrl,
+      protocol: preset.protocol,
+      enabled: providers[fieldName]?.enabled !== false,
+      status: 'untested',
+      statusMessage: '',
+    })
+  }
+
+  const handleDiscoverProviderModels = async (fieldName: number) => {
+    const provider = form.getFieldValue(['providers', fieldName]) as Partial<ImageGenerationProviderConfig> | undefined
+    if (!provider?.id && !provider?.label) {
+      message.warning('请先添加并填写生图厂商')
+      return
+    }
+    const normalizedProvider = normalizeProviderDraft(provider, new Set<string>())
+    setDiscoveringProviderId(normalizedProvider.id)
+    try {
+      const data = await imageGenerationClient.discoverProviderModels({ providerId: normalizedProvider.id, provider: { ...normalizedProvider } })
+      const candidates = (data.candidates || []).map(candidate => ({ ...candidate, providerModel: candidateProviderModel(candidate) })).filter(candidate => candidate.providerModel)
+      if (!candidates.length) {
+        message.info('未发现可直接添加的厂商模型')
+        return
+      }
+      const currentModels = (form.getFieldValue('models') || []) as ImageGenerationModelConfig[]
+      const seen = new Set(currentModels.map(model => model.id).filter(Boolean))
+      const existing = new Set(currentModels.map(model => [model.providerId, model.providerModel || model.model].join('|')))
+      const additions = candidates
+        .filter(candidate => !existing.has([normalizedProvider.id, candidate.providerModel].join('|')))
+        .map(candidate => ({
+          ...createModelFromCandidate(normalizedProvider, candidate, seen),
+          capabilities: serializeCapabilitiesForForm(candidate.capabilities),
+        }))
+      if (!additions.length) {
+        message.info('发现的厂商模型已在启用列表中')
+        return
+      }
+      form.setFieldValue('models', [...currentModels, ...additions])
+      message.success(`已添加 ${additions.length} 个厂商模型`)
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '模型发现失败')
+    } finally {
+      setDiscoveringProviderId(null)
     }
   }
 
@@ -169,59 +396,137 @@ function ImageGenerationSettings() {
         </Card>
       )}
 
-      <Card title="可用模型" style={{ marginBottom: 16 }}>
-        <Form.List name="models">
+      <Card title="厂商连接" style={{ marginBottom: 16 }}>
+        <Form.List name="providers">
           {(fields, { add, remove }) => (
-            <Space orientation="vertical" size="middle" style={{ width: '100%' }}>
-              {fields.map(field => (
-                <Card
-                  key={field.key}
-                  size="small"
-                  title={`模型 ${field.name + 1}`}
-                  extra={<Button danger type="link" onClick={() => remove(field.name)}>移除</Button>}
-                >
-                  <Space direction="vertical" style={{ width: '100%' }}>
-                    <Space wrap style={{ width: '100%' }}>
-                      <Form.Item {...field} name={[field.name, 'enabled']} valuePropName="checked" style={{ marginBottom: 0 }}>
-                        <Switch checkedChildren="启用" unCheckedChildren="停用" />
+            <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+              {fields.map(field => {
+                const provider = watchedProviders[field.name] as Partial<ImageGenerationProviderConfig> | undefined
+                const presetKey = provider?.type === 'minimax' ? 'minimax' : provider?.type === 'openai-compatible' ? 'compatible' : provider?.type === 'custom' ? 'custom' : 'openai'
+                return (
+                  <Card
+                    key={field.key}
+                    size="small"
+                    title={provider?.label || `厂商 ${field.name + 1}`}
+                    extra={<Button danger type="link" onClick={() => remove(field.name)}>移除</Button>}
+                  >
+                    <Space direction="vertical" style={{ width: '100%' }}>
+                      <Space wrap style={{ width: '100%' }}>
+                        <Form.Item {...field} name={[field.name, 'enabled']} valuePropName="checked" style={{ marginBottom: 0 }}>
+                          <Switch checkedChildren="启用" unCheckedChildren="停用" />
+                        </Form.Item>
+                        <Form.Item label="厂商预设" style={{ minWidth: 200, flex: 1, marginBottom: 0 }}>
+                          <Select
+                            value={presetKey}
+                            onChange={(value) => handleProviderPresetChange(field.name, value)}
+                            options={Object.entries(IMAGE_PROVIDER_PRESETS).map(([value, preset]) => ({ value, label: preset.label }))}
+                          />
+                        </Form.Item>
+                        <Form.Item {...field} name={[field.name, 'label']} label="连接名称" rules={[{ required: true, message: '请输入连接名称' }]} style={{ minWidth: 220, flex: 1, marginBottom: 0 }}>
+                          <Input placeholder="OpenAI Images" />
+                        </Form.Item>
+                      </Space>
+                      <Form.Item {...field} name={[field.name, 'baseUrl']} label="API 地址" rules={[{ required: true, message: '请输入 API 地址' }]} extra="只保存在服务端；普通用户响应不会包含厂商地址或密钥。">
+                        <Input placeholder={provider?.type === 'minimax' ? 'https://api.minimaxi.com' : 'https://api.openai.com/v1'} />
                       </Form.Item>
-                      <Form.Item {...field} name={[field.name, 'provider']} label="提供商" rules={[{ required: true }]} style={{ minWidth: 180, flex: 1, marginBottom: 0 }}>
-                        <Select options={[{ value: 'openai', label: 'OpenAI Images' }, { value: 'custom', label: 'OpenAI 兼容' }]} />
-                      </Form.Item>
-                      <Form.Item {...field} name={[field.name, 'id']} label="模型 ID" rules={[{ required: true, message: '请输入唯一模型 ID' }]} style={{ minWidth: 180, flex: 1, marginBottom: 0 }}>
-                        <Input placeholder="openai-gpt-image" />
-                      </Form.Item>
-                      <Form.Item {...field} name={[field.name, 'label']} label="显示名称" rules={[{ required: true, message: '请输入显示名称' }]} style={{ minWidth: 180, flex: 1, marginBottom: 0 }}>
-                        <Input placeholder="GPT Image" />
-                      </Form.Item>
-                    </Space>
-                    <Form.Item {...field} name={[field.name, 'baseUrl']} label="API 地址" rules={[{ required: true, message: '请输入 API 地址' }]} extra="仅服务端使用，普通用户配置响应会隐藏该地址。">
-                      <Input placeholder="https://api.openai.com/v1" />
-                    </Form.Item>
-                    <Space wrap style={{ width: '100%' }}>
-                      <Form.Item {...field} name={[field.name, 'model']} label="上游模型名" rules={[{ required: true, message: '请输入上游模型名' }]} style={{ minWidth: 220, flex: 1, marginBottom: 0 }}>
-                        <Input placeholder="gpt-image-2" />
-                      </Form.Item>
-                      <Form.Item {...field} name={[field.name, 'apiKey']} label="API Key" rules={[{ required: true, message: '请输入 API Key' }]} style={{ minWidth: 260, flex: 1, marginBottom: 0 }} extra="保存后以掩码回显，浏览器不会在用户端拿到真实密钥。">
+                      <Form.Item {...field} name={[field.name, 'apiKey']} label="API Key" rules={[{ required: true, message: '请输入 API Key' }]} extra="保存后以掩码回显，浏览器不会在用户端拿到真实密钥。">
                         <Input.Password placeholder="sk-..." />
                       </Form.Item>
+                      <Form.Item {...field} name={[field.name, 'id']} hidden><Input /></Form.Item>
+                      <Form.Item {...field} name={[field.name, 'type']} hidden><Input /></Form.Item>
+                      <Form.Item {...field} name={[field.name, 'protocol']} hidden><Input /></Form.Item>
+                      <Space wrap>
+                        <Button htmlType="button" onClick={() => handleDiscoverProviderModels(field.name)} loading={discoveringProviderId === provider?.id}>发现厂商模型</Button>
+                        <Text type="secondary">发现结果会添加到下方启用模型，可继续改显示名称和能力。</Text>
+                      </Space>
                     </Space>
-                    <Space wrap style={{ width: '100%' }}>
-                      <Form.Item {...field} name={[field.name, 'capabilities', 'sizes']} label="尺寸" style={{ minWidth: 220, flex: 1, marginBottom: 0 }}>
-                        <Input placeholder="1024x1024, 1536x1024" />
-                      </Form.Item>
-                      <Form.Item {...field} name={[field.name, 'capabilities', 'qualities']} label="质量" style={{ minWidth: 180, flex: 1, marginBottom: 0 }}>
-                        <Input placeholder="standard, high" />
-                      </Form.Item>
-                      <Form.Item {...field} name={[field.name, 'capabilities', 'formats']} label="格式" style={{ minWidth: 180, flex: 1, marginBottom: 0 }}>
-                        <Input placeholder="png, jpeg, webp" />
-                      </Form.Item>
+                  </Card>
+                )
+              })}
+              <Space wrap>
+                {Object.entries(IMAGE_PROVIDER_PRESETS).map(([presetKey, preset]) => (
+                  <Button key={presetKey} type="dashed" icon={<PlusOutlined />} onClick={() => add(createProviderFromPreset(presetKey, new Set((form.getFieldValue('providers') || []).map((provider: ImageGenerationProviderConfig) => provider.id).filter(Boolean))))}>
+                    添加 {preset.label}
+                  </Button>
+                ))}
+              </Space>
+            </Space>
+          )}
+        </Form.List>
+      </Card>
+
+      <Card title="启用模型" style={{ marginBottom: 16 }}>
+        <Form.List name="models">
+          {(fields, { add, remove }) => (
+            <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+              {fields.map(field => {
+                const model = watchedModels[field.name] as Partial<ImageGenerationModelConfig> | undefined
+                const provider = watchedProviders.find((item: Partial<ImageGenerationProviderConfig>) => item?.id && item.id === model?.providerId) as Partial<ImageGenerationProviderConfig> | undefined
+                return (
+                  <Card
+                    key={field.key}
+                    size="small"
+                    title={model?.label || `模型 ${field.name + 1}`}
+                    extra={<Button danger type="link" onClick={() => remove(field.name)}>移除</Button>}
+                  >
+                    <Space direction="vertical" style={{ width: '100%' }}>
+                      <Space wrap style={{ width: '100%' }}>
+                        <Form.Item {...field} name={[field.name, 'enabled']} valuePropName="checked" style={{ marginBottom: 0 }}>
+                          <Switch checkedChildren="启用" unCheckedChildren="停用" />
+                        </Form.Item>
+                        <Form.Item {...field} name={[field.name, 'providerId']} label="生图厂商" rules={[{ required: true, message: '请选择生图厂商' }]} style={{ minWidth: 200, flex: 1, marginBottom: 0 }}>
+                          <Select options={providerOptions} placeholder="选择已配置厂商" />
+                        </Form.Item>
+                        <Form.Item {...field} name={[field.name, 'providerModel']} label="厂商模型" rules={[{ required: true, message: '请输入厂商模型' }]} style={{ minWidth: 220, flex: 1, marginBottom: 0 }}>
+                          <Input placeholder={provider?.type === 'minimax' ? 'image-01' : 'gpt-image-1'} />
+                        </Form.Item>
+                        <Form.Item {...field} name={[field.name, 'label']} label="显示给作者的名称" rules={[{ required: true, message: '请输入显示给作者的名称' }]} style={{ minWidth: 220, flex: 1, marginBottom: 0 }}>
+                          <Input placeholder="GPT Image" />
+                        </Form.Item>
+                      </Space>
+                      <Space wrap style={{ width: '100%' }}>
+                        <Form.Item {...field} name={[field.name, 'capabilities', 'sizes']} label="尺寸" style={{ minWidth: 220, flex: 1, marginBottom: 0 }}>
+                          <Input placeholder="1024x1024, 1536x1024" />
+                        </Form.Item>
+                        <Form.Item {...field} name={[field.name, 'capabilities', 'qualities']} label="质量" style={{ minWidth: 180, flex: 1, marginBottom: 0 }}>
+                          <Input placeholder="standard, high" />
+                        </Form.Item>
+                        <Form.Item {...field} name={[field.name, 'capabilities', 'formats']} label="格式" style={{ minWidth: 180, flex: 1, marginBottom: 0 }}>
+                          <Input placeholder="png, jpeg, webp" />
+                        </Form.Item>
+                      </Space>
+                      <Space wrap style={{ width: '100%' }}>
+                        <Form.Item {...field} name={[field.name, 'capabilities', 'aspectRatios']} label="比例" style={{ minWidth: 220, flex: 1, marginBottom: 0 }}>
+                          <Input placeholder="1:1, 16:9, 9:16" />
+                        </Form.Item>
+                        <Form.Item {...field} name={[field.name, 'id']} hidden><Input /></Form.Item>
+                      </Space>
                     </Space>
-                  </Space>
-                </Card>
-              ))}
-              <Button type="dashed" icon={<PlusOutlined />} onClick={() => add({ provider: 'openai', enabled: true, capabilities: { sizes: '1024x1024', qualities: 'standard', formats: 'png' } })}>
-                添加生图模型
+                  </Card>
+                )
+              })}
+              <Button
+                type="dashed"
+                icon={<PlusOutlined />}
+                disabled={!providerOptions.length}
+                onClick={() => {
+                  const provider = watchedProviders.find((item: Partial<ImageGenerationProviderConfig>) => item?.id) as ImageGenerationProviderConfig | undefined
+                  if (!provider) return
+                  add({
+                    id: uniqueImageConfigId(`${provider.id}-model`, new Set((form.getFieldValue('models') || []).map((model: ImageGenerationModelConfig) => model.id).filter(Boolean))),
+                    label: '',
+                    provider: provider.type,
+                    providerId: provider.id,
+                    baseUrl: provider.baseUrl,
+                    apiKey: provider.apiKey,
+                    model: '',
+                    providerModel: '',
+                    enabled: true,
+                    capabilities: defaultCapabilitiesForProvider(provider.type),
+                  })
+                }}
+              >
+                添加启用模型
               </Button>
             </Space>
           )}
