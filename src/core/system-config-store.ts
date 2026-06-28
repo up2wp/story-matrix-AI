@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { db } from './db'
-import type { AIConfig, FeatureKey, NovelImportConfig, User, VoiceboxConfig } from './types'
+import type { AIConfig, FeatureKey, ImageGenerationConfig, NovelImportConfig, User, VoiceboxConfig } from './types'
 import { canUseFeature, normalizeNovelImportConfig } from './feature-permissions'
 import { useStore } from './store'
 
@@ -13,11 +13,13 @@ interface SystemConfigState {
   aiConfig: AIConfig
   voiceboxConfig: VoiceboxConfig
   novelImportConfig: NovelImportConfig
+  imageGenerationConfig: ImageGenerationConfig
   isLoading: boolean
   loadConfig: () => Promise<void>
   toggleRegistration: () => Promise<void>
   toggleNovelImport: () => Promise<void>
   saveNovelImportConfig: (config: NovelImportConfig) => Promise<void>
+  saveImageGenerationConfig: (config: ImageGenerationConfig) => Promise<void>
   canUseFeature: (user: User | null | undefined, feature: FeatureKey) => boolean
   saveAIConfig: (config: AIConfig) => Promise<void>
   saveVoiceboxConfig: (config: VoiceboxConfig) => Promise<void>
@@ -51,11 +53,18 @@ export const defaultNovelImportConfig: NovelImportConfig = {
   featurePermissions: { userGrants: [] },
 }
 
+export const defaultImageGenerationConfig: ImageGenerationConfig = {
+  enabled: false,
+  defaultModelId: '',
+  models: [],
+}
+
 export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
   registrationEnabled: false,
   aiConfig: { ...defaultAIConfig },
   voiceboxConfig: { ...defaultVoiceboxConfig },
   novelImportConfig: { ...defaultNovelImportConfig },
+  imageGenerationConfig: { ...defaultImageGenerationConfig },
   isLoading: true,
 
   loadConfig: async () => {
@@ -64,12 +73,13 @@ export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
       const aiConfig = config.aiConfig || { ...defaultAIConfig }
       const voiceboxConfig = { ...defaultVoiceboxConfig, ...(config.voiceboxConfig || {}) }
       const novelImportConfig = normalizeNovelImportConfig({ ...defaultNovelImportConfig, ...(config.novelImportConfig || {}) })
-      set({ registrationEnabled: config.registrationEnabled, aiConfig, voiceboxConfig, novelImportConfig, isLoading: false })
+      const imageGenerationConfig = { ...defaultImageGenerationConfig, ...(config.imageGenerationConfig || {}) }
+      set({ registrationEnabled: config.registrationEnabled, aiConfig, voiceboxConfig, novelImportConfig, imageGenerationConfig, isLoading: false })
       // 同步到全局 store
       useStore.getState().setAIConfig(aiConfig)
     } else {
-      await db.systemConfig.add({ id: 'singleton', registrationEnabled: false, aiConfig: { ...defaultAIConfig }, voiceboxConfig: { ...defaultVoiceboxConfig }, novelImportConfig: { ...defaultNovelImportConfig } })
-      set({ registrationEnabled: false, aiConfig: { ...defaultAIConfig }, voiceboxConfig: { ...defaultVoiceboxConfig }, novelImportConfig: { ...defaultNovelImportConfig }, isLoading: false })
+      await db.systemConfig.add({ id: 'singleton', registrationEnabled: false, aiConfig: { ...defaultAIConfig }, voiceboxConfig: { ...defaultVoiceboxConfig }, novelImportConfig: { ...defaultNovelImportConfig }, imageGenerationConfig: { ...defaultImageGenerationConfig } })
+      set({ registrationEnabled: false, aiConfig: { ...defaultAIConfig }, voiceboxConfig: { ...defaultVoiceboxConfig }, novelImportConfig: { ...defaultNovelImportConfig }, imageGenerationConfig: { ...defaultImageGenerationConfig }, isLoading: false })
     }
   },
 
@@ -90,6 +100,12 @@ export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
     const novelImportConfig = normalizeNovelImportConfig(config)
     await db.systemConfig.update('singleton', { novelImportConfig })
     set({ novelImportConfig })
+  },
+
+  saveImageGenerationConfig: async (config: ImageGenerationConfig) => {
+    const imageGenerationConfig = { ...defaultImageGenerationConfig, ...config }
+    await db.systemConfig.update('singleton', { imageGenerationConfig })
+    set({ imageGenerationConfig })
   },
 
   canUseFeature: (user, feature) => canUseFeature(user, get().novelImportConfig, feature),

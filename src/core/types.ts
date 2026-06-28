@@ -171,7 +171,32 @@ export interface NovelImportConfig {
   featurePermissions?: FeaturePermissionConfig
 }
 
-export type FeatureKey = 'novelImport' | 'importBackfill'
+export type ImageProviderType = 'openai' | 'custom'
+
+export interface ImageGenerationModelCapability {
+  sizes: string[]
+  qualities: string[]
+  formats: string[]
+}
+
+export interface ImageGenerationModelConfig {
+  id: string
+  label: string
+  provider: ImageProviderType
+  baseUrl: string
+  apiKey?: string
+  model: string
+  enabled: boolean
+  capabilities: ImageGenerationModelCapability
+}
+
+export interface ImageGenerationConfig {
+  enabled: boolean
+  defaultModelId: string
+  models: ImageGenerationModelConfig[]
+}
+
+export type FeatureKey = 'novelImport' | 'importBackfill' | 'imageGeneration'
 
 export interface FeaturePermissionGrant {
   userId: string
@@ -286,6 +311,47 @@ export interface WorkAudiobookConfig {
   chapterAudio: Record<string, ChapterAudioState>
 }
 
+export type ImagePromptType = 'characterFace' | 'chapterObject' | 'characterFullBody'
+export type ImagePromptStatus = 'empty' | 'draft' | 'dirty' | 'saving' | 'saved' | 'saveFailed' | 'generatingImage' | 'imageFailed' | 'imageSucceeded'
+
+export interface VisualPromptRecord {
+  id: string
+  type: ImagePromptType
+  characterId?: string
+  chapterId?: string
+  title: string
+  prompt: string
+  draftPrompt?: string
+  status: ImagePromptStatus
+  error?: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ImageAssetRecord {
+  id: string
+  promptId: string
+  promptSnapshot: string
+  provider: ImageProviderType
+  modelId: string
+  modelName: string
+  mimeType: string
+  width?: number
+  height?: number
+  assetUrl: string
+  createdAt: number
+  status: 'succeeded' | 'failed'
+  error?: string
+}
+
+export interface WorkVisualAssetsConfig {
+  prompts: Record<string, VisualPromptRecord>
+  images: Record<string, ImageAssetRecord>
+  promptIdsByCharacter: Record<string, string[]>
+  promptIdsByChapter: Record<string, string[]>
+  updatedAt: number
+}
+
 // --- 作品 ---
 
 export interface Work {
@@ -305,6 +371,7 @@ export interface Work {
   eventLog?: EventLogEntry[]
   eventLogConfig?: EventLogConfig
   audiobook?: WorkAudiobookConfig
+  visualAssets?: WorkVisualAssetsConfig
 }
 
 // --- AI 相关 ---
@@ -337,4 +404,5 @@ export interface SystemConfig {
   aiConfig?: AIConfig
   voiceboxConfig?: VoiceboxConfig
   novelImportConfig?: NovelImportConfig
+  imageGenerationConfig?: ImageGenerationConfig
 }
