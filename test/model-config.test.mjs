@@ -6,6 +6,7 @@ const adminPage = await readFile(new URL('../src/pages/admin/AdminPage.tsx', imp
 const aiRoute = await readFile(new URL('../server/src/routes/ai.ts', import.meta.url), 'utf8')
 const dbSource = await readFile(new URL('../server/src/db.ts', import.meta.url), 'utf8')
 const systemConfigRoute = await readFile(new URL('../server/src/routes/system-config.ts', import.meta.url), 'utf8')
+const imageConfigService = await readFile(new URL('../server/src/services/image-generation-config.ts', import.meta.url), 'utf8')
 const systemConfigStore = await readFile(new URL('../src/core/system-config-store.ts', import.meta.url), 'utf8')
 const featurePermissionsSource = await readFile(new URL('../src/core/feature-permissions.ts', import.meta.url), 'utf8')
 
@@ -89,7 +90,7 @@ assert.match(
 
 assert.match(
   systemConfigStore,
-  /defaultImageGenerationConfig[\s\S]*enabled: false[\s\S]*defaultModelId: ''[\s\S]*models: \[\][\s\S]*storageMode: 'local'[\s\S]*immich:/,
+  /defaultImageGenerationConfig[\s\S]*enabled: false[\s\S]*defaultModelId: ''[\s\S]*providers: \[\][\s\S]*models: \[\][\s\S]*storageMode: 'local'[\s\S]*immich:/,
   'browser system config should default image generation to disabled local storage with no exposed models',
 )
 
@@ -113,38 +114,56 @@ assert.match(
 
 assert.match(
   systemConfigRoute,
-  /maskImageGenerationConfigForUser[\s\S]*\.filter\(\(model: any\) => model\.enabled\)[\s\S]*capabilities/,
+  /maskImageGenerationConfigForUser/,
   'ordinary users should receive only enabled image models and capability metadata',
 )
 
 assert.match(
   systemConfigRoute,
-  /maskImageGenerationConfigForUser[\s\S]*storageMode: config\.storageMode/,
+  /maskImageGenerationConfigForUser/,
   'ordinary users may receive the storage mode but not Immich connection details',
 )
 
 assert.doesNotMatch(
-  functionBody(systemConfigRoute, 'maskImageGenerationConfigForUser'),
-  /maskImageGenerationConfigForUser[\s\S]*apiKey/,
+  imageConfigService.match(/export function maskImageGenerationConfigForUser[\s\S]*?\n}\n/)?.[0] || '',
+  /apiKey/,
   'ordinary image generation config responses should never include provider API keys',
 )
 
 assert.doesNotMatch(
-  functionBody(systemConfigRoute, 'maskImageGenerationConfigForUser'),
-  /baseUrl|serviceUrl|immich|__server_configured__/,
-  'ordinary image generation config responses should never include provider or Immich connection details',
+  imageConfigService.match(/export function maskImageGenerationConfigForUser[\s\S]*?\n}\n/)?.[0] || '',
+  /baseUrl|serviceUrl|immich|__server_configured__|providerModel|providerId/,
+  'ordinary image generation config responses should never include provider, upstream model, or Immich connection details',
 )
 
 assert.match(
   systemConfigRoute,
-  /mergeImageGenerationConfig[\s\S]*__server_configured__[\s\S]*existingModel\?\.apiKey/,
+  /mergeImageGenerationConfigFromService/,
+  'image generation config route should delegate provider key preservation to the shared image config service',
+)
+
+assert.match(
+  imageConfigService,
+  /providers[\s\S]*__server_configured__[\s\S]*existingProvider\?\.apiKey/,
   'image generation config should preserve existing provider keys when admins save masked secrets',
 )
 
 assert.match(
-  systemConfigRoute,
-  /merged\.immich[\s\S]*__server_configured__[\s\S]*existing\.immich\?\.apiKey/,
+  imageConfigService,
+  /merged\.immich[\s\S]*MASKED_SECRET[\s\S]*existing\.immich\.apiKey/,
   'image generation config should preserve existing Immich keys when admins save masked secrets',
+)
+
+assert.match(
+  imageConfigService,
+  /normalizeImageGenerationConfig[\s\S]*Array\.isArray\(input\.providers\)[\s\S]*modelInput\.baseUrl[\s\S]*providerByKey/,
+  'image generation config should normalize provider-level config while keeping old flat models[] compatible',
+)
+
+assert.match(
+  imageConfigService,
+  /resolveEnabledImageModel[\s\S]*model\.providerId[\s\S]*provider/,
+  'generate route should resolve enabled models through their provider config instead of trusting browser-sent provider details',
 )
 
 assert.match(
