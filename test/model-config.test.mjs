@@ -101,8 +101,8 @@ assert.match(
 
 assert.match(
   adminPage,
-  /生图模型[\s\S]*ImageGenerationSettings/,
-  'admin system settings should expose image generation model configuration separately from text AI models',
+  /生图模型[\s\S]*ImageGenerationSettings[\s\S]*检查 Immich 连接 \/ 项目相册/,
+  'admin system settings should expose image generation and Immich storage checks separately from text AI models',
 )
 
 assert.match(

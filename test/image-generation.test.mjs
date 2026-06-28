@@ -44,6 +44,7 @@ assert.match(imageRouteSource, /assertReadyForUpload\(\)[\s\S]*fetch\(`\$\{norma
 assert.match(imageRouteSource, /IMMICH_UPLOAD_RETRY_LIMIT = 3[\s\S]*uploadToImmichWithRetry/, 'Immich upload should retry three times before entering a recoverable failed state')
 assert.match(imageRouteSource, /storageUploadFailed[\s\S]*immichFilename/, 'provider success with Immich upload failure should return recoverable storage metadata')
 assert.match(imageRouteSource, /retry-immich[\s\S]*readLocalImageAsset[\s\S]*uploadToImmichWithRetry/, 'recoverable Immich upload failures should support retrying from a local staging reference')
+assert.match(imageRouteSource, /deleteLocalStagedImageAsset[\s\S]*fs\.unlinkSync[\s\S]*localAssetId: undefined/, 'successful Immich retry should delete only the matched local staging asset and clear its locator')
 assert.match(imageRouteSource, /buildImmichFilename[\s\S]*ownerId[\s\S]*promptTypeLabel[\s\S]*randomUUID/, 'Immich filenames should include project, user, work, prompt type and short id identifiers')
 assert.match(imageRouteSource, /detectMime[\s\S]*image\/png[\s\S]*image\/jpeg[\s\S]*image\/webp/, 'image route should validate returned image bytes before saving')
 assert.ok(
@@ -52,7 +53,8 @@ assert.ok(
 )
 assert.match(imageRouteSource, /router\.get\('\/assets\/:workId\/:assetId'[\s\S]*workAccess\(request, req\.params\.workId, false\)/, 'internal image asset reads should verify access to the owning work')
 assert.match(imageRouteSource, /router\.get\('\/assets\/:workId\/:assetId\/:variant'[\s\S]*workAccess\(request, req\.params\.workId, false\)[\s\S]*fetchAssetBytes/, 'Immich image reads should go through the authenticated backend proxy')
-assert.doesNotMatch(imageRouteSource, /DROP TABLE|DELETE FROM works|rm -rf|unlinkSync|rmSync/, 'image generation implementation must not delete data or touch destructive paths')
+assert.match(imageRouteSource, /router\.post\('\/immich\/health'[\s\S]*currentUser\.role[\s\S]*assertReadyForUpload\(\)[\s\S]*ensureProjectAlbum\(\)/, 'admins should be able to test Immich readiness and project album setup without calling the image provider')
+assert.doesNotMatch(imageRouteSource, /DROP TABLE|DELETE FROM works|rm -rf|rmSync/, 'image generation implementation must not delete data or touch destructive paths')
 
 assert.match(promptSource, /IMAGE_PROMPT_SYSTEM_PROMPT[\s\S]*不要生成剧情正文/, 'visual prompt generation should instruct the model to return visual prompts only')
 assert.match(promptContextSource, /CHAPTER_EXCERPT_LIMIT = 900/, 'chapter visual prompt context should cap source excerpts')
@@ -69,10 +71,12 @@ assert.match(appSource, /path="\/image-generation"/, 'app routing should include
 assert.match(sidebarSource, /canOpenImageGeneration[\s\S]*key: '\/image-generation'[\s\S]*label: '视觉资产'/, 'sidebar should expose visual assets only when a work is open and view/generation is allowed')
 assert.match(pageSource, /视觉资产工作台[\s\S]*readOnly[\s\S]*当前账号未授权生图/, 'visual workspace should distinguish read-only and unauthorized execution states')
 assert.match(pageSource, /PROMPT_TYPES[\s\S]*characterFace[\s\S]*chapterClothing[\s\S]*chapterProp[\s\S]*characterFullBody/, 'visual workspace should expose split chapter clothing and prop prompt types')
+assert.match(pageSource, /typeRequiresChapter[\s\S]*chapterClothing[\s\S]*chapterProp[\s\S]*missingRequiredChapter[\s\S]*请先选择章节/, 'chapter clothing and prop actions should be disabled until a chapter is selected')
 assert.match(pageSource, /ImagePromptEditor[\s\S]*ImageModelSelector[\s\S]*ImageResultGallery[\s\S]*retryImmichUpload/, 'visual workspace should connect prompt editing, model selection, result gallery, and Immich retry')
 assert.match(editorSource, /生成草稿[\s\S]*保存提示词[\s\S]*复制[\s\S]*生成图片/, 'prompt editor should expose draft, save, copy, and image generation actions')
 assert.match(selectorSource, /capabilities\.sizes[\s\S]*capabilities\.qualities[\s\S]*capabilities\.formats/, 'model selector should surface model capability summaries')
-assert.match(gallerySource, /Image src=\{getImageAssetDisplayUrl\(image\)\}/, 'gallery should render storage-agnostic backend proxy URLs')
+assert.match(gallerySource, /const displayUrl = getImageAssetDisplayUrl\(image\)[\s\S]*Image src=\{displayUrl\}/, 'gallery should render storage-agnostic backend proxy URLs')
+assert.match(gallerySource, /onError[\s\S]*缩略图加载失败[\s\S]*历史图片定位不完整/, 'gallery should surface thumbnail load failures and legacy locator gaps')
 assert.match(cssSource, /image-generation-layout[\s\S]*@media \(max-width: 768px\)[\s\S]*grid-template-columns: 1fr/, 'visual workspace should collapse into a single-column mobile layout')
 
 console.log('image-generation behavior assertions passed')
