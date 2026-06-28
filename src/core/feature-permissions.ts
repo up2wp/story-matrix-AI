@@ -3,9 +3,10 @@ import type { FeatureKey, FeaturePermissionConfig, NovelImportConfig, User } fro
 export const FEATURE_LABELS: Record<FeatureKey, string> = {
   novelImport: '本地小说导入',
   importBackfill: '导入后阶段反推',
+  imageGeneration: '作品生图',
 }
 
-export const ALL_FEATURE_KEYS: FeatureKey[] = ['novelImport', 'importBackfill']
+export const ALL_FEATURE_KEYS: FeatureKey[] = ['novelImport', 'importBackfill', 'imageGeneration']
 
 export function normalizeFeaturePermissionConfig(config?: FeaturePermissionConfig): FeaturePermissionConfig {
   const grants = config?.userGrants ?? []

@@ -17,7 +17,7 @@ function loadFeaturePermissionsForTest() {
 
 const { ALL_FEATURE_KEYS, normalizeNovelImportConfig, canUseFeature, setUserFeatureGrant, grantedFeaturesForUser } = loadFeaturePermissionsForTest()
 
-assert.deepEqual(ALL_FEATURE_KEYS, ['novelImport', 'importBackfill'], 'feature registry should include current import-related features')
+assert.deepEqual(ALL_FEATURE_KEYS, ['novelImport', 'importBackfill', 'imageGeneration'], 'feature registry should include import and image generation features')
 
 const owner = { id: 'owner-1', username: 'owner', displayName: 'Owner', role: 'owner', createdAt: 1 }
 const admin = { id: 'admin-1', username: 'admin', displayName: 'Admin', role: 'admin', createdAt: 1 }
@@ -40,10 +40,14 @@ assert.equal(canUseFeature(otherUser, grantedImport, 'novelImport'), false, 'use
 const grantedBoth = setUserFeatureGrant(grantedImport, user.id, 'importBackfill', true)
 assert.deepEqual(grantedFeaturesForUser(grantedBoth, user.id), ['novelImport', 'importBackfill'], 'grant helper should preserve multiple features for the same user')
 
-const revokedImport = setUserFeatureGrant(grantedBoth, user.id, 'novelImport', false)
-assert.deepEqual(grantedFeaturesForUser(revokedImport, user.id), ['importBackfill'], 'revoking one feature should preserve the rest')
+const grantedImage = setUserFeatureGrant(grantedBoth, user.id, 'imageGeneration', true)
+assert.equal(canUseFeature(user, grantedImage, 'imageGeneration'), true, 'image generation should use the same explicit grant model as other gated features')
+
+const revokedImport = setUserFeatureGrant(grantedImage, user.id, 'novelImport', false)
+assert.deepEqual(grantedFeaturesForUser(revokedImport, user.id), ['importBackfill', 'imageGeneration'], 'revoking one feature should preserve the rest')
 
 const revokedAll = setUserFeatureGrant(revokedImport, user.id, 'importBackfill', false)
-assert.deepEqual(grantedFeaturesForUser(revokedAll, user.id), [], 'empty user grants should be removed from config')
+const revokedImage = setUserFeatureGrant(revokedAll, user.id, 'imageGeneration', false)
+assert.deepEqual(grantedFeaturesForUser(revokedImage, user.id), [], 'empty user grants should be removed from config')
 
 console.log('feature-permissions behavior assertions passed')
