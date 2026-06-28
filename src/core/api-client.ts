@@ -85,6 +85,10 @@ export const db = {
       method: 'PATCH',
       body: JSON.stringify({ segmentPatch }),
     }),
+    updateVisualAssets: (id: string, visualAssetChanges: any) => request<any>(`/works/${id}/visual-assets`, {
+      method: 'PATCH',
+      body: JSON.stringify(visualAssetChanges),
+    }),
   },
 
   systemConfig: {

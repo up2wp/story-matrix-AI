@@ -1,0 +1,29 @@
+import type { ImageAssetRecord, VisualPromptRecord, WorkVisualAssetsConfig } from '@/core/types'
+
+export function emptyVisualAssets(): WorkVisualAssetsConfig {
+  return {
+    prompts: {},
+    images: {},
+    promptIdsByCharacter: {},
+    promptIdsByChapter: {},
+    updatedAt: Date.now(),
+  }
+}
+
+export function visualAssetDelta(current: WorkVisualAssetsConfig | undefined, next: WorkVisualAssetsConfig) {
+  if (!current) return next
+  const changedRecordEntries = <T>(before: Record<string, T>, after: Record<string, T>) => Object.fromEntries(
+    Object.entries(after).filter(([key, value]) => JSON.stringify(before[key]) !== JSON.stringify(value)),
+  )
+  const prompts = changedRecordEntries<VisualPromptRecord>(current.prompts, next.prompts)
+  const images = changedRecordEntries<ImageAssetRecord>(current.images, next.images)
+  const promptIdsByCharacter = changedRecordEntries<string[]>(current.promptIdsByCharacter, next.promptIdsByCharacter)
+  const promptIdsByChapter = changedRecordEntries<string[]>(current.promptIdsByChapter, next.promptIdsByChapter)
+  return {
+    ...(Object.keys(prompts).length ? { prompts } : {}),
+    ...(Object.keys(images).length ? { images } : {}),
+    ...(Object.keys(promptIdsByCharacter).length ? { promptIdsByCharacter } : {}),
+    ...(Object.keys(promptIdsByChapter).length ? { promptIdsByChapter } : {}),
+    updatedAt: next.updatedAt,
+  }
+}

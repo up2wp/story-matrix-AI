@@ -161,3 +161,33 @@ body {
   background: #fafafa;
   font-weight: 600;
 }
+.image-generation-page {
+  max-width: 1280px;
+}
+
+.image-generation-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 360px) 1fr;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.image-generation-panel {
+  min-width: 0;
+}
+
+.image-generation-main {
+  min-height: 360px;
+}
+
+.image-result-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 768px) {
+  .image-generation-layout {
+    grid-template-columns: 1fr;
+  }
+}

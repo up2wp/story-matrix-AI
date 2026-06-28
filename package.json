@@ -12,7 +12,8 @@
     "test:novel-import": "node test/novel-import.test.mjs",
     "test:stage-backfill": "node test/stage-backfill.test.mjs",
     "test:audiobook": "node test/audiobook.test.mjs",
-    "test": "npm run test:model-config && npm run test:user-management && npm run test:feature-permissions && npm run test:novel-import && npm run test:stage-backfill && npm run test:audiobook",
+    "test:image-generation": "node test/image-generation.test.mjs",
+    "test": "npm run test:model-config && npm run test:user-management && npm run test:feature-permissions && npm run test:novel-import && npm run test:stage-backfill && npm run test:audiobook && npm run test:image-generation",
     "build": "tsc -b && vite build && cd server && npm run build",
     "lint": "eslint .",
     "preview": "vite preview"

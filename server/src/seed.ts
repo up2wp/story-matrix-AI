@@ -10,13 +10,13 @@ export function seed() {
   const config = db.prepare('SELECT id FROM systemConfig WHERE id = ?').get('singleton')
   if (!config) {
     db.prepare(
-      'INSERT INTO systemConfig (id, registrationEnabled, aiConfig, novelImportConfig) VALUES (?, ?, ?, ?)'
+      'INSERT INTO systemConfig (id, registrationEnabled, aiConfig, novelImportConfig, imageGenerationConfig) VALUES (?, ?, ?, ?, ?)'
     ).run('singleton', 0, JSON.stringify({
       provider: 'openai',
       apiKey: '',
       baseUrl: '',
       model: 'gpt-4o-mini',
-    }), JSON.stringify({ enabled: false }))
+    }), JSON.stringify({ enabled: false }), JSON.stringify({ enabled: false, defaultModelId: '', models: [] }))
     console.log('[seed] 已创建默认系统配置')
   }
 

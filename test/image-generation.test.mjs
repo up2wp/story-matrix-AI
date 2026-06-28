@@ -1,0 +1,72 @@
+import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+
+const typesSource = await readFile(new URL('../src/core/types.ts', import.meta.url), 'utf8')
+const apiClientSource = await readFile(new URL('../src/core/api-client.ts', import.meta.url), 'utf8')
+const worksRouteSource = await readFile(new URL('../server/src/routes/works.ts', import.meta.url), 'utf8')
+const imageRouteSource = await readFile(new URL('../server/src/routes/image-generation.ts', import.meta.url), 'utf8')
+const serverIndexSource = await readFile(new URL('../server/src/index.ts', import.meta.url), 'utf8')
+const visualStateSource = await readFile(new URL('../src/features/image-generation/visualAssetState.ts', import.meta.url), 'utf8')
+const imageClientSource = await readFile(new URL('../src/features/image-generation/imageGenerationClient.ts', import.meta.url), 'utf8')
+const promptContextSource = await readFile(new URL('../src/features/image-generation/promptContext.ts', import.meta.url), 'utf8')
+const promptSource = await readFile(new URL('../src/ai/prompts/imageGeneration.ts', import.meta.url), 'utf8')
+const hookSource = await readFile(new URL('../src/features/image-generation/useImageGeneration.ts', import.meta.url), 'utf8')
+const appSource = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8')
+const sidebarSource = await readFile(new URL('../src/components/layout/Sidebar.tsx', import.meta.url), 'utf8')
+const pageSource = await readFile(new URL('../src/pages/image-generation/ImageGenerationPage.tsx', import.meta.url), 'utf8')
+const editorSource = await readFile(new URL('../src/features/image-generation/ImagePromptEditor.tsx', import.meta.url), 'utf8')
+const selectorSource = await readFile(new URL('../src/features/image-generation/ImageModelSelector.tsx', import.meta.url), 'utf8')
+const gallerySource = await readFile(new URL('../src/features/image-generation/ImageResultGallery.tsx', import.meta.url), 'utf8')
+const cssSource = await readFile(new URL('../src/index.css', import.meta.url), 'utf8')
+
+assert.match(typesSource, /visualAssets\?: WorkVisualAssetsConfig/, 'Work should carry optional visual asset state so old works remain loadable')
+assert.match(typesSource, /ImagePromptType = 'characterFace' \| 'chapterObject' \| 'characterFullBody'/, 'visual prompts should support the three V1 prompt types')
+assert.match(typesSource, /ImageAssetRecord[\s\S]*assetUrl: string/, 'image asset records should store internal asset references instead of upstream URLs or base64 blobs')
+
+assert.match(apiClientSource, /updateVisualAssets: \(id: string, visualAssetChanges: any\)/, 'browser client should expose a dedicated visual assets patch method')
+assert.match(worksRouteSource, /router\.patch\('\/:id\/visual-assets'[\s\S]*res\.json\(\{ visualAssets: merged\.visualAssets, updatedAt \}\)/, 'visual assets should persist through a dedicated minimal endpoint')
+assert.match(worksRouteSource, /mergeVisualAssets[\s\S]*prompts: mergeRecord[\s\S]*images: mergeRecord/, 'visual asset patch should merge nested records instead of replacing unrelated state')
+assert.match(worksRouteSource, /'visualAssets'/, 'generic work patch allowlist should preserve visual asset state when legacy saves include it')
+assert.doesNotMatch(apiClientSource, /db\.works\.update\(work\.id, \{ visualAssets:/, 'visual assets should not be sent through generic work update helpers')
+
+assert.match(visualStateSource, /visualAssetDelta[\s\S]*changedRecordEntries/, 'visual asset persistence should compute changed record entries for prompts and images')
+assert.doesNotMatch(visualStateSource, /chapter\.content|base64|b64_json/, 'visual asset delta helpers should not carry whole chapter content or base64 image data')
+
+assert.match(serverIndexSource, /app\.use\('\/api\/image-generation', requireAuth, imageGenerationRouter\)/, 'image generation routes should be mounted behind authentication')
+assert.match(imageRouteSource, /canUseImageGeneration[\s\S]*config\.enabled[\s\S]*features\?\.includes\('imageGeneration'\)/, 'image proxy should enforce global switch and user-level image generation grants')
+assert.match(imageRouteSource, /workAccess\(request, workId, true\)/, 'image generation should require owner write access to the work')
+assert.match(imageRouteSource, /config\.models\.find[\s\S]*item\.enabled/, 'image generation should reject forged disabled or unknown model IDs')
+assert.match(imageRouteSource, /Authorization: `Bearer \$\{model\.apiKey\}`/, 'provider API keys should be injected only server-side')
+assert.doesNotMatch(imageClientSource, /apiKey|baseUrl|Authorization/, 'browser image generation client should not carry provider credentials or URLs')
+assert.match(imageRouteSource, /response_format: 'b64_json'/, 'OpenAI-like image generation should request base64 for internal asset normalization')
+assert.match(imageRouteSource, /saveImageAsset[\s\S]*server[\\/]data[\\/]image-assets|const ASSET_DIR = path\.join\(__dirname, '\.\.', '\.\.', 'data', 'image-assets'\)/, 'image route should store images under the controlled server data asset directory')
+assert.match(imageRouteSource, /detectMime[\s\S]*image\/png[\s\S]*image\/jpeg[\s\S]*image\/webp/, 'image route should validate returned image bytes before saving')
+assert.ok(
+  imageRouteSource.includes('localhost') && imageRouteSource.includes('169\\.254') && imageRouteSource.includes('192\\.168'),
+  'image route should reject localhost, metadata, and private-network provider targets',
+)
+assert.match(imageRouteSource, /router\.get\('\/assets\/:workId\/:assetId'[\s\S]*workAccess\(request, req\.params\.workId, false\)/, 'internal image asset reads should verify access to the owning work')
+assert.doesNotMatch(imageRouteSource, /DROP TABLE|DELETE FROM works|rm -rf|unlinkSync|rmSync/, 'image generation implementation must not delete data or touch destructive paths')
+
+assert.match(promptSource, /IMAGE_PROMPT_SYSTEM_PROMPT[\s\S]*不要生成剧情正文/, 'visual prompt generation should instruct the model to return visual prompts only')
+assert.match(promptContextSource, /CHAPTER_EXCERPT_LIMIT = 900/, 'chapter visual prompt context should cap source excerpts')
+assert.match(promptContextSource, /buildChapterExcerpt[\s\S]*paragraphs\.slice\(0, 3\)[\s\S]*slice\(0, CHAPTER_EXCERPT_LIMIT\)/, 'chapter visual prompt context should use a small excerpt rather than a whole chapter')
+assert.doesNotMatch(promptContextSource, /return chapter\.content|content:\s*chapter\.content/, 'prompt context should never return whole chapter content')
+assert.match(imageRouteSource, /router\.post\('\/prompt'[\s\S]*canUseImageGeneration[\s\S]*workAccess\(request, workId, true\)/, 'visual prompt endpoint should enforce image feature permission and owner write access')
+assert.match(imageRouteSource, /generateTextPrompt[\s\S]*loadSystemAIConfig[\s\S]*chat\/completions/, 'visual prompt endpoint should use text AI config rather than image provider config')
+assert.match(imageClientSource, /prompt: \(payload: ImagePromptRequest\)/, 'browser image client should call a dedicated visual prompt endpoint')
+assert.match(hookSource, /buildImagePromptContext[\s\S]*imageGenerationClient\.prompt/, 'image generation hook should build bounded context before requesting prompt drafts')
+assert.match(hookSource, /draftPrompt[\s\S]*status: 'draft'/, 'generated visual prompts should start as editable drafts instead of auto-saving final prompts')
+assert.match(hookSource, /status: 'imageFailed'[\s\S]*error:/, 'image generation failures should preserve the prompt record with retryable error state')
+
+assert.match(appSource, /path="\/image-generation"/, 'app routing should include the visual assets workspace')
+assert.match(sidebarSource, /canOpenImageGeneration[\s\S]*key: '\/image-generation'[\s\S]*label: '视觉资产'/, 'sidebar should expose visual assets only when a work is open and view/generation is allowed')
+assert.match(pageSource, /视觉资产工作台[\s\S]*readOnly[\s\S]*当前账号未授权生图/, 'visual workspace should distinguish read-only and unauthorized execution states')
+assert.match(pageSource, /PROMPT_TYPES[\s\S]*characterFace[\s\S]*chapterObject[\s\S]*characterFullBody/, 'visual workspace should expose all three V1 prompt types')
+assert.match(pageSource, /ImagePromptEditor[\s\S]*ImageModelSelector[\s\S]*ImageResultGallery/, 'visual workspace should connect prompt editing, model selection, and result gallery')
+assert.match(editorSource, /生成草稿[\s\S]*保存提示词[\s\S]*复制[\s\S]*生成图片/, 'prompt editor should expose draft, save, copy, and image generation actions')
+assert.match(selectorSource, /capabilities\.sizes[\s\S]*capabilities\.qualities[\s\S]*capabilities\.formats/, 'model selector should surface model capability summaries')
+assert.match(gallerySource, /Image src=\{image\.assetUrl\}/, 'gallery should render internal image asset URLs')
+assert.match(cssSource, /image-generation-layout[\s\S]*@media \(max-width: 768px\)[\s\S]*grid-template-columns: 1fr/, 'visual workspace should collapse into a single-column mobile layout')
+
+console.log('image-generation behavior assertions passed')

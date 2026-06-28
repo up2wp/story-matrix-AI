@@ -41,9 +41,10 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS systemConfig (
     id TEXT PRIMARY KEY CHECK (id = 'singleton'),
     registrationEnabled INTEGER NOT NULL DEFAULT 0,
-    aiConfig TEXT,
-    voiceboxConfig TEXT,
-    novelImportConfig TEXT
+     aiConfig TEXT,
+     voiceboxConfig TEXT,
+     novelImportConfig TEXT,
+     imageGenerationConfig TEXT
   );
 
   CREATE TABLE IF NOT EXISTS userVoices (
@@ -95,6 +96,10 @@ export function migrateDatabase(database: DatabaseInstance = db) {
 
   if (!columnExists(database, 'systemConfig', 'novelImportConfig')) {
     database.prepare('ALTER TABLE systemConfig ADD COLUMN novelImportConfig TEXT').run()
+  }
+
+  if (!columnExists(database, 'systemConfig', 'imageGenerationConfig')) {
+    database.prepare('ALTER TABLE systemConfig ADD COLUMN imageGenerationConfig TEXT').run()
   }
 
   database.exec(`

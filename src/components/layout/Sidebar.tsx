@@ -10,6 +10,7 @@ import {
   ReadOutlined,
   CustomerServiceOutlined,
   SafetyCertificateOutlined,
+  PictureOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation } from 'react-router'
 import { useStore } from '@/core/store'
@@ -33,6 +34,7 @@ export default function Sidebar() {
 
   const hasWork = !!currentWork
   const canBackfill = Boolean(currentWork?.chapters?.some(chapter => chapter.content.trim())) && !readOnly && canUseFeature(user, 'importBackfill')
+  const canOpenImageGeneration = hasWork && (readOnly || canUseFeature(user, 'imageGeneration'))
   const voiceboxReady = voiceboxConfig.serviceUrl !== 'http://127.0.0.1:17493'
 
   const menuItems = [
@@ -49,6 +51,9 @@ export default function Sidebar() {
           { key: '/outline', icon: <BranchesOutlined />, label: '主线大纲' },
           ...(canBackfill
             ? [{ key: '/backfill', icon: <SafetyCertificateOutlined />, label: '阶段反推' }]
+            : []),
+          ...(canOpenImageGeneration
+            ? [{ key: '/image-generation', icon: <PictureOutlined />, label: '视觉资产' }]
             : []),
           ...(!readOnly && voiceboxReady
             ? [{ key: '/character-voices', icon: <CustomerServiceOutlined />, label: '角色声音' }]
