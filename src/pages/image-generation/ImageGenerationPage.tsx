@@ -22,6 +22,10 @@ function promptId(type: ImagePromptType, characterId?: string, chapterId?: strin
   return [type, characterId || 'none', chapterId || 'none'].join(':')
 }
 
+function typeRequiresChapter(type: ImagePromptType) {
+  return type === 'chapterClothing' || type === 'chapterProp'
+}
+
 export default function ImageGenerationPage() {
   const user = useAuthStore(state => state.user)
   const currentWork = useStore(state => state.currentWork)
@@ -35,6 +39,8 @@ export default function ImageGenerationPage() {
   const [modelId, setModelId] = useState(imageGenerationConfig.defaultModelId)
 
   const editable = Boolean(currentWork && !readOnly && canUseFeature(user, 'imageGeneration'))
+  const missingRequiredChapter = typeRequiresChapter(type) && !chapterId
+  const promptEditable = editable && !missingRequiredChapter
   const selectedPromptId = promptId(type, characterId, chapterId)
   const record = visualAssets.prompts[selectedPromptId]
   const images = useMemo(() => Object.values(visualAssets.images).filter(image => image.promptId === selectedPromptId).sort((a, b) => b.createdAt - a.createdAt), [selectedPromptId, visualAssets.images])
@@ -50,11 +56,19 @@ export default function ImageGenerationPage() {
   if (!currentWork) return <Empty description="请先打开一个作品" />
 
   const handleGenerateDraft = async () => {
+    if (missingRequiredChapter) {
+      message.warning('请先选择章节，再生成章节服饰或章节道具提示词')
+      return
+    }
     const draft = await generatePromptDraft(type, characterId, chapterId)
     if (draft?.draftPrompt) setPromptText(draft.draftPrompt)
   }
 
   const handleSave = async () => {
+    if (missingRequiredChapter) {
+      message.warning('请先选择章节，再保存章节服饰或章节道具提示词')
+      return
+    }
     const nextRecord: VisualPromptRecord = record || {
       id: selectedPromptId,
       type,
@@ -99,10 +113,11 @@ export default function ImageGenerationPage() {
         </Card>
 
         <Card title="提示词编辑" className="image-generation-panel image-generation-main">
+          {missingRequiredChapter && <Alert style={{ marginBottom: 12 }} type="info" showIcon message="请先选择章节" description="章节服饰和章节道具提示词需要章节标题、摘要、场景信息和小段摘录作为上下文。" />}
           <ImagePromptEditor
             record={record}
             value={promptText}
-            editable={editable}
+            editable={promptEditable}
             generatingPrompt={generatingPromptId === selectedPromptId}
             generatingImage={generatingImagePromptId === selectedPromptId}
             onChange={setPromptText}

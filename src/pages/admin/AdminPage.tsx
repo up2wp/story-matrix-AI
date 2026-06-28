@@ -82,6 +82,7 @@ function ImageGenerationSettings() {
   const saveImageGenerationConfig = useSystemConfigStore(s => s.saveImageGenerationConfig)
   const [form] = Form.useForm()
   const [saving, setSaving] = useState(false)
+  const [testingImmich, setTestingImmich] = useState(false)
   const storageMode = Form.useWatch('storageMode', form) || 'local'
   const watchedModels = Form.useWatch('models', form) || []
   const defaultModelOptions = watchedModels
@@ -116,6 +117,26 @@ function ImageGenerationSettings() {
     }
   }
 
+  const handleTestImmich = async () => {
+    const normalized = normalizeImageConfigFromForm(form.getFieldsValue() as ImageGenerationConfig)
+    if (!normalized.immich.serviceUrl || !normalized.immich.apiKey || !normalized.immich.projectName) {
+      message.warning('请先填写 Immich 服务地址、API Key 和项目名称')
+      return
+    }
+    setTestingImmich(true)
+    try {
+      await saveImageGenerationConfig({ ...normalized, storageMode: 'immich' })
+      const response = await fetch('/api/image-generation/immich/health', { method: 'POST', credentials: 'include' })
+      const data = await response.json().catch(() => ({ error: response.statusText })) as { ok?: boolean; projectName?: string; error?: string }
+      if (!response.ok || !data.ok) throw new Error(data.error || 'Immich 连接检查失败')
+      message.success(`Immich 连接正常，项目相册：${data.projectName || normalized.immich.projectName}`)
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'Immich 连接检查失败')
+    } finally {
+      setTestingImmich(false)
+    }
+  }
+
   return (
     <Form form={form} onFinish={handleSave} layout="vertical" initialValues={serializeImageConfigForForm(imageGenerationConfig)}>
       <Card title="生图功能" style={{ marginBottom: 16 }}>
@@ -144,6 +165,7 @@ function ImageGenerationSettings() {
           <Form.Item name={['immich', 'allowPrivateNetwork']} valuePropName="checked" extra="仅自托管 Immich 位于内网时开启；开启后仍禁止 metadata/link-local 等危险地址。">
             <Switch checkedChildren="允许内网" unCheckedChildren="禁用内网" />
           </Form.Item>
+          <Button htmlType="button" onClick={handleTestImmich} loading={testingImmich}>检查 Immich 连接 / 项目相册</Button>
         </Card>
       )}
 
