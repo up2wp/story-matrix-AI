@@ -18,6 +18,7 @@ import ChaptersPage from '@/pages/chapters/ChaptersPage'
 import PreviewPage from '@/pages/preview/PreviewPage'
 import VoicesPage from '@/pages/voices/VoicesPage'
 import ImportBackfillPage from '@/pages/backfill/ImportBackfillPage'
+import ImageGenerationPage from '@/pages/image-generation/ImageGenerationPage'
 import { useAuthStore } from '@/core/auth-store'
 import { useStore } from '@/core/store'
 import { useSystemConfigStore } from '@/core/system-config-store'
@@ -49,6 +50,7 @@ export default function App() {
             <Route path="/outline" element={<OutlinePage />} />
             <Route path="/constraints" element={<ConstraintsPage />} />
             <Route path="/backfill" element={<ImportBackfillPage />} />
+            <Route path="/image-generation" element={<ImageGenerationPage />} />
             <Route path="/character-voices" element={<CharacterVoicesPage />} />
             <Route path="/chapters" element={<ChaptersPage />} />
             <Route path="/preview" element={<PreviewPage />} />
