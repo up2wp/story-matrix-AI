@@ -89,8 +89,8 @@ assert.match(
 
 assert.match(
   systemConfigStore,
-  /defaultImageGenerationConfig[\s\S]*enabled: false[\s\S]*defaultModelId: ''[\s\S]*models: \[\]/,
-  'browser system config should default image generation to disabled with no exposed models',
+  /defaultImageGenerationConfig[\s\S]*enabled: false[\s\S]*defaultModelId: ''[\s\S]*models: \[\][\s\S]*storageMode: 'local'[\s\S]*immich:/,
+  'browser system config should default image generation to disabled local storage with no exposed models',
 )
 
 assert.match(
@@ -117,6 +117,12 @@ assert.match(
   'ordinary users should receive only enabled image models and capability metadata',
 )
 
+assert.match(
+  systemConfigRoute,
+  /maskImageGenerationConfigForUser[\s\S]*storageMode: config\.storageMode/,
+  'ordinary users may receive the storage mode but not Immich connection details',
+)
+
 assert.doesNotMatch(
   functionBody(systemConfigRoute, 'maskImageGenerationConfigForUser'),
   /maskImageGenerationConfigForUser[\s\S]*apiKey/,
@@ -125,14 +131,20 @@ assert.doesNotMatch(
 
 assert.doesNotMatch(
   functionBody(systemConfigRoute, 'maskImageGenerationConfigForUser'),
-  /baseUrl/,
-  'ordinary image generation config responses should never include provider base URLs',
+  /baseUrl|serviceUrl|immich|__server_configured__/,
+  'ordinary image generation config responses should never include provider or Immich connection details',
 )
 
 assert.match(
   systemConfigRoute,
   /mergeImageGenerationConfig[\s\S]*__server_configured__[\s\S]*existingModel\?\.apiKey/,
   'image generation config should preserve existing provider keys when admins save masked secrets',
+)
+
+assert.match(
+  systemConfigRoute,
+  /merged\.immich[\s\S]*__server_configured__[\s\S]*existing\.immich\?\.apiKey/,
+  'image generation config should preserve existing Immich keys when admins save masked secrets',
 )
 
 assert.match(
