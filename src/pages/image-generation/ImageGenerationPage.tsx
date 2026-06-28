@@ -13,7 +13,8 @@ const { Title, Text } = Typography
 
 const PROMPT_TYPES: Array<{ value: ImagePromptType; label: string }> = [
   { value: 'characterFace', label: '角色高清面部特写' },
-  { value: 'chapterObject', label: '章节服饰/道具' },
+  { value: 'chapterClothing', label: '章节服饰' },
+  { value: 'chapterProp', label: '章节道具' },
   { value: 'characterFullBody', label: '多视角全身图' },
 ]
 
@@ -26,7 +27,7 @@ export default function ImageGenerationPage() {
   const currentWork = useStore(state => state.currentWork)
   const readOnly = useStore(state => state.readOnly)
   const canUseFeature = useSystemConfigStore(state => state.canUseFeature)
-  const { imageGenerationConfig, visualAssets, generatingPromptId, generatingImagePromptId, generatePromptDraft, savePrompt, generateImage } = useImageGeneration()
+  const { imageGenerationConfig, visualAssets, generatingPromptId, generatingImagePromptId, generatePromptDraft, savePrompt, generateImage, retryImmichUpload } = useImageGeneration()
   const [type, setType] = useState<ImagePromptType>('characterFace')
   const [characterId, setCharacterId] = useState<string | undefined>()
   const [chapterId, setChapterId] = useState<string | undefined>()
@@ -92,7 +93,7 @@ export default function ImageGenerationPage() {
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
             <Select value={type} onChange={setType} options={PROMPT_TYPES} />
             <Select allowClear value={characterId} onChange={setCharacterId} placeholder="选择角色" options={currentWork.characters.map(character => ({ value: character.id, label: character.name }))} />
-            <Select allowClear value={chapterId} onChange={setChapterId} placeholder="选择章节" disabled={type === 'characterFace'} options={currentWork.chapters.map(chapter => ({ value: chapter.id, label: chapter.title }))} />
+            <Select allowClear value={chapterId} onChange={setChapterId} placeholder="选择章节" disabled={type === 'characterFace' || type === 'characterFullBody'} options={currentWork.chapters.map(chapter => ({ value: chapter.id, label: chapter.title }))} />
             <ImageModelSelector models={imageGenerationConfig.models} value={modelId} onChange={setModelId} />
           </Space>
         </Card>
@@ -114,7 +115,7 @@ export default function ImageGenerationPage() {
       </div>
 
       <Card title="图片结果" style={{ marginTop: 16 }}>
-        <ImageResultGallery images={images} />
+        <ImageResultGallery images={images} editable={editable} onRetryUpload={retryImmichUpload} />
       </Card>
     </div>
   )

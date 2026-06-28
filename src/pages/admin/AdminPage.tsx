@@ -37,6 +37,7 @@ function normalizeCapabilityInput(value: unknown) {
 function serializeImageConfigForForm(config: ImageGenerationConfig) {
   return {
     ...config,
+    immich: { ...config.immich },
     models: config.models.map(model => ({
       ...model,
       capabilities: {
@@ -65,6 +66,13 @@ function normalizeImageConfigFromForm(values: ImageGenerationConfig): ImageGener
   return {
     enabled: Boolean(values.enabled),
     defaultModelId: enabledModelIds.has(values.defaultModelId) ? values.defaultModelId : (models.find(model => model.enabled)?.id || ''),
+    storageMode: values.storageMode === 'immich' ? 'immich' : 'local',
+    immich: {
+      serviceUrl: values.immich?.serviceUrl?.trim() || '',
+      apiKey: values.immich?.apiKey || '',
+      projectName: values.immich?.projectName?.trim() || '',
+      allowPrivateNetwork: Boolean(values.immich?.allowPrivateNetwork),
+    },
     models,
   }
 }
@@ -74,6 +82,7 @@ function ImageGenerationSettings() {
   const saveImageGenerationConfig = useSystemConfigStore(s => s.saveImageGenerationConfig)
   const [form] = Form.useForm()
   const [saving, setSaving] = useState(false)
+  const storageMode = Form.useWatch('storageMode', form) || 'local'
   const watchedModels = Form.useWatch('models', form) || []
   const defaultModelOptions = watchedModels
     .filter((model: Partial<ImageGenerationModelConfig>) => model?.id && model?.enabled)
@@ -94,6 +103,10 @@ function ImageGenerationSettings() {
       message.error('开启生图功能前至少需要启用一个模型')
       return
     }
+    if (normalized.storageMode === 'immich' && (!normalized.immich.serviceUrl || !normalized.immich.apiKey || !normalized.immich.projectName)) {
+      message.error('启用 Immich 存储前需要填写服务地址、API Key 和项目名称')
+      return
+    }
     setSaving(true)
     try {
       await saveImageGenerationConfig(normalized)
@@ -112,7 +125,27 @@ function ImageGenerationSettings() {
         <Form.Item name="defaultModelId" label="默认模型" extra="只可选择已启用模型。普通用户只能看到模型名称、能力和默认模型，不会看到 API 地址或密钥。">
           <Select allowClear options={defaultModelOptions} placeholder="选择默认生图模型" />
         </Form.Item>
+        <Form.Item name="storageMode" label="图片存储方式" extra="切换只影响新生成图片；历史图片按自身记录的存储位置展示。">
+          <Select options={[{ value: 'local', label: '本地存储' }, { value: 'immich', label: 'Immich 存储' }]} />
+        </Form.Item>
       </Card>
+
+      {storageMode === 'immich' && (
+        <Card title="Immich 存储" style={{ marginBottom: 16 }}>
+          <Form.Item name={['immich', 'serviceUrl']} label="Immich 服务地址" rules={[{ required: true, message: '请输入 Immich 服务地址' }]} extra="只保存在服务端；浏览器不会直连 Immich。默认拒绝本机、内网和 metadata 地址。">
+            <Input placeholder="https://immich.example.com" />
+          </Form.Item>
+          <Form.Item name={['immich', 'apiKey']} label="Immich API Key" rules={[{ required: true, message: '请输入 Immich API Key' }]} extra="保存后以掩码回显，普通用户响应不会包含该密钥。">
+            <Input.Password placeholder="输入 Immich API Key" />
+          </Form.Item>
+          <Form.Item name={['immich', 'projectName']} label="项目名称 / 相册名" rules={[{ required: true, message: '请输入项目名称' }]} extra="生成图片会自动创建或复用同名 Immich 相册。">
+            <Input placeholder="story-matrix-production" />
+          </Form.Item>
+          <Form.Item name={['immich', 'allowPrivateNetwork']} valuePropName="checked" extra="仅自托管 Immich 位于内网时开启；开启后仍禁止 metadata/link-local 等危险地址。">
+            <Switch checkedChildren="允许内网" unCheckedChildren="禁用内网" />
+          </Form.Item>
+        </Card>
+      )}
 
       <Card title="可用模型" style={{ marginBottom: 16 }}>
         <Form.List name="models">

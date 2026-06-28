@@ -42,11 +42,12 @@ export function buildImagePromptContext(work: Work, type: ImagePromptType, chara
     .map(prompt => `【${prompt.title}】${prompt.prompt}`)
     .slice(0, 4)
     .join('\n')
+  const needsChapter = type === 'chapterObject' || type === 'chapterClothing' || type === 'chapterProp'
   return [
     `作品基调：${work.seed.tone || '暂无'}`,
     `类型：${work.seed.genre}${work.seed.subGenre ? ` / ${work.seed.subGenre}` : ''}`,
     characterLine(character),
-    type === 'chapterObject' ? chapterLine(chapter) : '',
+    needsChapter ? chapterLine(chapter) : '',
     type === 'characterFullBody' ? `已保存视觉信息：\n${savedPrompts || '暂无'}` : '',
   ].filter(Boolean).join('\n\n')
 }
