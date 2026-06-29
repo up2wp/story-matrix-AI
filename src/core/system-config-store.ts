@@ -114,7 +114,7 @@ export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
       const voiceboxConfig = { ...defaultVoiceboxConfig, ...(config.voiceboxConfig || {}) }
       const novelImportConfig = normalizeNovelImportConfig({ ...defaultNovelImportConfig, ...(config.novelImportConfig || {}) })
       const imageGenerationConfig = normalizeImageGenerationConfig({ ...defaultImageGenerationConfig, ...(config.imageGenerationConfig || {}) })
-      const aiConfigs = config.aiConfigs || []
+      const aiConfigs: AIModelConfig[] = config.aiConfigs || []
       const activeConfigId = config.activeConfigId || ''
       // 兼容旧数据：如果没有 aiConfigs，用现有 aiConfig 作为唯一配置
       let aiConfig = config.aiConfig || { ...defaultAIConfig }

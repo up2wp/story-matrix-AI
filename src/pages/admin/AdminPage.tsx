@@ -6,7 +6,7 @@ import { db } from '@/core/db'
 import { useAuthStore } from '@/core/auth-store'
 import { useSystemConfigStore } from '@/core/system-config-store'
 import { ALL_FEATURE_KEYS, FEATURE_LABELS, grantedFeaturesForUser, setUserFeatureGrant } from '@/core/feature-permissions'
-import type { FeatureKey, User, AIConfig, AIModelConfig, VoiceboxConfig, ImageGenerationConfig, ImageGenerationModelConfig, ImageGenerationProviderConfig, ImageProviderProtocol, ImageProviderType } from '@/core/types'
+import type { FeatureKey, User, VoiceboxConfig, ImageGenerationConfig, ImageGenerationModelConfig, ImageGenerationProviderConfig, ImageProviderProtocol, ImageProviderType } from '@/core/types'
 import { generateId } from '@/utils/id'
 import { imageGenerationClient } from '@/features/image-generation/imageGenerationClient'
 import type { ImageProviderModelCandidate } from '@/features/image-generation/imageGenerationClient'
@@ -975,7 +975,6 @@ function ModelSettings() {
   const activeConfigId = useSystemConfigStore(s => s.activeConfigId)
   const saveAIConfigs = useSystemConfigStore(s => s.saveAIConfigs)
   const aiConfig = useSystemConfigStore(s => s.aiConfig)
-  const saveAIConfig = useSystemConfigStore(s => s.saveAIConfig)
   const [form] = Form.useForm()
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
