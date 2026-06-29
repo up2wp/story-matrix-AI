@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, Card, Empty, Select, Space, Typography, message } from 'antd'
+import { ReloadOutlined } from '@ant-design/icons'
+import { Alert, Button, Card, Empty, Select, Space, Typography, message } from 'antd'
 import type { ImagePromptType, VisualPromptRecord } from '@/core/types'
 import { useAuthStore } from '@/core/auth-store'
+import { db } from '@/core/db'
 import { useStore } from '@/core/store'
 import { useSystemConfigStore } from '@/core/system-config-store'
 import { useImageGeneration } from '@/features/image-generation/useImageGeneration'
@@ -29,6 +31,7 @@ function typeRequiresChapter(type: ImagePromptType) {
 export default function ImageGenerationPage() {
   const user = useAuthStore(state => state.user)
   const currentWork = useStore(state => state.currentWork)
+  const setCurrentWork = useStore(state => state.setCurrentWork)
   const readOnly = useStore(state => state.readOnly)
   const canUseFeature = useSystemConfigStore(state => state.canUseFeature)
   const { imageGenerationConfig, visualAssets, generatingPromptId, generatingImagePromptId, generatePromptDraft, savePrompt, generateImage, retryImmichUpload } = useImageGeneration()
@@ -37,6 +40,8 @@ export default function ImageGenerationPage() {
   const [chapterId, setChapterId] = useState<string | undefined>()
   const [promptText, setPromptText] = useState('')
   const [modelId, setModelId] = useState(imageGenerationConfig.defaultModelId)
+  const [refreshingImages, setRefreshingImages] = useState(false)
+  const [galleryRefreshKey, setGalleryRefreshKey] = useState(0)
 
   const editable = Boolean(currentWork && !readOnly && canUseFeature(user, 'imageGeneration'))
   const missingRequiredChapter = typeRequiresChapter(type) && !chapterId
@@ -93,6 +98,18 @@ export default function ImageGenerationPage() {
     await generateImage(record, modelId)
   }
 
+  const handleRefreshImages = async () => {
+    if (!currentWork) return
+    setRefreshingImages(true)
+    try {
+      const freshWork = await db.works.get(currentWork.id)
+      if (freshWork) setCurrentWork(freshWork)
+      setGalleryRefreshKey(key => key + 1)
+    } finally {
+      setRefreshingImages(false)
+    }
+  }
+
   return (
     <div className="image-generation-page">
       <Title level={4}>视觉资产工作台</Title>
@@ -129,8 +146,8 @@ export default function ImageGenerationPage() {
         </Card>
       </div>
 
-      <Card title="图片结果" style={{ marginTop: 16 }}>
-        <ImageResultGallery images={images} editable={editable} onRetryUpload={retryImmichUpload} />
+      <Card title="图片结果" style={{ marginTop: 16 }} extra={<Button size="small" icon={<ReloadOutlined />} loading={refreshingImages} onClick={handleRefreshImages}>刷新</Button>}>
+        <ImageResultGallery key={galleryRefreshKey} images={images} editable={editable} onRetryUpload={retryImmichUpload} />
       </Card>
     </div>
   )
