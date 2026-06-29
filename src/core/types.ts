@@ -421,6 +421,17 @@ export interface AIConfig {
   maxTokens?: number
 }
 
+/** 多模型配置项 */
+export interface AIModelConfig {
+  id: string
+  name: string
+  provider: 'openai' | 'anthropic' | 'custom'
+  apiKey: string
+  baseUrl?: string
+  model: string
+  maxTokens?: number
+}
+
 // --- 用户 ---
 
 export interface User {
@@ -439,6 +450,8 @@ export interface SystemConfig {
   id: 'singleton'
   registrationEnabled: boolean
   aiConfig?: AIConfig
+  aiConfigs?: AIModelConfig[]
+  activeConfigId?: string
   voiceboxConfig?: VoiceboxConfig
   novelImportConfig?: NovelImportConfig
   imageGenerationConfig?: ImageGenerationConfig

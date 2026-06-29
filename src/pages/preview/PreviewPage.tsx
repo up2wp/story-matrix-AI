@@ -3,6 +3,15 @@ import { Card, Typography, Space, Button, Checkbox, Empty, Divider } from 'antd'
 
 // 简易 Markdown 渲染
 function renderMarkdown(text: string): string {
+  // 表格样式
+  const tableStyle = `<style>
+.markdown-table { overflow-x: auto; margin: 16px 0; }
+.markdown-table table { border-collapse: collapse; width: 100%; }
+.markdown-table th, .markdown-table td { border: 1px solid #d9d9d9; padding: 8px 12px; text-align: left; }
+.markdown-table th { background: #fafafa; font-weight: 600; }
+.markdown-table tr:hover td { background: #f5f5f5; }
+</style>`
+
   // 先处理表格
   let html = text.replace(/((?:^\|.+\|\n)+)/gm, (tableBlock) => {
     const rows = tableBlock.trim().split('\n')
@@ -25,7 +34,7 @@ function renderMarkdown(text: string): string {
       table += '</tr>'
     }
     table += '</tbody></table>'
-    return table
+    return `<div class="markdown-table">${table}</div>`
   })
 
   html = html
@@ -55,7 +64,7 @@ function renderMarkdown(text: string): string {
   // 包裹列表
   html = html.replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
   html = html.replace(/<\/ul>\s*<ul>/g, '')
-  return `<p>${html}</p>`
+  return tableStyle + `<p>${html}</p>`
 }
 import {
   DownloadOutlined,
