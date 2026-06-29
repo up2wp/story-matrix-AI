@@ -56,3 +56,37 @@ jobs:
           gh workflow run docker-image.yml \
             --ref main \
             -f tag="${{ steps.version.outputs.next_tag }}"
+
+      - name: Notify ntfy
+        if: always()
+        shell: bash
+        env:
+          NTFY_URL: ${{ vars.NTFY_URL || secrets.NTFY_URL }}
+          NTFY_TOPIC: ${{ vars.NTFY_TOPIC || secrets.NTFY_TOPIC }}
+          JOB_STATUS: ${{ job.status }}
+          NEXT_TAG: ${{ steps.version.outputs.next_tag }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [[ -z "${NTFY_URL}" || -z "${NTFY_TOPIC}" ]]; then
+            echo "NTFY_URL or NTFY_TOPIC is not configured; skipping notification."
+            exit 0
+          fi
+
+          ntfy_url="${NTFY_URL%/}"
+          ntfy_topic="${NTFY_TOPIC#/}"
+          message="Auto tag on merge ${JOB_STATUS}"
+          if [[ -n "${NEXT_TAG}" ]]; then
+            message="${message}: ${NEXT_TAG}"
+          fi
+          printf -v message '%s\nRepository: %s\nRef: %s\nRun: %s' \
+            "${message}" \
+            "${{ github.repository }}" \
+            "${{ github.ref_name }}" \
+            "${RUN_URL}"
+
+          if ! curl -fsS -X POST "${ntfy_url}/${ntfy_topic}" \
+            -H "Title: Story Matrix AI auto tag" \
+            -H "Tags: github,${JOB_STATUS}" \
+            --data-binary "${message}"; then
+            echo "::warning::Failed to send ntfy notification."
+          fi
