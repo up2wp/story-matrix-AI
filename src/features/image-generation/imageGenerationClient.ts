@@ -1,3 +1,5 @@
+import type { ChapterVisualCandidateResult, ImageViewDirection } from '@/core/types'
+
 export interface ImageGenerateRequest {
   workId: string
   modelId: string
@@ -5,6 +7,8 @@ export interface ImageGenerateRequest {
   characterId?: string
   chapterId?: string
   prompt: string
+  referenceImageIds?: string[]
+  viewDirection?: ImageViewDirection
   size?: string
   quality?: string
   format?: string
@@ -25,7 +29,16 @@ export interface ImageGenerateResponse {
   modelName: string
   provider: 'openai' | 'openai-compatible' | 'custom' | 'minimax'
   status: 'succeeded' | 'pendingImmichUpload' | 'storageUploadFailed' | 'failed'
+  basePromptSnapshot?: string
+  generationPromptSnapshot?: string
+  viewDirection?: ImageViewDirection
+  referenceImageIds?: string[]
   error?: string
+}
+
+export interface ImageCandidateRequest {
+  workId: string
+  chapterId: string
 }
 
 export interface ImageProviderDiscoveryRequest {
@@ -36,7 +49,7 @@ export interface ImageProviderDiscoveryRequest {
 export interface ImageProviderModelCandidate {
   providerModel: string
   label: string
-  capabilities: { sizes: string[]; qualities: string[]; formats: string[]; aspectRatios?: string[] }
+  capabilities: { sizes: string[]; qualities: string[]; formats: string[]; aspectRatios?: string[]; referenceImages?: boolean; maxReferenceImages?: number }
   source: 'provider' | 'preset' | 'manual'
   requiresConfirmation: boolean
 }
@@ -72,6 +85,10 @@ export const imageGenerationClient = {
     body: JSON.stringify(payload),
   }),
   prompt: (payload: ImagePromptRequest) => request<{ prompt: string }>('/prompt', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  extractCandidates: (payload: ImageCandidateRequest) => request<ChapterVisualCandidateResult>('/extract-candidates', {
     method: 'POST',
     body: JSON.stringify(payload),
   }),

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { message } from 'antd'
-import type { ImageAssetRecord, ImagePromptType, VisualPromptRecord, WorkVisualAssetsConfig } from '@/core/types'
+import type { ImageAssetRecord, ImagePromptType, ImageViewDirection, VisualPromptRecord, WorkVisualAssetsConfig } from '@/core/types'
 import { db } from '@/core/db'
 import { useStore } from '@/core/store'
 import { useSystemConfigStore } from '@/core/system-config-store'
@@ -13,8 +13,8 @@ function now() {
   return Date.now()
 }
 
-function promptId(type: ImagePromptType, characterId?: string, chapterId?: string) {
-  return [type, characterId || 'none', chapterId || 'none'].join(':')
+function promptId(type: ImagePromptType, characterId?: string, chapterId?: string, visualSubjectId?: string) {
+  return [type, characterId || 'none', chapterId || 'none', visualSubjectId || 'none'].join(':')
 }
 
 function promptTitle(type: ImagePromptType) {
@@ -56,9 +56,9 @@ export function useImageGeneration() {
     })
   }
 
-  const generatePromptDraft = async (type: ImagePromptType, characterId?: string, chapterId?: string) => {
+  const generatePromptDraft = async (type: ImagePromptType, characterId?: string, chapterId?: string, subject?: { visualSubjectId?: string; subjectLabel?: string; candidateKind?: VisualPromptRecord['candidateKind'] }) => {
     if (!currentWork) return undefined
-    const id = promptId(type, characterId, chapterId)
+    const id = promptId(type, characterId, chapterId, subject?.visualSubjectId)
     setGeneratingPromptId(id)
     try {
       const context = buildImagePromptContext(currentWork, type, characterId, chapterId)
@@ -70,6 +70,9 @@ export function useImageGeneration() {
         type,
         characterId,
         chapterId,
+        visualSubjectId: subject?.visualSubjectId,
+        subjectLabel: subject?.subjectLabel,
+        candidateKind: subject?.candidateKind,
         title: promptTitle(type),
         prompt: visualAssets.prompts[id]?.prompt || '',
         draftPrompt: prompt,
@@ -93,7 +96,7 @@ export function useImageGeneration() {
     message.success('视觉提示词已保存')
   }
 
-  const generateImage = async (record: VisualPromptRecord, modelId: string, options: { size?: string; quality?: string; format?: string } = {}) => {
+  const generateImage = async (record: VisualPromptRecord, modelId: string, options: { size?: string; quality?: string; format?: string; referenceImageIds?: string[]; viewDirection?: ImageViewDirection } = {}) => {
     if (!currentWork) return undefined
     if (!record.prompt.trim()) {
       message.warning('请先保存提示词')
@@ -106,6 +109,10 @@ export function useImageGeneration() {
         id: result.id,
         promptId: record.id,
         promptSnapshot: record.prompt,
+        basePromptSnapshot: result.basePromptSnapshot,
+        generationPromptSnapshot: result.generationPromptSnapshot,
+        viewDirection: result.viewDirection,
+        referenceImageIds: result.referenceImageIds,
         provider: result.provider,
         modelId: result.modelId,
         modelName: result.modelName,
@@ -156,6 +163,16 @@ export function useImageGeneration() {
     }
   }
 
+  const extractChapterCandidates = async (chapterId: string) => {
+    if (!currentWork) return undefined
+    try {
+      return await imageGenerationClient.extractCandidates({ workId: currentWork.id, chapterId })
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '章节视觉候选提取失败')
+      return undefined
+    }
+  }
+
   return {
     imageGenerationConfig,
     visualAssets,
@@ -164,6 +181,7 @@ export function useImageGeneration() {
     generatePromptDraft,
     savePrompt,
     generateImage,
+    extractChapterCandidates,
     retryImmichUpload,
   }
 }
