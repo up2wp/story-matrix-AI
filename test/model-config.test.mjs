@@ -42,7 +42,7 @@ assert.match(
 
 assert.match(
   adminPage,
-  /fetch\(`\/api\/ai\/models`/,
+  /fetch\('\/api\/ai\/models'/,
   'Model settings should support loading provider model options through the backend proxy',
 )
 
@@ -116,6 +116,18 @@ assert.match(
   systemConfigRoute,
   /maskImageGenerationConfigForUser/,
   'ordinary users should receive only enabled image models and capability metadata',
+)
+
+assert.match(
+  imageConfigService,
+  /referenceImages[\s\S]*maxReferenceImages/,
+  'image generation model capabilities should include reference-image availability and max count metadata',
+)
+
+assert.match(
+  imageConfigService.match(/export function maskImageGenerationConfigForUser[\s\S]*?\n}\n/)?.[0] || '',
+  /capabilities: model\.capabilities/,
+  'ordinary users should see reference-image capability summaries through the existing capability metadata field',
 )
 
 assert.match(
