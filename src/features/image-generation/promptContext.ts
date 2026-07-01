@@ -34,6 +34,29 @@ export function buildChapterExcerpt(chapter: Chapter) {
   return paragraphs.slice(0, 3).join('\n').slice(0, CHAPTER_EXCERPT_LIMIT)
 }
 
+function characterMatchLine(character: Character) {
+  const tags = character.tags.slice(0, 6).join('、') || '暂无'
+  return `- id: ${character.id}; name: ${character.name}; tags: ${tags}`
+}
+
+export function buildChapterVisualCandidateContext(work: Work, chapterId: string) {
+  const chapter = work.chapters.find(item => item.id === chapterId)
+  if (!chapter) return ''
+  const sceneSummary = chapter.scenes
+    .map(scene => `${scene.title || '未命名'}：${compact(scene.summary || scene.content).slice(0, 180)}`)
+    .filter(Boolean)
+    .join(' / ')
+  const characterIndex = work.characters.map(characterMatchLine).join('\n') || '暂无'
+  return [
+    `作品类型：${work.seed.genre}${work.seed.subGenre ? ` / ${work.seed.subGenre}` : ''}`,
+    `章节：${chapter.title}`,
+    `用户方向：${compact(chapter.userDirection) || '暂无'}`,
+    `场景摘要：${sceneSummary || '暂无'}`,
+    `正文摘录：${buildChapterExcerpt(chapter) || '暂无'}`,
+    `角色匹配索引（只包含 id、name、tags，不包含 bio 或整章正文）：\n${characterIndex}`,
+  ].join('\n\n')
+}
+
 export function buildImagePromptContext(work: Work, type: ImagePromptType, characterId?: string, chapterId?: string) {
   const character = characterId ? work.characters.find(item => item.id === characterId) : undefined
   const chapter = chapterId ? work.chapters.find(item => item.id === chapterId) : undefined

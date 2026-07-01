@@ -14,7 +14,7 @@ import {
   type ImageGenerationModelConfig,
   type ImageGenerationProviderConfig,
 } from '../services/image-generation-config.js'
-import { discoverProviderModels, generateProviderImages } from '../services/image-providers.js'
+import { discoverProviderModels, generateProviderImages, type ProviderReferenceImage } from '../services/image-providers.js'
 
 const router = Router()
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -38,12 +38,47 @@ interface WorkRow {
 
 interface ImageAssetRecord {
   id: string
+  status?: string
   storageMode?: 'local' | 'immich'
   storageStatus?: string
   localAssetId?: string
   immichAssetId?: string
   immichFilename?: string
   assetUrl?: string
+}
+
+interface WorkData {
+  seed?: { genre?: string; subGenre?: string }
+  characters?: Array<{ id: string; name: string; tags?: string[] }>
+  chapters?: Array<{ id: string; title: string; userDirection?: string; content?: string; scenes?: Array<{ title?: string; summary?: string; content?: string }> }>
+  visualAssets?: { images?: Record<string, ImageAssetRecord> }
+}
+
+interface CandidateCharacterInput {
+  name?: string
+  evidence?: string
+}
+
+interface CandidateSubjectInput {
+  label?: string
+  description?: string
+  characterName?: string
+  evidence?: string
+}
+
+interface CandidateAIResponse {
+  characters?: CandidateCharacterInput[]
+  clothing?: CandidateSubjectInput[]
+  props?: CandidateSubjectInput[]
+}
+
+type ImageViewDirection = 'front' | 'side' | 'back'
+
+const CHAPTER_EXCERPT_LIMIT = 900
+const VIEW_DIRECTION_SUFFIX: Record<ImageViewDirection, string> = {
+  front: '生成角色设定用白色背景全身图，视角：正面。',
+  side: '生成角色设定用白色背景全身图，视角：侧面。',
+  back: '生成角色设定用白色背景全身图，视角：背面。',
 }
 
 function loadImageGenerationConfig(): ImageGenerationConfig {
@@ -158,6 +193,125 @@ function readLocalImageAsset(workId: string, assetId: string) {
   return { buffer, mimeType: detectMime(buffer), filePath }
 }
 
+function compact(value: string | undefined) {
+  return (value || '').replace(/\s+/g, ' ').trim()
+}
+
+function buildChapterExcerpt(chapter: NonNullable<WorkData['chapters']>[number]) {
+  const sceneText = (chapter.scenes || []).map(scene => compact(scene.summary || scene.content)).filter(Boolean).join('\n')
+  if (sceneText) return sceneText.slice(0, CHAPTER_EXCERPT_LIMIT)
+  const paragraphs = String(chapter.content || '').replace(/\r\n?/g, '\n').split(/\n{2,}/).map(compact).filter(Boolean)
+  return paragraphs.slice(0, 3).join('\n').slice(0, CHAPTER_EXCERPT_LIMIT)
+}
+
+function buildChapterVisualCandidateContext(work: WorkData, chapterId: string) {
+  const chapter = (work.chapters || []).find(item => item.id === chapterId)
+  if (!chapter) throw new Error('章节不存在')
+  const sceneSummary = (chapter.scenes || [])
+    .map(scene => `${scene.title || '未命名'}：${compact(scene.summary || scene.content).slice(0, 180)}`)
+    .filter(Boolean)
+    .join(' / ')
+  const characterIndex = (work.characters || []).map(character => `- id: ${character.id}; name: ${character.name}; tags: ${(character.tags || []).slice(0, 6).join('、') || '暂无'}`).join('\n') || '暂无'
+  return [
+    `作品类型：${work.seed?.genre || '暂无'}${work.seed?.subGenre ? ` / ${work.seed.subGenre}` : ''}`,
+    `章节：${chapter.title}`,
+    `用户方向：${compact(chapter.userDirection) || '暂无'}`,
+    `场景摘要：${sceneSummary || '暂无'}`,
+    `正文摘录：${buildChapterExcerpt(chapter) || '暂无'}`,
+    `角色匹配索引（只包含 id、name、tags，不包含 bio 或整章正文）：\n${characterIndex}`,
+  ].join('\n\n')
+}
+
+function buildChapterVisualCandidateInstruction(context: string) {
+  return `任务：从当前章节小上下文中提取视觉候选，只输出严格 JSON，不要输出解释、Markdown 或额外文本。
+
+JSON 结构必须完全符合：
+{"characters":[{"name":"章节中出现的人名或称谓","evidence":"不超过40字的出现证据"}],"clothing":[{"label":"服饰名称","description":"可见材质、颜色、剪裁或状态","characterName":"关联角色名或空字符串","evidence":"不超过40字的章节证据"}],"props":[{"label":"道具名称","description":"可见材质、形状、尺寸或用途","characterName":"关联角色名或空字符串","evidence":"不超过40字的章节证据"}]}
+
+要求：只使用上下文明确出现或场景摘要直接支持的视觉要素；不生成视觉提示词；不总结剧情；不返回章节正文或摘录；信息不足时返回空数组。
+
+上下文：
+${context}`
+}
+
+function parseCandidateJSON(text: string): CandidateAIResponse {
+  const trimmed = text.trim()
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]
+  const candidate = fenced || trimmed.slice(trimmed.indexOf('{'), trimmed.lastIndexOf('}') + 1)
+  if (!candidate || candidate === trimmed.slice(0, 0)) throw new Error('候选提取结果格式无效')
+  const parsed = JSON.parse(candidate) as CandidateAIResponse
+  return {
+    characters: Array.isArray(parsed.characters) ? parsed.characters : [],
+    clothing: Array.isArray(parsed.clothing) ? parsed.clothing : [],
+    props: Array.isArray(parsed.props) ? parsed.props : [],
+  }
+}
+
+function safeText(value: string | undefined, maxLength = 80) {
+  return compact(value).slice(0, maxLength)
+}
+
+function mapCharacterName(work: WorkData, name: string | undefined) {
+  const normalized = safeText(name).toLowerCase()
+  if (!normalized) return undefined
+  return (work.characters || []).find(character => {
+    const names = [character.id, character.name, ...(character.tags || [])].map(item => String(item || '').trim().toLowerCase()).filter(Boolean)
+    return names.includes(normalized) || names.some(item => normalized.includes(item) || item.includes(normalized))
+  })
+}
+
+function candidateId(kind: 'clothing' | 'prop', label: string, index: number) {
+  const slug = label.trim().toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 36)
+  return `${kind}:${slug || index + 1}`
+}
+
+function mapCandidateResponse(work: WorkData, response: CandidateAIResponse) {
+  const seenCharacters = new Set<string>()
+  const unmappedCharacters = new Set<string>()
+  const characters = (response.characters || []).flatMap(item => {
+    const matched = mapCharacterName(work, item.name)
+    if (!matched) {
+      const name = safeText(item.name, 40)
+      if (name) unmappedCharacters.add(name)
+      return []
+    }
+    if (seenCharacters.has(matched.id)) return []
+    seenCharacters.add(matched.id)
+    return [{ kind: 'character' as const, characterId: matched.id, name: matched.name, matchedName: safeText(item.name, 40) || matched.name, evidence: safeText(item.evidence, 60) }]
+  })
+  const mapSubjects = (items: CandidateSubjectInput[] | undefined, kind: 'clothing' | 'prop') => (items || []).map((item, index) => {
+    const matched = mapCharacterName(work, item.characterName)
+    const label = safeText(item.label, 60) || (kind === 'clothing' ? '未命名服饰' : '未命名道具')
+    return { kind, id: candidateId(kind, label, index), label, description: safeText(item.description, 120), characterId: matched?.id, characterName: matched?.name, evidence: safeText(item.evidence, 60) }
+  })
+  return { characters, clothing: mapSubjects(response.clothing, 'clothing'), props: mapSubjects(response.props, 'prop'), unmappedCharacters: Array.from(unmappedCharacters) }
+}
+
+function normalizeReferenceImageIds(value: unknown) {
+  if (!Array.isArray(value)) return []
+  return Array.from(new Set(value.map(item => String(item || '').trim()).filter(Boolean))).slice(0, 10)
+}
+
+function normalizeViewDirection(value: unknown) {
+  return value === 'front' || value === 'side' || value === 'back' ? value : undefined
+}
+
+async function resolveReferenceImageBytes(workId: string, work: WorkData, imageId: string, config: ImageGenerationConfig) {
+  const image = work.visualAssets?.images?.[imageId]
+  if (!image) throw new Error('参考图不存在或不属于当前作品')
+  if (image.status !== 'succeeded' || image.storageStatus !== 'succeeded') throw new Error('只能选择已成功生成并完成存储的参考图')
+  if (image.storageMode === 'local') {
+    const assetId = image.localAssetId || image.id
+    return readLocalImageAsset(workId, assetId)
+  }
+  if (image.storageMode === 'immich') {
+    if (!image.immichAssetId) throw new Error('参考图 Immich 定位信息不完整')
+    const bytes = await immichClientFromConfig(config).fetchAssetBytes(image.immichAssetId, 'original')
+    return { buffer: bytes.buffer, mimeType: bytes.contentType }
+  }
+  throw new Error('参考图定位信息不完整')
+}
+
 function deleteLocalStagedImageAsset(workId: string, assetId: string) {
   const local = readLocalImageAsset(workId, assetId)
   fs.unlinkSync(local.filePath)
@@ -246,13 +400,40 @@ router.post('/providers/discover-models', async (req, res) => {
   }
 })
 
+router.post('/extract-candidates', async (req, res) => {
+  const request = req as unknown as AuthenticatedRequest
+  const body = req.body as Record<string, unknown>
+  const workId = String(body.workId || '')
+  const chapterId = String(body.chapterId || '')
+  if (!workId || !chapterId) return res.status(400).json({ error: '缺少作品或章节' })
+  const config = loadImageGenerationConfig()
+  if (!canUseImageGeneration(request, config)) return res.status(403).json({ error: '未授权使用生图功能' })
+  const access = workAccess(request, workId, true)
+  if (access.status !== 200) return res.status(access.status).json({ error: access.error })
+  try {
+    const work = JSON.parse(access.row.data) as WorkData
+    const context = buildChapterVisualCandidateContext(work, chapterId)
+    if (context.length > 5000) return res.status(400).json({ error: '候选提取上下文过长' })
+    const rawText = await generateTextPrompt([
+      { role: 'system', content: '你是小说章节视觉候选提取助手。你只输出严格 JSON。' },
+      { role: 'user', content: buildChapterVisualCandidateInstruction(context) },
+    ])
+    res.json(mapCandidateResponse(work, parseCandidateJSON(rawText)))
+  } catch {
+    res.status(502).json({ characters: [], clothing: [], props: [], unmappedCharacters: [], error: '章节视觉候选提取失败，请稍后重试' })
+  }
+})
+
 router.post('/generate', async (req, res) => {
   const request = req as unknown as AuthenticatedRequest
   const body = req.body as Record<string, unknown>
   const workId = String(body.workId || '')
   const prompt = String(body.prompt || '').trim()
+  const referenceImageIds = normalizeReferenceImageIds(body.referenceImageIds)
+  const viewDirection = normalizeViewDirection(body.viewDirection)
   if (!workId || !prompt) return res.status(400).json({ error: '缺少作品或提示词' })
   if (prompt.length > 8000) return res.status(400).json({ error: '提示词过长' })
+  if (body.viewDirection !== undefined && !viewDirection) return res.status(400).json({ error: '视角方向无效' })
 
   const config = loadImageGenerationConfig()
   if (!canUseImageGeneration(request, config)) return res.status(403).json({ error: '未授权使用生图功能' })
@@ -264,15 +445,23 @@ router.post('/generate', async (req, res) => {
   if (!provider.apiKey) return res.status(400).json({ error: '生图厂商未配置 API Key' })
 
   try {
+    const work = JSON.parse(access.row.data) as WorkData
+    const maxReferenceImages = Math.min(3, model.capabilities.maxReferenceImages || 0)
+    if (referenceImageIds.length > 0 && !model.capabilities.referenceImages) return res.status(400).json({ error: '该模型不支持参考图' })
+    if (referenceImageIds.length > maxReferenceImages) return res.status(400).json({ error: `参考图最多选择 ${maxReferenceImages} 张` })
+    const referenceImages: ProviderReferenceImage[] = []
+    for (const imageId of referenceImageIds) referenceImages.push(await resolveReferenceImageBytes(workId, work, imageId, config))
+    const generationPrompt = viewDirection ? `${prompt}\n${VIEW_DIRECTION_SUFFIX[viewDirection]}` : prompt
     const storageMode = config.storageMode === 'immich' ? 'immich' : 'local'
     const immichClient = storageMode === 'immich' ? immichClientFromConfig(config) : undefined
     if (immichClient) await immichClient.assertReadyForUpload()
-    const generated = await generateProviderImages(provider, model, prompt, safeGenerationOptions(body, model))
+    const generated = await generateProviderImages(provider, model, generationPrompt, { ...safeGenerationOptions(body, model), referenceImages })
     const buffer = generated[0].buffer
     const mimeType = detectMime(buffer)
+    const snapshots = { basePromptSnapshot: prompt, generationPromptSnapshot: generationPrompt, viewDirection, referenceImageIds }
     if (storageMode === 'local') {
       const saved = saveImageAsset(workId, buffer)
-      return res.json({ ...saved, localAssetId: saved.id, storageMode: 'local', storageStatus: 'succeeded', status: 'succeeded', modelId: model.id, modelName: model.model, provider: model.provider })
+      return res.json({ ...saved, localAssetId: saved.id, storageMode: 'local', storageStatus: 'succeeded', status: 'succeeded', modelId: model.id, modelName: model.model, provider: model.provider, ...snapshots })
     }
     const albumId = await immichClient!.ensureProjectAlbum()
     const filename = buildImmichFilename(access.row, { ...body, immichProjectName: config.immich?.projectName }, mimeType)
@@ -292,6 +481,7 @@ router.post('/generate', async (req, res) => {
         modelId: model.id,
         modelName: model.model,
         provider: model.provider,
+        ...snapshots,
       })
     } catch (uploadError) {
       const id = randomUUID()
@@ -310,6 +500,7 @@ router.post('/generate', async (req, res) => {
         modelId: model.id,
         modelName: model.model,
         provider: model.provider,
+        ...snapshots,
         error: uploadError instanceof Error ? uploadError.message : 'Immich 上传失败，已保留可重试状态',
       })
     }

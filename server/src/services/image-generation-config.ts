@@ -6,6 +6,8 @@ export interface ImageGenerationModelCapability {
   qualities: string[]
   formats: string[]
   aspectRatios?: string[]
+  referenceImages?: boolean
+  maxReferenceImages?: number
 }
 
 export interface ImageGenerationProviderConfig {
@@ -71,6 +73,15 @@ export function normalizeStringList(value: unknown) {
   if (typeof value === 'string') return Array.from(new Set(value.split(',').map(item => item.trim()).filter(Boolean)))
   if (!Array.isArray(value)) return []
   return Array.from(new Set(value.map(item => String(item || '').trim()).filter(Boolean)))
+}
+
+function normalizeReferenceImageCapability(value: unknown) {
+  return value === true
+}
+
+function normalizeMaxReferenceImages(value: unknown, referenceImages: boolean) {
+  if (!referenceImages || typeof value !== 'number' || value <= 0) return 0
+  return Math.min(Math.floor(value), 3)
 }
 
 function providerType(value: unknown): ImageProviderType {
@@ -170,6 +181,8 @@ export function normalizeImageGenerationConfig(inputValue: unknown): ImageGenera
 
     const providerModel = String(modelInput.providerModel || modelInput.model || '').trim()
     const id = uniqueId(String(modelInput.id || `${provider.id}-${providerModel || 'model'}`), modelIds)
+    const rawCapabilities = objectValue(modelInput.capabilities)
+    const referenceImages = normalizeReferenceImageCapability(rawCapabilities.referenceImages)
     normalizedModels.push({
       id,
       label: String(modelInput.label || providerModel || id).trim(),
@@ -181,10 +194,12 @@ export function normalizeImageGenerationConfig(inputValue: unknown): ImageGenera
       providerModel,
       enabled: Boolean(modelInput.enabled),
       capabilities: {
-        sizes: normalizeStringList(objectValue(modelInput.capabilities).sizes),
-        qualities: normalizeStringList(objectValue(modelInput.capabilities).qualities),
-        formats: normalizeStringList(objectValue(modelInput.capabilities).formats),
-        aspectRatios: normalizeStringList(objectValue(modelInput.capabilities).aspectRatios),
+        sizes: normalizeStringList(rawCapabilities.sizes),
+        qualities: normalizeStringList(rawCapabilities.qualities),
+        formats: normalizeStringList(rawCapabilities.formats),
+        aspectRatios: normalizeStringList(rawCapabilities.aspectRatios),
+        referenceImages,
+        maxReferenceImages: normalizeMaxReferenceImages(rawCapabilities.maxReferenceImages, referenceImages),
       },
     })
   }

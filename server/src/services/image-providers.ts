@@ -9,9 +9,14 @@ export interface ProviderImageResult {
 export interface ImageModelCandidate {
   providerModel: string
   label: string
-  capabilities: { sizes: string[]; qualities: string[]; formats: string[]; aspectRatios?: string[] }
+  capabilities: { sizes: string[]; qualities: string[]; formats: string[]; aspectRatios?: string[]; referenceImages?: boolean; maxReferenceImages?: number }
   source: 'provider' | 'preset' | 'manual'
   requiresConfirmation: boolean
+}
+
+export interface ProviderReferenceImage {
+  buffer: Buffer
+  mimeType: string
 }
 
 const OPENAI_DEFAULT_SIZE = '1024x1024'
@@ -19,6 +24,12 @@ const MINIMAX_ASPECT_RATIOS = ['1:1', '16:9', '4:3', '3:2', '2:3', '3:4', '9:16'
 
 function providerHeaders(apiKey?: string) {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`
+  return headers
+}
+
+function multipartHeaders(apiKey?: string) {
+  const headers: Record<string, string> = {}
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`
   return headers
 }
@@ -77,14 +88,43 @@ async function normalizeProviderImage(item: { b64_json?: string; url?: string })
   throw new Error('Provider 未返回可用图片')
 }
 
-export async function generateProviderImages(provider: ImageGenerationProviderConfig, model: ImageGenerationModelConfig, prompt: string, body: Record<string, unknown>): Promise<ProviderImageResult[]> {
+function bufferBlob(image: ProviderReferenceImage) {
+  const arrayBuffer = image.buffer.buffer.slice(image.buffer.byteOffset, image.buffer.byteOffset + image.buffer.byteLength) as ArrayBuffer
+  return new Blob([arrayBuffer], { type: image.mimeType })
+}
+
+async function generateOpenAIReferenceImages(provider: ImageGenerationProviderConfig, model: ImageGenerationModelConfig, prompt: string, body: Record<string, unknown>, referenceImages: ProviderReferenceImage[]) {
+  const form = new FormData()
+  form.append('model', model.providerModel || model.model)
+  form.append('prompt', prompt)
+  form.append('response_format', 'b64_json')
+  for (const [key, value] of Object.entries(openAIOptions(body, model))) form.append(key, String(value))
+  for (const [index, image] of referenceImages.entries()) {
+    form.append('image[]', bufferBlob(image), `reference-${index + 1}.${image.mimeType.split('/')[1] || 'png'}`)
+  }
+  const response = await safeUpstreamFetch(`${normalizeSafeBaseUrl(provider.baseUrl)}/images/edits`, {
+    method: 'POST',
+    headers: multipartHeaders(provider.apiKey),
+    body: form,
+  })
+  if (!response.ok) throw new Error(await readUpstreamError(response))
+  const data = await response.json() as { data?: Array<{ b64_json?: string; url?: string }> }
+  const first = data.data?.[0]
+  if (!first) throw new Error('Provider 未返回图片')
+  return [{ buffer: await normalizeProviderImage(first) }]
+}
+
+export async function generateProviderImages(provider: ImageGenerationProviderConfig, model: ImageGenerationModelConfig, prompt: string, body: Record<string, unknown> & { referenceImages?: ProviderReferenceImage[] }): Promise<ProviderImageResult[]> {
   if (!provider.apiKey) throw new Error('生图厂商未配置 API Key')
+  const referenceImages = Array.isArray(body.referenceImages) ? body.referenceImages : []
   if (provider.protocol === 'minimax-image-generation' || provider.type === 'minimax') {
     if (prompt.length > 1500) throw new Error('MiniMax 提示词不能超过 1500 字')
+    if (referenceImages.length > 1 || (referenceImages.length === 1 && (model.providerModel || model.model) !== 'image-01')) throw new Error('MiniMax 仅 image-01 支持 1 张参考图')
+    const subjectReference = referenceImages.length === 1 ? { subject_reference: [{ type: 'character', image_file: `data:${referenceImages[0].mimeType};base64,${referenceImages[0].buffer.toString('base64')}` }] } : {}
     const response = await safeUpstreamFetch(`${normalizeSafeBaseUrl(provider.baseUrl)}/v1/image_generation`, {
       method: 'POST',
       headers: providerHeaders(provider.apiKey),
-      body: JSON.stringify({ model: model.providerModel || model.model, prompt, ...minimaxOptions(body, model) }),
+      body: JSON.stringify({ model: model.providerModel || model.model, prompt, ...minimaxOptions(body, model), ...subjectReference }),
     })
     if (!response.ok) throw new Error(await readUpstreamError(response))
     const data = await response.json() as { base_resp?: { status_code?: number; status_msg?: string }; data?: { image_base64?: string[]; image_urls?: string[] }; metadata?: { success_count?: string | number; failed_count?: string | number } }
@@ -99,6 +139,8 @@ export async function generateProviderImages(provider: ImageGenerationProviderCo
     const failedCount = Number(data.metadata?.failed_count || 0)
     return buffers.map((buffer, index) => ({ buffer, warning: failedCount > 0 && index === 0 ? `MiniMax 部分图片生成失败：${failedCount} 张失败` : undefined }))
   }
+
+  if (referenceImages.length > 0) return generateOpenAIReferenceImages(provider, model, prompt, body, referenceImages)
 
   const response = await safeUpstreamFetch(`${normalizeSafeBaseUrl(provider.baseUrl)}/images/generations`, {
     method: 'POST',
@@ -122,7 +164,7 @@ export async function discoverProviderModels(provider: ImageGenerationProviderCo
     return ['image-01', 'image-01-live'].map(providerModel => ({
       providerModel,
       label: providerModel === 'image-01-live' ? 'MiniMax image-01-live' : 'MiniMax image-01',
-      capabilities: { sizes: ['1024x1024', '1792x1024', '1024x1792'], qualities: ['standard'], formats: ['png'], aspectRatios: MINIMAX_ASPECT_RATIOS },
+      capabilities: { sizes: ['1024x1024', '1792x1024', '1024x1792'], qualities: ['standard'], formats: ['png'], aspectRatios: MINIMAX_ASPECT_RATIOS, referenceImages: providerModel === 'image-01', maxReferenceImages: providerModel === 'image-01' ? 1 : 0 },
       source: 'preset',
       requiresConfirmation: false,
     }))
@@ -133,7 +175,7 @@ export async function discoverProviderModels(provider: ImageGenerationProviderCo
   return (data.data || []).map(item => String(item.id || '').trim()).filter(Boolean).map(providerModel => ({
     providerModel,
     label: providerModel,
-    capabilities: { sizes: [], qualities: [], formats: [] },
+    capabilities: { sizes: [], qualities: [], formats: [], referenceImages: false, maxReferenceImages: 0 },
     source: 'provider',
     requiresConfirmation: true,
   }))

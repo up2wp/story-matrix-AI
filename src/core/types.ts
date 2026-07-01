@@ -180,6 +180,8 @@ export interface ImageGenerationModelCapability {
   qualities: string[]
   formats: string[]
   aspectRatios?: string[]
+  referenceImages?: boolean
+  maxReferenceImages?: number
 }
 
 export interface ImageGenerationProviderConfig {
@@ -343,12 +345,43 @@ export interface WorkAudiobookConfig {
 
 export type ImagePromptType = 'characterFace' | 'chapterObject' | 'chapterClothing' | 'chapterProp' | 'characterFullBody'
 export type ImagePromptStatus = 'empty' | 'draft' | 'dirty' | 'saving' | 'saved' | 'saveFailed' | 'generatingImage' | 'imageFailed' | 'imageSucceeded'
+export type ImageViewDirection = 'front' | 'side' | 'back'
+export type VisualCandidateKind = 'character' | 'clothing' | 'prop'
+
+export interface VisualCharacterCandidate {
+  kind: 'character'
+  characterId: string
+  name: string
+  matchedName: string
+  evidence?: string
+}
+
+export interface VisualSubjectCandidate {
+  kind: 'clothing' | 'prop'
+  id: string
+  label: string
+  description?: string
+  characterId?: string
+  characterName?: string
+  evidence?: string
+}
+
+export interface ChapterVisualCandidateResult {
+  characters: VisualCharacterCandidate[]
+  clothing: VisualSubjectCandidate[]
+  props: VisualSubjectCandidate[]
+  unmappedCharacters: string[]
+  error?: string
+}
 
 export interface VisualPromptRecord {
   id: string
   type: ImagePromptType
   characterId?: string
   chapterId?: string
+  visualSubjectId?: string
+  subjectLabel?: string
+  candidateKind?: VisualCandidateKind
   title: string
   prompt: string
   draftPrompt?: string
@@ -362,6 +395,10 @@ export interface ImageAssetRecord {
   id: string
   promptId: string
   promptSnapshot: string
+  basePromptSnapshot?: string
+  generationPromptSnapshot?: string
+  viewDirection?: ImageViewDirection
+  referenceImageIds?: string[]
   provider: ImageProviderType
   modelId: string
   modelName: string
