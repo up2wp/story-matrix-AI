@@ -37,8 +37,12 @@ server/data/
 
 # Claude
 .claude/
+AGENTS.md
 
 .codegraph
 .omo
+docs/brainstorms
+docs/plans
+docs/solutions
 
 scripts

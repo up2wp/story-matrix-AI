@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { db } from './db'
-import type { AIConfig, AIModelConfig, FeatureKey, NovelImportConfig, User, VoiceboxConfig } from './types'
+import type { AIConfig, AIModelConfig, FeatureKey, ImageGenerationConfig, NovelImportConfig, User, VoiceboxConfig } from './types'
 import { canUseFeature, normalizeNovelImportConfig } from './feature-permissions'
 import { useStore } from './store'
 
@@ -15,11 +15,13 @@ interface SystemConfigState {
   activeConfigId: string
   voiceboxConfig: VoiceboxConfig
   novelImportConfig: NovelImportConfig
+  imageGenerationConfig: ImageGenerationConfig
   isLoading: boolean
   loadConfig: () => Promise<void>
   toggleRegistration: () => Promise<void>
   toggleNovelImport: () => Promise<void>
   saveNovelImportConfig: (config: NovelImportConfig) => Promise<void>
+  saveImageGenerationConfig: (config: ImageGenerationConfig) => Promise<void>
   canUseFeature: (user: User | null | undefined, feature: FeatureKey) => boolean
   saveAIConfig: (config: AIConfig) => Promise<void>
   saveAIConfigs: (configs: AIModelConfig[], activeId: string) => Promise<void>
@@ -55,6 +57,49 @@ export const defaultNovelImportConfig: NovelImportConfig = {
   featurePermissions: { userGrants: [] },
 }
 
+export const defaultImageGenerationConfig: ImageGenerationConfig = {
+  enabled: false,
+  defaultModelId: '',
+  providers: [],
+  models: [],
+  storageMode: 'local',
+  immich: {
+    serviceUrl: '',
+    apiKey: '',
+    projectName: '',
+    allowPrivateNetwork: false,
+  },
+}
+
+function normalizeImageGenerationConfig(config: ImageGenerationConfig): ImageGenerationConfig {
+  const providers = Array.isArray(config.providers) ? config.providers : []
+  return {
+    ...defaultImageGenerationConfig,
+    ...config,
+    providers,
+    models: (Array.isArray(config.models) ? config.models : []).map(model => {
+      const provider = providers.find(item => item.id === model.providerId)
+      return {
+        ...model,
+        providerId: model.providerId || provider?.id || '',
+        providerModel: model.providerModel || model.model,
+        baseUrl: provider?.baseUrl || model.baseUrl,
+        apiKey: provider?.apiKey || model.apiKey,
+        capabilities: {
+          sizes: model.capabilities?.sizes || [],
+          qualities: model.capabilities?.qualities || [],
+          formats: model.capabilities?.formats || [],
+          aspectRatios: model.capabilities?.aspectRatios || [],
+          referenceImages: model.capabilities?.referenceImages === true,
+          maxReferenceImages: model.capabilities?.referenceImages === true ? Math.min(Math.max(Math.floor(model.capabilities?.maxReferenceImages || 0), 0), 3) : 0,
+        },
+      }
+    }),
+    storageMode: config.storageMode === 'immich' ? 'immich' : 'local',
+    immich: { ...defaultImageGenerationConfig.immich, ...(config.immich || {}) },
+  }
+}
+
 export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
   registrationEnabled: false,
   aiConfig: { ...defaultAIConfig },
@@ -62,6 +107,7 @@ export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
   activeConfigId: '',
   voiceboxConfig: { ...defaultVoiceboxConfig },
   novelImportConfig: { ...defaultNovelImportConfig },
+  imageGenerationConfig: { ...defaultImageGenerationConfig },
   isLoading: true,
 
   loadConfig: async () => {
@@ -69,7 +115,8 @@ export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
     if (config) {
       const voiceboxConfig = { ...defaultVoiceboxConfig, ...(config.voiceboxConfig || {}) }
       const novelImportConfig = normalizeNovelImportConfig({ ...defaultNovelImportConfig, ...(config.novelImportConfig || {}) })
-      const aiConfigs = config.aiConfigs || []
+      const imageGenerationConfig = normalizeImageGenerationConfig({ ...defaultImageGenerationConfig, ...(config.imageGenerationConfig || {}) })
+      const aiConfigs: AIModelConfig[] = config.aiConfigs || []
       const activeConfigId = config.activeConfigId || ''
       // 兼容旧数据：如果没有 aiConfigs，用现有 aiConfig 作为唯一配置
       let aiConfig = config.aiConfig || { ...defaultAIConfig }
@@ -77,11 +124,12 @@ export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
         const active = aiConfigs.find((c) => c.id === activeConfigId)
         if (active) aiConfig = { provider: active.provider, apiKey: active.apiKey, baseUrl: active.baseUrl, model: active.model, maxTokens: active.maxTokens }
       }
-      set({ registrationEnabled: config.registrationEnabled, aiConfig, aiConfigs, activeConfigId, voiceboxConfig, novelImportConfig, isLoading: false })
+      set({ registrationEnabled: config.registrationEnabled, aiConfig, aiConfigs, activeConfigId, voiceboxConfig, novelImportConfig, imageGenerationConfig, isLoading: false })
+      // 同步到全局 store
       useStore.getState().setAIConfig(aiConfig)
     } else {
-      await db.systemConfig.add({ id: 'singleton', registrationEnabled: false, aiConfig: { ...defaultAIConfig }, aiConfigs: [], activeConfigId: '', voiceboxConfig: { ...defaultVoiceboxConfig }, novelImportConfig: { ...defaultNovelImportConfig } })
-      set({ registrationEnabled: false, aiConfig: { ...defaultAIConfig }, aiConfigs: [], activeConfigId: '', voiceboxConfig: { ...defaultVoiceboxConfig }, novelImportConfig: { ...defaultNovelImportConfig }, isLoading: false })
+      await db.systemConfig.add({ id: 'singleton', registrationEnabled: false, aiConfig: { ...defaultAIConfig }, aiConfigs: [], activeConfigId: '', voiceboxConfig: { ...defaultVoiceboxConfig }, novelImportConfig: { ...defaultNovelImportConfig }, imageGenerationConfig: { ...defaultImageGenerationConfig } })
+      set({ registrationEnabled: false, aiConfig: { ...defaultAIConfig }, aiConfigs: [], activeConfigId: '', voiceboxConfig: { ...defaultVoiceboxConfig }, novelImportConfig: { ...defaultNovelImportConfig }, imageGenerationConfig: { ...defaultImageGenerationConfig }, isLoading: false })
     }
   },
 
@@ -102,6 +150,12 @@ export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
     const novelImportConfig = normalizeNovelImportConfig(config)
     await db.systemConfig.update('singleton', { novelImportConfig })
     set({ novelImportConfig })
+  },
+
+  saveImageGenerationConfig: async (config: ImageGenerationConfig) => {
+    const imageGenerationConfig = normalizeImageGenerationConfig(config)
+    await db.systemConfig.update('singleton', { imageGenerationConfig })
+    set({ imageGenerationConfig })
   },
 
   canUseFeature: (user, feature) => canUseFeature(user, get().novelImportConfig, feature),

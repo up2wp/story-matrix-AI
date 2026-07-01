@@ -171,7 +171,64 @@ export interface NovelImportConfig {
   featurePermissions?: FeaturePermissionConfig
 }
 
-export type FeatureKey = 'novelImport' | 'importBackfill'
+export type ImageProviderType = 'openai' | 'openai-compatible' | 'custom' | 'minimax'
+
+export type ImageProviderProtocol = 'openai-images' | 'openai-compatible-images' | 'minimax-image-generation'
+
+export interface ImageGenerationModelCapability {
+  sizes: string[]
+  qualities: string[]
+  formats: string[]
+  aspectRatios?: string[]
+  referenceImages?: boolean
+  maxReferenceImages?: number
+}
+
+export interface ImageGenerationProviderConfig {
+  id: string
+  type: ImageProviderType
+  label: string
+  baseUrl: string
+  apiKey?: string
+  protocol: ImageProviderProtocol
+  enabled: boolean
+  status?: 'untested' | 'ready' | 'failed'
+  statusMessage?: string
+}
+
+export interface ImageGenerationModelConfig {
+  id: string
+  label: string
+  provider: ImageProviderType
+  providerId?: string
+  baseUrl: string
+  apiKey?: string
+  model: string
+  providerModel?: string
+  enabled: boolean
+  capabilities: ImageGenerationModelCapability
+}
+
+export type ImageStorageMode = 'local' | 'immich'
+export type ImageStorageStatus = 'succeeded' | 'pendingImmichUpload' | 'storageUploadFailed' | 'failed'
+
+export interface ImmichImageStorageConfig {
+  serviceUrl: string
+  apiKey?: string
+  projectName: string
+  allowPrivateNetwork: boolean
+}
+
+export interface ImageGenerationConfig {
+  enabled: boolean
+  defaultModelId: string
+  providers: ImageGenerationProviderConfig[]
+  models: ImageGenerationModelConfig[]
+  storageMode: ImageStorageMode
+  immich: ImmichImageStorageConfig
+}
+
+export type FeatureKey = 'novelImport' | 'importBackfill' | 'imageGeneration'
 
 export interface FeaturePermissionGrant {
   userId: string
@@ -286,6 +343,89 @@ export interface WorkAudiobookConfig {
   chapterAudio: Record<string, ChapterAudioState>
 }
 
+export type ImagePromptType = 'characterFace' | 'chapterObject' | 'chapterClothing' | 'chapterProp' | 'characterFullBody'
+export type ImagePromptStatus = 'empty' | 'draft' | 'dirty' | 'saving' | 'saved' | 'saveFailed' | 'generatingImage' | 'imageFailed' | 'imageSucceeded'
+export type ImageViewDirection = 'front' | 'side' | 'back'
+export type VisualCandidateKind = 'character' | 'clothing' | 'prop'
+
+export interface VisualCharacterCandidate {
+  kind: 'character'
+  characterId: string
+  name: string
+  matchedName: string
+  evidence?: string
+}
+
+export interface VisualSubjectCandidate {
+  kind: 'clothing' | 'prop'
+  id: string
+  label: string
+  description?: string
+  characterId?: string
+  characterName?: string
+  evidence?: string
+}
+
+export interface ChapterVisualCandidateResult {
+  characters: VisualCharacterCandidate[]
+  clothing: VisualSubjectCandidate[]
+  props: VisualSubjectCandidate[]
+  unmappedCharacters: string[]
+  error?: string
+}
+
+export interface VisualPromptRecord {
+  id: string
+  type: ImagePromptType
+  characterId?: string
+  chapterId?: string
+  visualSubjectId?: string
+  subjectLabel?: string
+  candidateKind?: VisualCandidateKind
+  title: string
+  prompt: string
+  draftPrompt?: string
+  status: ImagePromptStatus
+  error?: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ImageAssetRecord {
+  id: string
+  promptId: string
+  promptSnapshot: string
+  basePromptSnapshot?: string
+  generationPromptSnapshot?: string
+  viewDirection?: ImageViewDirection
+  referenceImageIds?: string[]
+  provider: ImageProviderType
+  modelId: string
+  modelName: string
+  mimeType: string
+  width?: number
+  height?: number
+  storageMode: ImageStorageMode
+  storageStatus: ImageStorageStatus
+  assetUrl?: string
+  localAssetId?: string
+  immichAssetId?: string
+  immichFilename?: string
+  thumbnailUrl: string
+  originalUrl: string
+  createdAt: number
+  status: ImageStorageStatus
+  error?: string
+}
+
+export interface WorkVisualAssetsConfig {
+  prompts: Record<string, VisualPromptRecord>
+  images: Record<string, ImageAssetRecord>
+  promptIdsByCharacter: Record<string, string[]>
+  promptIdsByChapter: Record<string, string[]>
+  updatedAt: number
+}
+
 // --- 作品 ---
 
 export interface Work {
@@ -305,6 +445,7 @@ export interface Work {
   eventLog?: EventLogEntry[]
   eventLogConfig?: EventLogConfig
   audiobook?: WorkAudiobookConfig
+  visualAssets?: WorkVisualAssetsConfig
 }
 
 // --- AI 相关 ---
@@ -350,4 +491,5 @@ export interface SystemConfig {
   activeConfigId?: string
   voiceboxConfig?: VoiceboxConfig
   novelImportConfig?: NovelImportConfig
+  imageGenerationConfig?: ImageGenerationConfig
 }

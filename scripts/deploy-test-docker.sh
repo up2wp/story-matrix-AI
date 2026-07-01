@@ -8,6 +8,7 @@ CONTAINER_NAME="story-matrix-ai"
 DATA_DIR="$HOME/docker/story-matrix-data"
 HOST_PORT="3001"
 CONTAINER_PORT="3001"
+NOTIFY_DEPLOY="1"
 
 log() {
   printf '[deploy-test] %s\n' "$1"
@@ -20,6 +21,50 @@ fail() {
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
+}
+
+send_ntfy_notification() {
+  local status="$1"
+  local exit_code="$2"
+
+  if [[ "$NOTIFY_DEPLOY" != "1" ]]; then
+    return 0
+  fi
+
+  if [[ -z "${NTFY_URL:-}" || -z "${NTFY_TOPIC:-}" ]]; then
+    return 0
+  fi
+
+  if ! command -v curl >/dev/null 2>&1; then
+    printf '[deploy-test] WARN: curl is required to send ntfy notification.\n' >&2
+    return 0
+  fi
+
+  local ntfy_url="${NTFY_URL%/}"
+  local ntfy_topic="${NTFY_TOPIC#/}"
+  local message="Test Docker deploy ${status}: ${CONTAINER_NAME}
+Project: ${PROJECT_DIR}
+Branch: ${DEPLOY_BRANCH}
+Image: ${IMAGE_NAME}
+Exit code: ${exit_code}"
+
+  if ! curl -fsS -X POST "${ntfy_url}/${ntfy_topic}" \
+    -H "Title: Story Matrix AI test deploy" \
+    -H "Tags: docker,${status}" \
+    --data-binary "${message}" >/dev/null; then
+    printf '[deploy-test] WARN: Failed to send ntfy notification.\n' >&2
+  fi
+}
+
+notify_on_exit() {
+  local exit_code="$?"
+  local status="success"
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    status="failed"
+  fi
+
+  send_ntfy_notification "$status" "$exit_code"
 }
 
 ensure_clean_worktree() {
@@ -75,6 +120,8 @@ replace_container() {
 }
 
 main() {
+  trap notify_on_exit EXIT
+
   require_command git
   require_command docker
 
@@ -89,6 +136,7 @@ main() {
 
   log "Syncing deploy branch: $DEPLOY_BRANCH"
   if ! sync_dev_branch; then
+    NOTIFY_DEPLOY="0"
     return 0
   fi
 
