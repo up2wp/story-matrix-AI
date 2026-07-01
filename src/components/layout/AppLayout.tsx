@@ -37,6 +37,8 @@ export default function AppLayout() {
   const showAIPanel = aiPanelOpen && !NO_AI_PANEL_PATHS.includes(location.pathname)
   const showHeader = currentWork && !NO_HEADER_PATHS.includes(location.pathname)
   const isChaptersPage = location.pathname === '/chapters'
+  const isPreviewPage = location.pathname === '/preview'
+  const isFixedHeightPage = isChaptersPage || isPreviewPage
 
   useEffect(() => {
     const media = window.matchMedia('(max-width: 768px)')
@@ -116,10 +118,10 @@ ${context}
         <Sidebar />
         <Content style={{
           padding: 24,
-          overflow: isChaptersPage ? 'hidden' : 'auto',
+          overflow: isFixedHeightPage ? 'hidden' : 'auto',
           WebkitOverflowScrolling: 'touch',
-          display: isChaptersPage ? 'flex' : 'block',
-          flexDirection: isChaptersPage ? 'column' : undefined,
+          display: isFixedHeightPage ? 'flex' : 'block',
+          flexDirection: isFixedHeightPage ? 'column' : undefined,
         }}>
           {showHeader && (
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
