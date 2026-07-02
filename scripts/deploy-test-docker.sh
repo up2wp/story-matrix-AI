@@ -25,7 +25,6 @@ require_command() {
 
 send_ntfy_notification() {
   local status="$1"
-  local exit_code="$2"
 
   if [[ "$NOTIFY_DEPLOY" != "1" ]]; then
     return 0
@@ -42,15 +41,20 @@ send_ntfy_notification() {
 
   local ntfy_url="${NTFY_URL%/}"
   local ntfy_topic="${NTFY_TOPIC#/}"
-  local message="Test Docker deploy ${status}: ${CONTAINER_NAME}
-Project: ${PROJECT_DIR}
-Branch: ${DEPLOY_BRANCH}
-Image: ${IMAGE_NAME}
-Exit code: ${exit_code}"
+  local status_text="成功"
+  local tag="white_check_mark"
+
+  if [[ "$status" != "success" ]]; then
+    status_text="失败"
+    tag="x"
+  fi
+
+  local title="Story Matrix AI 测试环境部署${status_text}"
+  local message="Story Matrix AI 测试环境部署${status_text}。"
 
   if ! curl -fsS -X POST "${ntfy_url}/${ntfy_topic}" \
-    -H "Title: Story Matrix AI test deploy" \
-    -H "Tags: docker,${status}" \
+    -H "Title: ${title}" \
+    -H "Tags: docker,${tag}" \
     --data-binary "${message}" >/dev/null; then
     printf '[deploy-test] WARN: Failed to send ntfy notification.\n' >&2
   fi
@@ -64,7 +68,7 @@ notify_on_exit() {
     status="failed"
   fi
 
-  send_ntfy_notification "$status" "$exit_code"
+  send_ntfy_notification "$status"
 }
 
 ensure_clean_worktree() {
