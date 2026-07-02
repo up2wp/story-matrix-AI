@@ -23,6 +23,30 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
 }
 
+load_ntfy_env_file() {
+  local env_file=".env"
+  local line key value
+
+  [[ -f "$env_file" ]] || return 0
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%%$'\r'}"
+    line="${line#${line%%[![:space:]]*}}"
+
+    [[ "$line" =~ ^(export[[:space:]]+)?(NTFY_[A-Za-z0-9_]*)=(.*)$ ]] || continue
+
+    key="${BASH_REMATCH[2]}"
+    value="${BASH_REMATCH[3]}"
+    value="${value%%$'\r'}"
+    value="${value#\"}"
+    value="${value%\"}"
+    value="${value#\'}"
+    value="${value%\'}"
+    printf -v "$key" '%s' "$value"
+    export "$key"
+  done < "$env_file"
+}
+
 send_ntfy_notification() {
   local status="$1"
 
@@ -132,6 +156,7 @@ main() {
   [[ -d "$PROJECT_DIR" ]] || fail "Project directory does not exist: $PROJECT_DIR"
   cd "$PROJECT_DIR"
   [[ -d .git ]] || fail "Project directory is not a git repository: $PROJECT_DIR"
+  load_ntfy_env_file
 
   ensure_clean_worktree
 
