@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import { ReloadOutlined } from '@ant-design/icons'
-import { Alert, Button, Card, Empty, Select, Segmented, Space, Tag, Typography, message } from 'antd'
+import { Alert, Button, Card, Empty, Modal, Select, Segmented, Space, Tag, Typography, message } from 'antd'
 import type { ChapterVisualCandidateResult, ImageAssetRecord, ImageGenerationModelConfig, ImagePromptType, ImageViewDirection, VisualCandidateKind, VisualPromptRecord, VisualSubjectCandidate } from '@/core/types'
 import { useAuthStore } from '@/core/auth-store'
 import { db } from '@/core/db'
@@ -49,11 +49,19 @@ function legacyPromptId(type: ImagePromptType, characterId?: string, chapterId?:
 }
 
 function typeRequiresChapter(type: ImagePromptType) {
-  return type === 'chapterClothing' || type === 'chapterProp'
+  return type === 'characterFace' || type === 'chapterClothing' || type === 'chapterProp'
 }
 
 function typeUsesCandidateSubject(type: ImagePromptType) {
   return type === 'chapterClothing' || type === 'chapterProp'
+}
+
+function typeUsesChapterCharacters(type: ImagePromptType) {
+  return type === 'characterFace' || type === 'chapterClothing'
+}
+
+function typeRequiresCharacter(type: ImagePromptType) {
+  return type === 'characterFace' || type === 'chapterClothing'
 }
 
 function promptTitle(type: ImagePromptType) {
@@ -74,6 +82,19 @@ function subjectOptionLabel(candidate: VisualSubjectCandidate) {
   return candidate.characterName ? `${candidate.label} / ${candidate.characterName}` : candidate.label
 }
 
+function confirmPromptOverwrite() {
+  return new Promise<boolean>(resolve => {
+    Modal.confirm({
+      title: '覆盖未保存修改？',
+      content: '当前提示词有未保存的手写修改，生成新草稿会覆盖编辑区内容。',
+      okText: '覆盖并生成',
+      cancelText: '取消',
+      onOk: () => resolve(true),
+      onCancel: () => resolve(false),
+    })
+  })
+}
+
 export default function ImageGenerationPage() {
   const user = useAuthStore(state => state.user)
   const currentWork = useStore(state => state.currentWork)
@@ -85,7 +106,7 @@ export default function ImageGenerationPage() {
   const [characterId, setCharacterId] = useState<string | undefined>()
   const [chapterId, setChapterId] = useState<string | undefined>()
   const [visualSubjectId, setVisualSubjectId] = useState<string | undefined>()
-  const [promptDraft, setPromptDraft] = useState<{ promptId: string; text: string } | null>(null)
+  const [promptDrafts, setPromptDrafts] = useState<Record<string, string>>({})
   const [modelId, setModelId] = useState(imageGenerationConfig.defaultModelId)
   const [candidateState, setCandidateState] = useState<CandidateState>({ status: 'idle' })
   const [viewDirection, setViewDirection] = useState<ImageViewDirection>('front')
@@ -96,27 +117,42 @@ export default function ImageGenerationPage() {
 
   const editable = Boolean(currentWork && !readOnly && canUseFeature(user, 'imageGeneration'))
   const missingRequiredChapter = typeRequiresChapter(type) && !chapterId
+  const candidateStateMatchesChapter = candidateState.status !== 'idle' && candidateState.chapterId === chapterId
+  const candidateResult = candidateState.status === 'success' && candidateState.chapterId === chapterId ? candidateState.result : undefined
+  const candidateCharacters = useMemo(() => candidateResult?.characters || [], [candidateResult])
+  const chapterCharacterIds = useMemo(() => new Set(candidateCharacters.map(candidate => candidate.characterId)), [candidateCharacters])
+  const selectedCharacterId = type === 'chapterProp'
+    ? undefined
+    : typeUsesChapterCharacters(type)
+      ? (candidateResult ? (characterId && chapterCharacterIds.has(characterId) ? characterId : undefined) : (candidateStateMatchesChapter && candidateState.status === 'error' ? characterId : undefined))
+      : characterId
   const subjectCandidates = useMemo(() => {
     if (candidateState.status !== 'success' || candidateState.chapterId !== chapterId) return []
-    if (type === 'chapterClothing') return candidateState.result.clothing
+    if (type === 'chapterClothing') return selectedCharacterId ? candidateState.result.clothing.filter(candidate => candidate.characterId === selectedCharacterId) : []
     if (type === 'chapterProp') return candidateState.result.props
     return []
-  }, [candidateState, chapterId, type])
+  }, [candidateState, chapterId, selectedCharacterId, type])
+  const unmappedClothingCandidates = useMemo(() => candidateResult?.clothing.filter(candidate => !candidate.characterId) || [], [candidateResult])
   const selectedSubject = subjectCandidates.find(candidate => candidate.id === visualSubjectId)
-  const selectedVisualSubjectId = typeUsesCandidateSubject(type) ? selectedSubject?.id : undefined
-  const missingRequiredSubject = typeUsesCandidateSubject(type) && !selectedSubject
-  const promptEditable = editable && !missingRequiredChapter
-  const selectedPromptId = promptId(type, characterId, chapterId, selectedVisualSubjectId)
-  const selectedLegacyPromptId = legacyPromptId(type, characterId, chapterId)
+  const selectedVisualSubjectId = typeUsesCandidateSubject(type) ? (selectedSubject?.id || (candidateStateMatchesChapter && candidateState.status === 'error' ? visualSubjectId : undefined)) : undefined
+  const missingRequiredCharacter = typeRequiresCharacter(type) && !selectedCharacterId
+  const missingRequiredSubject = typeUsesCandidateSubject(type) && !selectedVisualSubjectId
+  const draftBlockedByCandidateError = typeRequiresChapter(type) && candidateStateMatchesChapter && candidateState.status === 'error'
+  const draftBlockedByCandidateLoading = typeRequiresChapter(type) && candidateStateMatchesChapter && candidateState.status === 'loading'
+  const promptEditable = editable && !missingRequiredChapter && !missingRequiredCharacter && !missingRequiredSubject
+  const selectedPromptId = promptId(type, selectedCharacterId, chapterId, selectedVisualSubjectId)
+  const selectedLegacyPromptId = legacyPromptId(type, selectedCharacterId, chapterId)
   const storedRecord = visualAssets.prompts[selectedPromptId]
   const record = storedRecord || (!selectedVisualSubjectId ? visualAssets.prompts[selectedLegacyPromptId] : undefined)
+  const actionCharacterId = selectedCharacterId || record?.characterId
+  const actionVisualSubjectId = selectedVisualSubjectId || record?.visualSubjectId
   const recordForActions: VisualPromptRecord | undefined = record ? {
     ...record,
     id: selectedPromptId,
     type,
-    characterId,
+    characterId: actionCharacterId,
     chapterId,
-    visualSubjectId: selectedVisualSubjectId,
+    visualSubjectId: actionVisualSubjectId,
     subjectLabel: selectedSubject?.label || record.subjectLabel,
     candidateKind: selectedSubject?.kind || record.candidateKind,
   } : undefined
@@ -147,12 +183,19 @@ export default function ImageGenerationPage() {
             ? `当前模型最多支持 ${maxReferenceImages} 张参考图，请减少选择。`
             : undefined)
     : undefined
-  const candidateCharacters = candidateState.status === 'success' && candidateState.chapterId === chapterId ? candidateState.result.characters : []
-  const characterOptions = chapterId
+  const characterOptions = typeUsesChapterCharacters(type)
     ? candidateCharacters.map(candidate => ({ value: candidate.characterId, label: candidate.evidence ? `${candidate.name} / ${candidate.evidence}` : candidate.name }))
     : currentWork?.characters.map(character => ({ value: character.id, label: character.name })) || []
+  const characterSelectDisabled = typeUsesChapterCharacters(type)
+    ? !chapterId || candidateState.status === 'loading'
+    : false
+  const subjectSelectDisabled = type === 'chapterClothing'
+    ? !chapterId || !selectedCharacterId || candidateState.status === 'loading' || candidateState.status === 'error'
+    : !chapterId || candidateState.status === 'loading' || candidateState.status === 'error'
 
-  const promptText = promptDraft?.promptId === selectedPromptId ? promptDraft.text : (record?.draftPrompt || record?.prompt || '')
+  const promptBaseText = record?.draftPrompt || record?.prompt || ''
+  const promptText = promptDrafts[selectedPromptId] ?? promptBaseText
+  const hasUnsavedPromptEdit = Object.prototype.hasOwnProperty.call(promptDrafts, selectedPromptId) && promptDrafts[selectedPromptId] !== promptBaseText
 
   if (!currentWork) return <Empty description="请先打开一个作品" />
 
@@ -175,7 +218,8 @@ export default function ImageGenerationPage() {
       setViewDirection('front')
       setReferenceImageIds([])
     }
-    if (!typeUsesCandidateSubject(nextType)) setVisualSubjectId(undefined)
+    setVisualSubjectId(undefined)
+    if (nextType === 'chapterProp') setCharacterId(undefined)
   }
 
   const handleChapterChange = (nextChapterId?: string) => {
@@ -187,11 +231,13 @@ export default function ImageGenerationPage() {
     if (nextChapterId) void loadChapterCandidates(nextChapterId)
   }
 
+  const handleCharacterChange = (nextCharacterId?: string) => {
+    setCharacterId(nextCharacterId)
+    if (type === 'chapterClothing') setVisualSubjectId(undefined)
+  }
+
   const handleSubjectChange = (nextVisualSubjectId?: string) => {
-    const nextSubject = subjectCandidates.find(candidate => candidate.id === nextVisualSubjectId)
     setVisualSubjectId(nextVisualSubjectId)
-    if (nextSubject?.characterId) setCharacterId(nextSubject.characterId)
-    if (!nextVisualSubjectId && typeUsesCandidateSubject(type)) setCharacterId(undefined)
   }
 
   const handleRefreshCandidates = () => {
@@ -211,26 +257,45 @@ export default function ImageGenerationPage() {
   }
 
   const handleGenerateDraft = async () => {
+    if (draftBlockedByCandidateLoading) {
+      message.warning('章节候选正在加载，请稍后再生成草稿')
+      return
+    }
+    if (draftBlockedByCandidateError) {
+      message.warning('章节候选提取失败，请先刷新候选后再生成新草稿')
+      return
+    }
     if (missingRequiredChapter) {
-      message.warning('请先选择章节，再生成章节服饰或章节道具提示词')
+      message.warning('请先选择章节，再生成当前类型提示词')
+      return
+    }
+    if (missingRequiredCharacter) {
+      message.warning(type === 'chapterClothing' ? '请先选择本章角色，再选择该角色服饰' : '请先选择本章角色')
       return
     }
     if (missingRequiredSubject) {
-      message.warning('请先选择章节候选主体，再生成章节服饰或章节道具提示词')
+      message.warning(type === 'chapterClothing' ? '请先选择该角色的服饰候选' : '请先选择章节道具候选')
+      return
+    }
+    if (hasUnsavedPromptEdit && !(await confirmPromptOverwrite())) {
       return
     }
     const candidateKind = subjectKind(type)
-    const draft = await generatePromptDraft(type, characterId, chapterId, selectedSubject && candidateKind ? { visualSubjectId: selectedSubject.id, subjectLabel: selectedSubject.label, candidateKind } : undefined)
-    if (draft?.draftPrompt) setPromptDraft({ promptId: draft.id, text: draft.draftPrompt })
+    const draft = await generatePromptDraft(type, selectedCharacterId, chapterId, selectedSubject && candidateKind ? { visualSubjectId: selectedSubject.id, subjectLabel: selectedSubject.label, subjectDescription: selectedSubject.description, subjectEvidence: selectedSubject.evidence, candidateKind } : undefined)
+    if (draft?.draftPrompt) setPromptDrafts(current => ({ ...current, [draft.id]: draft.draftPrompt || '' }))
   }
 
   const handleSave = async () => {
     if (missingRequiredChapter) {
-      message.warning('请先选择章节，再保存章节服饰或章节道具提示词')
+      message.warning('请先选择章节，再保存当前类型提示词')
+      return
+    }
+    if (missingRequiredCharacter) {
+      message.warning(type === 'chapterClothing' ? '请先选择本章角色，再选择该角色服饰' : '请先选择本章角色')
       return
     }
     if (missingRequiredSubject) {
-      message.warning('请先选择章节候选主体，再保存章节服饰或章节道具提示词')
+      message.warning(type === 'chapterClothing' ? '请先选择该角色的服饰候选' : '请先选择章节道具候选')
       return
     }
     const candidateKind = subjectKind(type)
@@ -238,7 +303,7 @@ export default function ImageGenerationPage() {
       ...(recordForActions || {}),
       id: selectedPromptId,
       type,
-      characterId,
+      characterId: selectedCharacterId,
       chapterId,
       visualSubjectId: selectedSubject?.id,
       subjectLabel: selectedSubject?.label,
@@ -250,6 +315,11 @@ export default function ImageGenerationPage() {
       updatedAt: Date.now(),
     }
     await savePrompt(nextRecord, promptText)
+    setPromptDrafts(current => {
+      const next = { ...current }
+      delete next[selectedPromptId]
+      return next
+    })
   }
 
   const handleCopy = async () => {
@@ -258,7 +328,7 @@ export default function ImageGenerationPage() {
   }
 
   const handleGenerateImage = async () => {
-    if (!recordForActions || !effectiveModelId) return
+    if (!recordForActions || !effectiveModelId || missingRequiredChapter) return
     if (referenceGenerateBlockReason) {
       message.warning(referenceGenerateBlockReason)
       return
@@ -297,6 +367,31 @@ export default function ImageGenerationPage() {
       )
     }
     return <Text type="secondary">点击刷新候选，加载当前章节的 AI 视觉主体。</Text>
+  }
+
+  const renderCharacterStatus = () => {
+    if (!typeUsesChapterCharacters(type)) return null
+    if (!chapterId) return <Text type="secondary">请先选择章节，再加载本章角色。</Text>
+    if (candidateState.status === 'loading') return <Text type="secondary">正在提取本章角色。</Text>
+    if (candidateState.status === 'error') return <Text type="danger">候选提取失败，已有记录可继续查看；刷新后可重新加载本章角色。</Text>
+    if (candidateState.status === 'success' && candidateState.chapterId === chapterId && !candidateCharacters.length) return <Text type="warning">本章未识别到作品角色，可刷新候选重试。</Text>
+    return null
+  }
+
+  const renderSubjectStatus = () => {
+    if (type === 'chapterClothing') {
+      if (!selectedCharacterId) return <Text type="secondary">请先选择本章角色，再选择该角色服饰。</Text>
+      if (candidateState.status === 'loading') return <Text type="secondary">正在提取本章服饰。</Text>
+      if (candidateState.status === 'error') return <Text type="danger">候选提取失败，已有记录可继续查看；刷新后可重新加载服饰。</Text>
+      if (candidateState.status === 'success' && candidateState.chapterId === chapterId && !subjectCandidates.length) return <Text type="warning">该角色本章未识别到映射服饰{unmappedClothingCandidates.length ? `；另有 ${unmappedClothingCandidates.length} 个未关联服饰未进入角色下拉。` : '。'}</Text>
+    }
+    if (type === 'chapterProp') {
+      if (!chapterId) return <Text type="secondary">请先选择章节，再选择本章道具。</Text>
+      if (candidateState.status === 'loading') return <Text type="secondary">正在提取本章道具。</Text>
+      if (candidateState.status === 'error') return <Text type="danger">候选提取失败，已有记录可继续查看；刷新后可重新加载道具。</Text>
+      if (candidateState.status === 'success' && candidateState.chapterId === chapterId && !subjectCandidates.length) return <Text type="warning">本章未识别到可生成道具，可刷新候选重试。</Text>
+    }
+    return null
   }
 
   const referenceControls = type === 'characterFullBody' ? (
@@ -346,8 +441,8 @@ export default function ImageGenerationPage() {
       <div className="image-generation-layout">
         <Card title="筛选视觉记录" className="image-generation-panel">
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-            <Select value={type} onChange={handleTypeChange} options={PROMPT_TYPES} />
-            <Select allowClear value={chapterId} onChange={handleChapterChange} placeholder="选择章节" options={currentWork.chapters.map(chapter => ({ value: chapter.id, label: chapter.title }))} />
+            <Select value={type} onChange={handleTypeChange} options={PROMPT_TYPES} style={{ width: '100%' }} />
+            <Select allowClear value={chapterId} onChange={handleChapterChange} placeholder="选择章节" options={currentWork.chapters.map(chapter => ({ value: chapter.id, label: chapter.title }))} style={{ width: '100%' }} />
             <Space direction="vertical" size={8} style={{ width: '100%' }}>
               <Space wrap align="center">
                 <Text strong>章节候选</Text>
@@ -355,16 +450,21 @@ export default function ImageGenerationPage() {
               </Space>
               {renderCandidateStatus()}
             </Space>
-            <Select
-              allowClear
-              value={characterId}
-              onChange={setCharacterId}
-              placeholder={chapterId ? '选择本章映射角色' : '选择角色'}
-              loading={candidateState.status === 'loading'}
-              disabled={Boolean(chapterId && candidateState.status === 'loading')}
-              options={characterOptions}
-              notFoundContent={chapterId ? '本章未识别到作品角色' : '暂无角色'}
-            />
+            {type !== 'chapterProp' && (
+              <Select
+                allowClear
+                value={characterId}
+                onChange={handleCharacterChange}
+                placeholder={chapterId ? '选择本章映射角色' : '选择角色'}
+                loading={candidateState.status === 'loading'}
+                disabled={characterSelectDisabled}
+                options={characterOptions}
+                notFoundContent={chapterId ? '本章未识别到作品角色' : '暂无角色'}
+                style={{ width: '100%' }}
+              />
+            )}
+            {renderCharacterStatus()}
+            {type === 'chapterClothing' && unmappedClothingCandidates.length > 0 && <Text type="secondary">未关联服饰：{unmappedClothingCandidates.map(candidate => candidate.label).join('、')}</Text>}
             {typeUsesCandidateSubject(type) && (
               <Select
                 allowClear
@@ -372,30 +472,33 @@ export default function ImageGenerationPage() {
                 onChange={handleSubjectChange}
                 placeholder={type === 'chapterClothing' ? '选择章节服饰候选' : '选择章节道具候选'}
                 loading={candidateState.status === 'loading'}
-                disabled={!chapterId || candidateState.status === 'loading' || candidateState.status === 'error'}
+                disabled={subjectSelectDisabled}
                 options={subjectCandidates.map(candidate => ({ value: candidate.id, label: subjectOptionLabel(candidate) }))}
                 notFoundContent={chapterId ? '本章暂无对应候选' : '请先选择章节'}
+                style={{ width: '100%' }}
               />
             )}
+            {renderSubjectStatus()}
             <ImageModelSelector models={imageGenerationConfig.models} value={effectiveModelId} onChange={setModelId} />
           </Space>
         </Card>
 
         <Card title="提示词编辑" className="image-generation-panel image-generation-main">
           {missingRequiredChapter && <Alert style={{ marginBottom: 12 }} type="info" showIcon message="请先选择章节" description="章节服饰和章节道具提示词需要章节标题、摘要、场景信息和小段摘录作为上下文。" />}
-          {missingRequiredSubject && !missingRequiredChapter && <Alert style={{ marginBottom: 12 }} type="info" showIcon message="请先选择章节候选主体" description="章节服饰和章节道具会按候选主体保存独立提示词记录，避免同一章节内多个素材互相覆盖。" />}
+          {missingRequiredCharacter && !missingRequiredChapter && <Alert style={{ marginBottom: 12 }} type="info" showIcon message="请先选择本章角色" description={type === 'chapterClothing' ? '章节服饰需要先选择本章出现的作品角色，再选择该角色服饰。' : '高清头像需要先选择本章出现的作品角色。'} />}
+          {missingRequiredSubject && !missingRequiredChapter && !missingRequiredCharacter && <Alert style={{ marginBottom: 12 }} type="info" showIcon message="请先选择章节候选主体" description={type === 'chapterClothing' ? '章节服饰会按角色和服饰候选保存独立提示词记录。' : '章节道具会按道具候选保存独立提示词记录，避免同一章节内多个素材互相覆盖。'} />}
           <ImagePromptEditor
             record={recordForActions}
             value={promptText}
             editable={promptEditable}
             generatingPrompt={generatingPromptId === selectedPromptId}
             generatingImage={generatingImagePromptId === selectedPromptId}
-            draftDisabled={missingRequiredChapter || missingRequiredSubject}
-            saveDisabled={missingRequiredChapter || missingRequiredSubject}
+            draftDisabled={missingRequiredChapter || missingRequiredCharacter || missingRequiredSubject}
+            saveDisabled={missingRequiredChapter || missingRequiredCharacter || missingRequiredSubject}
             generateDisabled={Boolean(referenceGenerateBlockReason)}
             generateDisabledReason={referenceGenerateBlockReason}
             generationControls={referenceControls}
-            onChange={text => setPromptDraft({ promptId: selectedPromptId, text })}
+            onChange={text => setPromptDrafts(current => ({ ...current, [selectedPromptId]: text }))}
             onGenerateDraft={handleGenerateDraft}
             onSave={handleSave}
             onCopy={handleCopy}

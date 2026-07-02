@@ -6,6 +6,7 @@ import { useStore } from '@/core/store'
 import { useSystemConfigStore } from '@/core/system-config-store'
 import { buildImagePromptInstruction, IMAGE_PROMPT_SYSTEM_PROMPT } from '@/ai/prompts/imageGeneration'
 import { buildImagePromptContext } from './promptContext'
+import type { ImagePromptSubjectContext } from './promptContext'
 import { emptyVisualAssets, visualAssetDelta } from './visualAssetState'
 import { imageGenerationClient } from './imageGenerationClient'
 
@@ -56,12 +57,12 @@ export function useImageGeneration() {
     })
   }
 
-  const generatePromptDraft = async (type: ImagePromptType, characterId?: string, chapterId?: string, subject?: { visualSubjectId?: string; subjectLabel?: string; candidateKind?: VisualPromptRecord['candidateKind'] }) => {
+  const generatePromptDraft = async (type: ImagePromptType, characterId?: string, chapterId?: string, subject?: ImagePromptSubjectContext) => {
     if (!currentWork) return undefined
     const id = promptId(type, characterId, chapterId, subject?.visualSubjectId)
     setGeneratingPromptId(id)
     try {
-      const context = buildImagePromptContext(currentWork, type, characterId, chapterId)
+      const context = buildImagePromptContext(currentWork, type, characterId, chapterId, subject)
       const instruction = buildImagePromptInstruction(type, context)
       const { prompt } = await imageGenerationClient.prompt({ workId: currentWork.id, systemPrompt: IMAGE_PROMPT_SYSTEM_PROMPT, instruction, context })
       const record: VisualPromptRecord = {
