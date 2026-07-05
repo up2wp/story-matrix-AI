@@ -27,6 +27,9 @@ const VIEW_DIRECTION_OPTIONS: Array<{ value: ImageViewDirection; label: string }
   { value: 'back', label: '背面' },
 ]
 
+const CHARACTER_OPTION_PREFIX = 'character:'
+const BYSTANDER_OPTION_PREFIX = 'bystander:'
+
 type CandidateState =
   | { status: 'idle'; chapterId?: string }
   | { status: 'loading'; chapterId: string }
@@ -42,6 +45,23 @@ interface EligibleReferenceImage {
 
 function promptId(type: ImagePromptType, characterId?: string, chapterId?: string, visualSubjectId?: string) {
   return [type, characterId || 'none', chapterId || 'none', visualSubjectId || 'none'].join(':')
+}
+
+function characterOptionValue(characterId: string) {
+  return `${CHARACTER_OPTION_PREFIX}${characterId}`
+}
+
+function bystanderOptionValue(candidateId: string) {
+  return `${BYSTANDER_OPTION_PREFIX}${candidateId}`
+}
+
+function selectedOptionCharacterId(value: string | undefined) {
+  if (!value || value.startsWith(BYSTANDER_OPTION_PREFIX)) return undefined
+  return value.startsWith(CHARACTER_OPTION_PREFIX) ? value.slice(CHARACTER_OPTION_PREFIX.length) : value
+}
+
+function selectedOptionBystanderId(value: string | undefined) {
+  return value?.startsWith(BYSTANDER_OPTION_PREFIX) ? value.slice(BYSTANDER_OPTION_PREFIX.length) : undefined
 }
 
 function legacyPromptId(type: ImagePromptType, characterId?: string, chapterId?: string) {
@@ -120,32 +140,41 @@ export default function ImageGenerationPage() {
   const candidateStateMatchesChapter = candidateState.status !== 'idle' && candidateState.chapterId === chapterId
   const candidateResult = candidateState.status === 'success' && candidateState.chapterId === chapterId ? candidateState.result : undefined
   const candidateCharacters = useMemo(() => candidateResult?.characters || [], [candidateResult])
-  const chapterCharacterIds = useMemo(() => new Set(candidateCharacters.map(candidate => candidate.characterId)), [candidateCharacters])
+  const candidateBystanders = useMemo(() => candidateResult?.bystanders || [], [candidateResult])
+  const chapterCharacterOptionValues = useMemo(() => new Set(candidateCharacters.map(candidate => characterOptionValue(candidate.characterId))), [candidateCharacters])
+  const selectedBystanderId = typeUsesChapterCharacters(type) ? selectedOptionBystanderId(characterId) : undefined
+  const selectedBystander = selectedBystanderId ? candidateBystanders.find(candidate => candidate.id === selectedBystanderId) : undefined
   const selectedCharacterId = type === 'chapterProp'
     ? undefined
     : typeUsesChapterCharacters(type)
-      ? (candidateResult ? (characterId && chapterCharacterIds.has(characterId) ? characterId : undefined) : (candidateStateMatchesChapter && candidateState.status === 'error' ? characterId : undefined))
+      ? (candidateResult ? (characterId && chapterCharacterOptionValues.has(characterId) ? selectedOptionCharacterId(characterId) : undefined) : (candidateStateMatchesChapter && candidateState.status === 'error' ? selectedOptionCharacterId(characterId) : undefined))
       : characterId
+  const selectedPersonSubjectId = selectedBystander ? selectedBystander.id : undefined
   const subjectCandidates = useMemo(() => {
     if (candidateState.status !== 'success' || candidateState.chapterId !== chapterId) return []
-    if (type === 'chapterClothing') return selectedCharacterId ? candidateState.result.clothing.filter(candidate => candidate.characterId === selectedCharacterId) : []
+    if (type === 'chapterClothing') {
+      if (selectedCharacterId) return candidateState.result.clothing.filter(candidate => candidate.characterId === selectedCharacterId)
+      if (selectedBystander) return candidateState.result.clothing.filter(candidate => candidate.characterCandidateId === selectedBystander.id)
+      return []
+    }
     if (type === 'chapterProp') return candidateState.result.props
     return []
-  }, [candidateState, chapterId, selectedCharacterId, type])
-  const unmappedClothingCandidates = useMemo(() => candidateResult?.clothing.filter(candidate => !candidate.characterId) || [], [candidateResult])
+  }, [candidateState, chapterId, selectedBystander, selectedCharacterId, type])
+  const unmappedClothingCandidates = useMemo(() => candidateResult?.clothing.filter(candidate => !candidate.characterId && !candidate.characterCandidateId) || [], [candidateResult])
   const selectedSubject = subjectCandidates.find(candidate => candidate.id === visualSubjectId)
   const selectedVisualSubjectId = typeUsesCandidateSubject(type) ? (selectedSubject?.id || (candidateStateMatchesChapter && candidateState.status === 'error' ? visualSubjectId : undefined)) : undefined
-  const missingRequiredCharacter = typeRequiresCharacter(type) && !selectedCharacterId
+  const selectedPromptSubjectId = selectedVisualSubjectId || selectedPersonSubjectId
+  const missingRequiredCharacter = typeRequiresCharacter(type) && !selectedCharacterId && !selectedBystander
   const missingRequiredSubject = typeUsesCandidateSubject(type) && !selectedVisualSubjectId
   const draftBlockedByCandidateError = typeRequiresChapter(type) && candidateStateMatchesChapter && candidateState.status === 'error'
   const draftBlockedByCandidateLoading = typeRequiresChapter(type) && candidateStateMatchesChapter && candidateState.status === 'loading'
   const promptEditable = editable && !missingRequiredChapter && !missingRequiredCharacter && !missingRequiredSubject
-  const selectedPromptId = promptId(type, selectedCharacterId, chapterId, selectedVisualSubjectId)
+  const selectedPromptId = promptId(type, selectedCharacterId, chapterId, selectedPromptSubjectId)
   const selectedLegacyPromptId = legacyPromptId(type, selectedCharacterId, chapterId)
   const storedRecord = visualAssets.prompts[selectedPromptId]
-  const record = storedRecord || (!selectedVisualSubjectId ? visualAssets.prompts[selectedLegacyPromptId] : undefined)
+  const record = storedRecord || (!selectedPromptSubjectId ? visualAssets.prompts[selectedLegacyPromptId] : undefined)
   const actionCharacterId = selectedCharacterId || record?.characterId
-  const actionVisualSubjectId = selectedVisualSubjectId || record?.visualSubjectId
+  const actionVisualSubjectId = selectedPromptSubjectId || record?.visualSubjectId
   const recordForActions: VisualPromptRecord | undefined = record ? {
     ...record,
     id: selectedPromptId,
@@ -153,8 +182,8 @@ export default function ImageGenerationPage() {
     characterId: actionCharacterId,
     chapterId,
     visualSubjectId: actionVisualSubjectId,
-    subjectLabel: selectedSubject?.label || record.subjectLabel,
-    candidateKind: selectedSubject?.kind || record.candidateKind,
+    subjectLabel: selectedSubject?.label || selectedBystander?.name || record.subjectLabel,
+    candidateKind: selectedSubject?.kind || (selectedBystander ? 'bystander' : undefined) || record.candidateKind,
   } : undefined
   const images = useMemo(() => Object.values(visualAssets.images).filter(image => image.promptId === selectedPromptId).sort((a, b) => b.createdAt - a.createdAt), [selectedPromptId, visualAssets.images])
   const effectiveModelId = modelId || imageGenerationConfig.defaultModelId
@@ -184,13 +213,16 @@ export default function ImageGenerationPage() {
             : undefined)
     : undefined
   const characterOptions = typeUsesChapterCharacters(type)
-    ? candidateCharacters.map(candidate => ({ value: candidate.characterId, label: candidate.evidence ? `${candidate.name} / ${candidate.evidence}` : candidate.name }))
+    ? [
+        ...candidateCharacters.map(candidate => ({ value: characterOptionValue(candidate.characterId), label: candidate.evidence ? `作品角色 / ${candidate.name} / ${candidate.evidence}` : `作品角色 / ${candidate.name}` })),
+        ...candidateBystanders.map(candidate => ({ value: bystanderOptionValue(candidate.id), label: candidate.evidence ? `本章未关联人物 / ${candidate.name} / ${candidate.evidence}` : `本章未关联人物 / ${candidate.name}` })),
+      ]
     : currentWork?.characters.map(character => ({ value: character.id, label: character.name })) || []
   const characterSelectDisabled = typeUsesChapterCharacters(type)
     ? !chapterId || candidateState.status === 'loading'
     : false
   const subjectSelectDisabled = type === 'chapterClothing'
-    ? !chapterId || !selectedCharacterId || candidateState.status === 'loading' || candidateState.status === 'error'
+    ? !chapterId || (!selectedCharacterId && !selectedBystander) || candidateState.status === 'loading' || candidateState.status === 'error'
     : !chapterId || candidateState.status === 'loading' || candidateState.status === 'error'
 
   const promptBaseText = record?.draftPrompt || record?.prompt || ''
@@ -270,7 +302,7 @@ export default function ImageGenerationPage() {
       return
     }
     if (missingRequiredCharacter) {
-      message.warning(type === 'chapterClothing' ? '请先选择本章角色，再选择该角色服饰' : '请先选择本章角色')
+      message.warning(type === 'chapterClothing' ? '请先选择本章人物，再选择该人物服饰' : '请先选择本章人物')
       return
     }
     if (missingRequiredSubject) {
@@ -281,7 +313,12 @@ export default function ImageGenerationPage() {
       return
     }
     const candidateKind = subjectKind(type)
-    const draft = await generatePromptDraft(type, selectedCharacterId, chapterId, selectedSubject && candidateKind ? { visualSubjectId: selectedSubject.id, subjectLabel: selectedSubject.label, subjectDescription: selectedSubject.description, subjectEvidence: selectedSubject.evidence, candidateKind } : undefined)
+    const draftSubject = selectedSubject && candidateKind
+      ? { visualSubjectId: selectedSubject.id, subjectLabel: selectedSubject.label, subjectDescription: selectedSubject.description, subjectEvidence: selectedSubject.evidence, subjectCharacterLabel: selectedBystander?.name || selectedSubject.characterName, candidateKind }
+      : selectedBystander
+        ? { visualSubjectId: selectedBystander.id, subjectLabel: selectedBystander.name, subjectEvidence: selectedBystander.evidence, candidateKind: 'bystander' as const }
+        : undefined
+    const draft = await generatePromptDraft(type, selectedCharacterId, chapterId, draftSubject)
     if (draft?.draftPrompt) setPromptDrafts(current => ({ ...current, [draft.id]: draft.draftPrompt || '' }))
   }
 
@@ -291,7 +328,7 @@ export default function ImageGenerationPage() {
       return
     }
     if (missingRequiredCharacter) {
-      message.warning(type === 'chapterClothing' ? '请先选择本章角色，再选择该角色服饰' : '请先选择本章角色')
+      message.warning(type === 'chapterClothing' ? '请先选择本章人物，再选择该人物服饰' : '请先选择本章人物')
       return
     }
     if (missingRequiredSubject) {
@@ -305,9 +342,9 @@ export default function ImageGenerationPage() {
       type,
       characterId: selectedCharacterId,
       chapterId,
-      visualSubjectId: selectedSubject?.id,
-      subjectLabel: selectedSubject?.label,
-      candidateKind,
+      visualSubjectId: selectedPromptSubjectId,
+      subjectLabel: selectedSubject?.label || selectedBystander?.name,
+      candidateKind: candidateKind || (selectedBystander ? 'bystander' : undefined),
       title: promptTitle(type),
       prompt: recordForActions?.prompt || '',
       status: recordForActions?.status || 'empty',
@@ -357,10 +394,10 @@ export default function ImageGenerationPage() {
     if (candidateState.status === 'loading') return <Alert type="info" showIcon message="正在提取当前章节视觉候选" />
     if (candidateState.status === 'error') return <Alert type="error" showIcon message={candidateState.error} />
     if (candidateState.status === 'success' && candidateState.chapterId === chapterId) {
-      const total = candidateState.result.characters.length + candidateState.result.clothing.length + candidateState.result.props.length
+      const total = candidateState.result.characters.length + candidateState.result.bystanders.length + candidateState.result.clothing.length + candidateState.result.props.length
       return (
         <Space direction="vertical" size={4} style={{ width: '100%' }}>
-          <Text type={total ? 'secondary' : 'warning'}>{total ? `已加载 ${candidateState.result.characters.length} 个角色、${candidateState.result.clothing.length} 个服饰、${candidateState.result.props.length} 个道具候选。` : '本章暂未提取到可用视觉候选。'}</Text>
+          <Text type={total ? 'secondary' : 'warning'}>{total ? `已加载 ${candidateState.result.characters.length} 个作品角色、${candidateState.result.bystanders.length} 个未关联人物、${candidateState.result.clothing.length} 个服饰、${candidateState.result.props.length} 个道具候选。` : '本章暂未提取到可用视觉候选。'}</Text>
           {candidateState.result.unmappedCharacters.length > 0 && <Text type="secondary">未映射角色：{candidateState.result.unmappedCharacters.join('、')}</Text>}
           {candidateState.error && <Text type="warning">{candidateState.error}</Text>}
         </Space>
@@ -374,13 +411,13 @@ export default function ImageGenerationPage() {
     if (!chapterId) return <Text type="secondary">请先选择章节，再加载本章角色。</Text>
     if (candidateState.status === 'loading') return <Text type="secondary">正在提取本章角色。</Text>
     if (candidateState.status === 'error') return <Text type="danger">候选提取失败，已有记录可继续查看；刷新后可重新加载本章角色。</Text>
-    if (candidateState.status === 'success' && candidateState.chapterId === chapterId && !candidateCharacters.length) return <Text type="warning">本章未识别到作品角色，可刷新候选重试。</Text>
+    if (candidateState.status === 'success' && candidateState.chapterId === chapterId && !candidateCharacters.length && !candidateBystanders.length) return <Text type="warning">本章未识别到可用于生图的人物，可刷新候选重试。</Text>
     return null
   }
 
   const renderSubjectStatus = () => {
     if (type === 'chapterClothing') {
-      if (!selectedCharacterId) return <Text type="secondary">请先选择本章角色，再选择该角色服饰。</Text>
+      if (!selectedCharacterId && !selectedBystander) return <Text type="secondary">请先选择本章人物，再选择该人物服饰。</Text>
       if (candidateState.status === 'loading') return <Text type="secondary">正在提取本章服饰。</Text>
       if (candidateState.status === 'error') return <Text type="danger">候选提取失败，已有记录可继续查看；刷新后可重新加载服饰。</Text>
       if (candidateState.status === 'success' && candidateState.chapterId === chapterId && !subjectCandidates.length) return <Text type="warning">该角色本章未识别到映射服饰{unmappedClothingCandidates.length ? `；另有 ${unmappedClothingCandidates.length} 个未关联服饰未进入角色下拉。` : '。'}</Text>
@@ -459,7 +496,7 @@ export default function ImageGenerationPage() {
                 loading={candidateState.status === 'loading'}
                 disabled={characterSelectDisabled}
                 options={characterOptions}
-                notFoundContent={chapterId ? '本章未识别到作品角色' : '暂无角色'}
+                notFoundContent={chapterId ? '本章未识别到可选人物' : '暂无角色'}
                 style={{ width: '100%' }}
               />
             )}
