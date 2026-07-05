@@ -374,7 +374,18 @@ export interface VisualSubjectCandidate {
   evidence?: string
 }
 
+export interface VisualExtractedCharacter {
+  name: string
+  alias_in_text: string[]
+  mapping_status: 'matched' | 'new_character'
+  matched_character: string
+  character_type: 'protagonist' | 'supporting' | 'unknown'
+  context_summary: string
+  first_mention: string
+}
+
 export interface ChapterVisualCandidateResult {
+  extracted_characters: VisualExtractedCharacter[]
   characters: VisualCharacterCandidate[]
   bystanders: VisualBystanderCandidate[]
   clothing: VisualSubjectCandidate[]
