@@ -32,7 +32,17 @@ export interface ImagePromptSubjectContext {
   subjectLabel?: string
   subjectDescription?: string
   subjectEvidence?: string
-  candidateKind?: 'character' | 'clothing' | 'prop'
+  subjectCharacterLabel?: string
+  candidateKind?: 'character' | 'bystander' | 'clothing' | 'prop'
+}
+
+function candidatePersonLine(subject: ImagePromptSubjectContext | undefined) {
+  if (!subject?.subjectLabel || subject.candidateKind !== 'bystander') return characterLine(undefined)
+  return [
+    `章节人物：${subject.subjectLabel}`,
+    '定位：本章未关联人物',
+    subject.subjectEvidence ? `章节证据：${compact(subject.subjectEvidence)}` : '',
+  ].filter(Boolean).join('\n')
 }
 
 function subjectLine(subject: ImagePromptSubjectContext | undefined) {
@@ -40,6 +50,7 @@ function subjectLine(subject: ImagePromptSubjectContext | undefined) {
   return [
     `当前视觉主体：${subject.subjectLabel || '未命名'}`,
     subject.candidateKind ? `主体类型：${subject.candidateKind}` : '',
+    subject.subjectCharacterLabel ? `关联章节人物：${compact(subject.subjectCharacterLabel)}` : '',
     subject.subjectDescription ? `主体描述：${compact(subject.subjectDescription)}` : '',
     subject.subjectEvidence ? `章节证据：${compact(subject.subjectEvidence)}` : '',
   ].filter(Boolean).join('\n')
@@ -87,7 +98,7 @@ export function buildImagePromptContext(work: Work, type: ImagePromptType, chara
   return [
     `作品基调：${work.seed.tone || '暂无'}`,
     `类型：${work.seed.genre}${work.seed.subGenre ? ` / ${work.seed.subGenre}` : ''}`,
-    characterLine(character),
+    character ? characterLine(character) : candidatePersonLine(subject),
     needsChapter ? chapterLine(chapter) : '',
     subjectLine(subject),
     type === 'characterFullBody' ? `已保存视觉信息：\n${savedPrompts || '暂无'}` : '',

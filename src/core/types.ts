@@ -346,7 +346,7 @@ export interface WorkAudiobookConfig {
 export type ImagePromptType = 'characterFace' | 'chapterObject' | 'chapterClothing' | 'chapterProp' | 'characterFullBody'
 export type ImagePromptStatus = 'empty' | 'draft' | 'dirty' | 'saving' | 'saved' | 'saveFailed' | 'generatingImage' | 'imageFailed' | 'imageSucceeded'
 export type ImageViewDirection = 'front' | 'side' | 'back'
-export type VisualCandidateKind = 'character' | 'clothing' | 'prop'
+export type VisualCandidateKind = 'character' | 'bystander' | 'clothing' | 'prop'
 
 export interface VisualCharacterCandidate {
   kind: 'character'
@@ -356,18 +356,27 @@ export interface VisualCharacterCandidate {
   evidence?: string
 }
 
+export interface VisualBystanderCandidate {
+  kind: 'bystander'
+  id: string
+  name: string
+  evidence?: string
+}
+
 export interface VisualSubjectCandidate {
   kind: 'clothing' | 'prop'
   id: string
   label: string
   description?: string
   characterId?: string
+  characterCandidateId?: string
   characterName?: string
   evidence?: string
 }
 
 export interface ChapterVisualCandidateResult {
   characters: VisualCharacterCandidate[]
+  bystanders: VisualBystanderCandidate[]
   clothing: VisualSubjectCandidate[]
   props: VisualSubjectCandidate[]
   unmappedCharacters: string[]

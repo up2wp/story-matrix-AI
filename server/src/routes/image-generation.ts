@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -251,28 +251,47 @@ function safeText(value: string | undefined, maxLength = 80) {
   return compact(value).slice(0, maxLength)
 }
 
-function mapCharacterName(work: WorkData, name: string | undefined) {
-  const normalized = safeText(name).toLowerCase()
-  if (!normalized) return undefined
-  return (work.characters || []).find(character => {
-    const names = [character.id, character.name, ...(character.tags || [])].map(item => String(item || '').trim().toLowerCase()).filter(Boolean)
-    return names.includes(normalized) || names.some(item => normalized.includes(item) || item.includes(normalized))
-  })
+function normalizeCandidateKey(value: string | undefined) {
+  return safeText(value).toLowerCase().replace(/[\s·・,，。.!！?？:：;；「」『』“”"'()（）\[\]【】]/g, '')
 }
 
-function candidateId(kind: 'clothing' | 'prop', label: string, index: number) {
+function mapCharacterName(work: WorkData, name: string | undefined) {
+  const normalized = normalizeCandidateKey(name)
+  if (!normalized) return undefined
+  const matches = (work.characters || []).filter(character => {
+    const names = [character.id, character.name, ...(character.tags || [])].map(item => normalizeCandidateKey(String(item || ''))).filter(Boolean)
+    return names.includes(normalized)
+  })
+  return matches.length === 1 ? matches[0] : undefined
+}
+
+function candidateId(kind: 'bystander' | 'clothing' | 'prop', label: string, index: number, evidence?: string) {
   const slug = label.trim().toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 36)
-  return `${kind}:${slug || index + 1}`
+  const hash = createHash('sha1').update(`${kind}:${label}:${index}:${safeText(evidence, 80)}`).digest('hex').slice(0, 8)
+  return `${kind}:${slug || index + 1}:${hash}`
 }
 
 function mapCandidateResponse(work: WorkData, response: CandidateAIResponse) {
   const seenCharacters = new Set<string>()
-  const unmappedCharacters = new Set<string>()
+  const seenBystanders = new Set<string>()
+  const bystanders: Array<{ kind: 'bystander'; id: string; name: string; evidence?: string }> = []
+  const addBystander = (rawName: string | undefined, evidence: string | undefined, index: number) => {
+    const name = safeText(rawName, 40)
+    if (!name) return undefined
+    const key = normalizeCandidateKey(name)
+    const existing = bystanders.find(item => normalizeCandidateKey(item.name) === key)
+    if (existing) return existing
+    const bystander = { kind: 'bystander' as const, id: candidateId('bystander', name, index, evidence), name, evidence: safeText(evidence, 60) }
+    if (!seenBystanders.has(bystander.id)) {
+      seenBystanders.add(bystander.id)
+      bystanders.push(bystander)
+    }
+    return bystander
+  }
   const characters = (response.characters || []).flatMap(item => {
     const matched = mapCharacterName(work, item.name)
     if (!matched) {
-      const name = safeText(item.name, 40)
-      if (name) unmappedCharacters.add(name)
+      addBystander(item.name, item.evidence, bystanders.length)
       return []
     }
     if (seenCharacters.has(matched.id)) return []
@@ -281,10 +300,11 @@ function mapCandidateResponse(work: WorkData, response: CandidateAIResponse) {
   })
   const mapSubjects = (items: CandidateSubjectInput[] | undefined, kind: 'clothing' | 'prop') => (items || []).map((item, index) => {
     const matched = mapCharacterName(work, item.characterName)
+    const bystander = matched ? undefined : addBystander(item.characterName, item.evidence, bystanders.length + index)
     const label = safeText(item.label, 60) || (kind === 'clothing' ? '未命名服饰' : '未命名道具')
-    return { kind, id: candidateId(kind, label, index), label, description: safeText(item.description, 120), characterId: matched?.id, characterName: matched?.name, evidence: safeText(item.evidence, 60) }
+    return { kind, id: candidateId(kind, label, index, item.evidence), label, description: safeText(item.description, 120), characterId: matched?.id, characterCandidateId: bystander?.id, characterName: matched?.name || bystander?.name || safeText(item.characterName, 60), evidence: safeText(item.evidence, 60) }
   })
-  return { characters, clothing: mapSubjects(response.clothing, 'clothing'), props: mapSubjects(response.props, 'prop'), unmappedCharacters: Array.from(unmappedCharacters) }
+  return { characters, bystanders, clothing: mapSubjects(response.clothing, 'clothing'), props: mapSubjects(response.props, 'prop'), unmappedCharacters: bystanders.map(item => item.name) }
 }
 
 function normalizeReferenceImageIds(value: unknown) {
