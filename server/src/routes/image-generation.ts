@@ -59,6 +59,16 @@ interface CandidateCharacterInput {
   evidence?: string
 }
 
+interface ExtractedCharacterInput {
+  name?: string
+  alias_in_text?: string[]
+  mapping_status?: 'matched' | 'new_character'
+  matched_character?: string
+  character_type?: 'protagonist' | 'supporting' | 'unknown'
+  context_summary?: string
+  first_mention?: string
+}
+
 interface CandidateSubjectInput {
   label?: string
   description?: string
@@ -67,9 +77,11 @@ interface CandidateSubjectInput {
 }
 
 interface CandidateAIResponse {
+  extracted_characters?: ExtractedCharacterInput[]
   characters?: CandidateCharacterInput[]
   clothing?: CandidateSubjectInput[]
   props?: CandidateSubjectInput[]
+  chapter_summary?: string
 }
 
 type ImageViewDirection = 'front' | 'side' | 'back'
@@ -218,17 +230,39 @@ function buildChapterVisualCandidateContext(work: WorkData, chapterId: string) {
     `用户方向：${compact(chapter.userDirection) || '暂无'}`,
     `场景摘要：${sceneSummary || '暂无'}`,
     `正文摘录：${buildChapterExcerpt(chapter) || '暂无'}`,
-    `角色匹配索引（只包含 id、name、tags，不包含 bio 或整章正文）：\n${characterIndex}`,
+    `已知人物列表（只包含 id、name、tags，不包含 bio 或整章正文）：\n${characterIndex}`,
   ].join('\n\n')
 }
 
 function buildChapterVisualCandidateInstruction(context: string) {
-  return `任务：从当前章节小上下文中提取视觉候选，只输出严格 JSON，不要输出解释、Markdown 或额外文本。
+  return `# 角色
+你是一名专业的小说文本分析助手，擅长从小说章节小上下文中识别所有出现的人物（含路人）。
 
-JSON 结构必须完全符合：
-{"characters":[{"name":"章节中出现的人名或称谓","evidence":"不超过40字的出现证据"}],"clothing":[{"label":"服饰名称","description":"可见材质、颜色、剪裁或状态","characterName":"关联角色名或空字符串","evidence":"不超过40字的章节证据"}],"props":[{"label":"道具名称","description":"可见材质、形状、尺寸或用途","characterName":"关联角色名或空字符串","evidence":"不超过40字的章节证据"}]}
+# 任务
+从指定的小说章节小上下文中，提取本章节中出现的所有人物（包括主角、配角和路人），并将提取到的人物与“已知人物列表”进行映射匹配。
 
-要求：只使用上下文明确出现或场景摘要直接支持的视觉要素；不生成视觉提示词；不总结剧情；不返回章节正文或摘录；信息不足时返回空数组。
+# 输入数据
+
+## 1. 已知人物列表（主角 + 配角）
+见上下文中的“已知人物列表”。映射时 matched_character 必须填写该列表中的标准 name，不要填写 id。
+
+## 2. 当前章节内容
+由于系统禁止单次请求发送或接收整章内容，这里只提供章节标题、场景摘要和有界正文摘录。你只能依据这些小上下文提取人物，不能补写未出现的人物。
+
+# 输出要求
+
+只输出严格 JSON，不要输出解释、Markdown 或额外文本。JSON 结构必须完全符合：
+{"extracted_characters":[{"name":"章节中出现的角色名","alias_in_text":["章节中用过的别称/称呼/代称"],"mapping_status":"matched | new_character","matched_character":"已知人物列表中匹配到的标准名称（如未匹配则为空字符串）","character_type":"protagonist | supporting | unknown","context_summary":"该角色在本章节中的简要行为描述","first_mention":"首次出处的原文片段"}],"chapter_summary":"本章涉及的人物互动关系简述","clothing":[{"label":"服饰名称","description":"可见材质、颜色、剪裁或状态","characterName":"关联角色名或空字符串","evidence":"不超过40字的章节证据"}],"props":[{"label":"道具名称","description":"可见材质、形状、尺寸或用途","characterName":"关联角色名或空字符串","evidence":"不超过40字的章节证据"}]}
+
+# 匹配规则
+
+1. 别名识别：章节中可能使用绰号、称号、姓氏、昵称、职位（如“掌门”、“将军”），需关联到对应人物。
+2. 指代消解：处理“他”、“她”、“此人”等代词时，需结合上下文判断指代对象；无法明确判断时不要单独输出代词人物。
+3. 未匹配处理：若某角色未在已知列表中找到匹配，标注为 new_character，并将 character_type 标注为 unknown，同时可在 name 中写可推测身份（如“酒楼小二”、“巡逻士兵”）。
+4. 去重：同一角色多次出现只记录一次，alias_in_text 汇总所有出现过的称呼。
+5. 谨慎匹配：仅在有充分依据时进行匹配，避免误关联。所有路人、侍卫、店员、医者、围观者、远处人群等可见人物都必须保留。
+6. 视觉候选：clothing 和 props 仍需提取可画成独立素材的服饰、配饰、武器、器物等；characterName 优先填写 extracted_characters 中的人物 name 或已匹配标准名称。
+7. 安全约束：不生成视觉提示词；不返回章节正文或长摘录；first_mention 不超过 40 字；信息不足时返回空数组。
 
 上下文：
 ${context}`
@@ -241,9 +275,11 @@ function parseCandidateJSON(text: string): CandidateAIResponse {
   if (!candidate || candidate === trimmed.slice(0, 0)) throw new Error('候选提取结果格式无效')
   const parsed = JSON.parse(candidate) as CandidateAIResponse
   return {
+    extracted_characters: Array.isArray(parsed.extracted_characters) ? parsed.extracted_characters : [],
     characters: Array.isArray(parsed.characters) ? parsed.characters : [],
     clothing: Array.isArray(parsed.clothing) ? parsed.clothing : [],
     props: Array.isArray(parsed.props) ? parsed.props : [],
+    chapter_summary: typeof parsed.chapter_summary === 'string' ? parsed.chapter_summary : '',
   }
 }
 
@@ -255,14 +291,31 @@ function normalizeCandidateKey(value: string | undefined) {
   return safeText(value).toLowerCase().replace(/[\s·・,，。.!！?？:：;；「」『』“”"'()（）\[\]【】]/g, '')
 }
 
-function mapCharacterName(work: WorkData, name: string | undefined) {
-  const normalized = normalizeCandidateKey(name)
-  if (!normalized) return undefined
-  const matches = (work.characters || []).filter(character => {
-    const names = [character.id, character.name, ...(character.tags || [])].map(item => normalizeCandidateKey(String(item || ''))).filter(Boolean)
-    return names.includes(normalized)
-  })
-  return matches.length === 1 ? matches[0] : undefined
+function mapCharacterName(work: WorkData, names: string | string[] | undefined) {
+  const candidateKeys = (Array.isArray(names) ? names : [names]).map(item => normalizeCandidateKey(item)).filter(Boolean)
+  if (!candidateKeys.length) return undefined
+  const indexed = (work.characters || []).map(character => ({
+    character,
+    keys: [character.id, character.name, ...(character.tags || [])].map(item => normalizeCandidateKey(String(item || ''))).filter(Boolean),
+  }))
+  const exactMatches = indexed.filter(item => candidateKeys.some(key => item.keys.includes(key)))
+  if (exactMatches.length === 1) return exactMatches[0].character
+  if (exactMatches.length > 1) return undefined
+  const containsMatches = indexed.filter(item => candidateKeys.some(candidateKey => candidateKey.length >= 2 && item.keys.some(knownKey => knownKey.length >= 2 && (candidateKey.includes(knownKey) || knownKey.includes(candidateKey)))))
+  return containsMatches.length === 1 ? containsMatches[0].character : undefined
+}
+
+function normalizeExtractedCharacters(response: CandidateAIResponse): ExtractedCharacterInput[] {
+  if (response.extracted_characters?.length) return response.extracted_characters
+  return (response.characters || []).map(item => ({
+    name: item.name,
+    alias_in_text: item.name ? [item.name] : [],
+    mapping_status: 'new_character',
+    matched_character: '',
+    character_type: 'unknown',
+    context_summary: item.evidence,
+    first_mention: item.evidence,
+  }))
 }
 
 function candidateId(kind: 'bystander' | 'clothing' | 'prop', label: string, index: number, evidence?: string) {
@@ -275,6 +328,20 @@ function mapCandidateResponse(work: WorkData, response: CandidateAIResponse) {
   const seenCharacters = new Set<string>()
   const seenBystanders = new Set<string>()
   const bystanders: Array<{ kind: 'bystander'; id: string; name: string; evidence?: string }> = []
+  const extracted_characters = normalizeExtractedCharacters(response).map((item, index) => {
+    const aliases = Array.isArray(item.alias_in_text) ? item.alias_in_text.map(alias => safeText(alias, 40)).filter(Boolean) : []
+    const name = safeText(item.name, 40) || aliases[0] || `未命名人物${index + 1}`
+    const matched = mapCharacterName(work, [safeText(item.matched_character, 40), name, ...aliases])
+    return {
+      name,
+      alias_in_text: Array.from(new Set(aliases.length ? aliases : [name])),
+      mapping_status: matched ? 'matched' as const : 'new_character' as const,
+      matched_character: matched?.name || '',
+      character_type: matched ? (item.character_type === 'protagonist' ? 'protagonist' as const : 'supporting' as const) : 'unknown' as const,
+      context_summary: safeText(item.context_summary, 120),
+      first_mention: safeText(item.first_mention, 60),
+    }
+  })
   const addBystander = (rawName: string | undefined, evidence: string | undefined, index: number) => {
     const name = safeText(rawName, 40)
     if (!name) return undefined
@@ -288,15 +355,15 @@ function mapCandidateResponse(work: WorkData, response: CandidateAIResponse) {
     }
     return bystander
   }
-  const characters = (response.characters || []).flatMap(item => {
-    const matched = mapCharacterName(work, item.name)
+  const characters = extracted_characters.flatMap(item => {
+    const matched = mapCharacterName(work, [item.matched_character, item.name, ...item.alias_in_text])
     if (!matched) {
-      addBystander(item.name, item.evidence, bystanders.length)
+      addBystander(item.name, item.first_mention || item.context_summary, bystanders.length)
       return []
     }
     if (seenCharacters.has(matched.id)) return []
     seenCharacters.add(matched.id)
-    return [{ kind: 'character' as const, characterId: matched.id, name: matched.name, matchedName: safeText(item.name, 40) || matched.name, evidence: safeText(item.evidence, 60) }]
+    return [{ kind: 'character' as const, characterId: matched.id, name: matched.name, matchedName: item.name || matched.name, evidence: safeText(item.first_mention || item.context_summary, 60) }]
   })
   const mapSubjects = (items: CandidateSubjectInput[] | undefined, kind: 'clothing' | 'prop') => (items || []).map((item, index) => {
     const matched = mapCharacterName(work, item.characterName)
@@ -304,7 +371,7 @@ function mapCandidateResponse(work: WorkData, response: CandidateAIResponse) {
     const label = safeText(item.label, 60) || (kind === 'clothing' ? '未命名服饰' : '未命名道具')
     return { kind, id: candidateId(kind, label, index, item.evidence), label, description: safeText(item.description, 120), characterId: matched?.id, characterCandidateId: bystander?.id, characterName: matched?.name || bystander?.name || safeText(item.characterName, 60), evidence: safeText(item.evidence, 60) }
   })
-  return { characters, bystanders, clothing: mapSubjects(response.clothing, 'clothing'), props: mapSubjects(response.props, 'prop'), unmappedCharacters: bystanders.map(item => item.name) }
+  return { extracted_characters, characters, bystanders, clothing: mapSubjects(response.clothing, 'clothing'), props: mapSubjects(response.props, 'prop'), unmappedCharacters: bystanders.map(item => item.name) }
 }
 
 function normalizeReferenceImageIds(value: unknown) {
@@ -440,7 +507,7 @@ router.post('/extract-candidates', async (req, res) => {
     ])
     res.json(mapCandidateResponse(work, parseCandidateJSON(rawText)))
   } catch {
-    res.status(502).json({ characters: [], clothing: [], props: [], unmappedCharacters: [], error: '章节视觉候选提取失败，请稍后重试' })
+    res.status(502).json({ extracted_characters: [], characters: [], bystanders: [], clothing: [], props: [], unmappedCharacters: [], error: '章节视觉候选提取失败，请稍后重试' })
   }
 })
 
