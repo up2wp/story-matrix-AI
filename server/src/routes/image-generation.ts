@@ -252,7 +252,7 @@ function buildChapterVisualCandidateInstruction(context: string) {
 # 输出要求
 
 只输出严格 JSON，不要输出解释、Markdown 或额外文本。JSON 结构必须完全符合：
-{"extracted_characters":[{"name":"章节中出现的角色名","alias_in_text":["章节中用过的别称/称呼/代称"],"mapping_status":"matched | new_character","matched_character":"已知人物列表中匹配到的标准名称（如未匹配则为空字符串）","character_type":"protagonist | supporting | unknown","context_summary":"该角色在本章节中的简要行为描述","first_mention":"首次出处的原文片段"}],"chapter_summary":"本章涉及的人物互动关系简述","clothing":[{"label":"服饰名称","description":"可见材质、颜色、剪裁或状态","characterName":"关联角色名或空字符串","evidence":"不超过40字的章节证据"}],"props":[{"label":"道具名称","description":"可见材质、形状、尺寸或用途","characterName":"关联角色名或空字符串","evidence":"不超过40字的章节证据"}]}
+{"extracted_characters":[{"name":"章节中出现的角色名","alias_in_text":["章节中用过的别称/称呼/代称"],"mapping_status":"matched | new_character","matched_character":"已知人物列表中匹配到的标准名称（如未匹配则为空字符串）","character_type":"protagonist | supporting | unknown","context_summary":"该角色在本章节中的简要行为描述","first_mention":"首次出处的原文片段"}],"chapter_summary":"本章涉及的人物互动关系简述","clothing":[{"label":"服饰名称","description":"可见或可由身份/场景保守推断的材质、颜色、剪裁、层次、状态或配饰","characterName":"关联角色名或空字符串","evidence":"不超过40字的明文证据或推断依据"}],"props":[{"label":"道具名称","description":"可见材质、形状、尺寸或用途","characterName":"关联角色名或空字符串","evidence":"不超过40字的章节证据"}]}
 
 # 匹配规则
 
@@ -261,8 +261,11 @@ function buildChapterVisualCandidateInstruction(context: string) {
 3. 未匹配处理：若某角色未在已知列表中找到匹配，标注为 new_character，并将 character_type 标注为 unknown，同时可在 name 中写可推测身份（如“酒楼小二”、“巡逻士兵”）。
 4. 去重：同一角色多次出现只记录一次，alias_in_text 汇总所有出现过的称呼。
 5. 谨慎匹配：仅在有充分依据时进行匹配，避免误关联。所有路人、侍卫、店员、医者、围观者、远处人群等可见人物都必须保留。
-6. 视觉候选：clothing 和 props 仍需提取可画成独立素材的服饰、配饰、武器、器物等；characterName 优先填写 extracted_characters 中的人物 name 或已匹配标准名称。
-7. 安全约束：不生成视觉提示词；不返回章节正文或长摘录；first_mention 不超过 40 字；信息不足时返回空数组。
+6. 服饰覆盖：clothing 必须尽量覆盖 extracted_characters 中的每一个人物；不能让任何可见人物没有可生成的服饰候选。
+7. 服饰明文优先：若章节明确写到衣袍、制服、盔甲、配饰、颜色、材质、破损、血迹、洁净程度等，必须记录为该人物的服饰候选。
+8. 保守推断：若章节没有明说服饰，也要根据人物身份、称谓、职业、场景时代、环境状态保守推断基础服饰，例如医者常服、侍卫制服、店员短打、路人布衣；evidence 写“根据身份/场景推断”，description 必须说明这是保守推断，不要编造华丽细节。
+9. 视觉候选：props 仍需提取可画成独立素材的武器、器物等；characterName 优先填写 extracted_characters 中的人物 name 或已匹配标准名称。
+10. 安全约束：不生成视觉提示词；不返回章节正文或长摘录；first_mention 不超过 40 字；信息不足时返回空数组。
 
 上下文：
 ${context}`
@@ -371,7 +374,29 @@ function mapCandidateResponse(work: WorkData, response: CandidateAIResponse) {
     const label = safeText(item.label, 60) || (kind === 'clothing' ? '未命名服饰' : '未命名道具')
     return { kind, id: candidateId(kind, label, index, item.evidence), label, description: safeText(item.description, 120), characterId: matched?.id, characterCandidateId: bystander?.id, characterName: matched?.name || bystander?.name || safeText(item.characterName, 60), evidence: safeText(item.evidence, 60) }
   })
-  return { extracted_characters, characters, bystanders, clothing: mapSubjects(response.clothing, 'clothing'), props: mapSubjects(response.props, 'prop'), unmappedCharacters: bystanders.map(item => item.name) }
+  const clothing = mapSubjects(response.clothing, 'clothing')
+  const coveredClothingSubjects = new Set(clothing.map(item => item.characterId ? `character:${item.characterId}` : item.characterCandidateId ? `bystander:${item.characterCandidateId}` : `name:${normalizeCandidateKey(item.characterName)}`))
+  const inferredClothing = extracted_characters.flatMap((item, index) => {
+    const matched = mapCharacterName(work, [item.matched_character, item.name, ...item.alias_in_text])
+    const bystander = matched ? undefined : addBystander(item.name, item.first_mention || item.context_summary, bystanders.length + index)
+    const subjectKey = matched ? `character:${matched.id}` : bystander ? `bystander:${bystander.id}` : `name:${normalizeCandidateKey(item.name)}`
+    if (coveredClothingSubjects.has(subjectKey)) return []
+    coveredClothingSubjects.add(subjectKey)
+    const characterName = matched?.name || bystander?.name || item.name
+    const label = `${characterName}的基础服饰`
+    const context = item.context_summary || item.first_mention || characterName
+    return [{
+      kind: 'clothing' as const,
+      id: candidateId('clothing', label, clothing.length + index, context),
+      label,
+      description: `章节未明说服饰，基于人物身份、称谓和场景保守推断的基础服饰；用于避免画面人物缺少衣着，生成时应保持朴素可信。${context ? `参考：${context}` : ''}`.slice(0, 120),
+      characterId: matched?.id,
+      characterCandidateId: bystander?.id,
+      characterName,
+      evidence: '根据身份/场景推断',
+    }]
+  })
+  return { extracted_characters, characters, bystanders, clothing: [...clothing, ...inferredClothing], props: mapSubjects(response.props, 'prop'), unmappedCharacters: bystanders.map(item => item.name) }
 }
 
 function normalizeReferenceImageIds(value: unknown) {
