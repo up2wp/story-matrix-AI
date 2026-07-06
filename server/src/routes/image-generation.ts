@@ -47,11 +47,22 @@ interface ImageAssetRecord {
   assetUrl?: string
 }
 
+interface CachedSubjectCandidate extends CandidateSubjectInput {
+  id?: string
+  kind?: 'clothing' | 'prop'
+}
+
+interface CachedBystanderCandidate {
+  id?: string
+  name?: string
+  evidence?: string
+}
+
 interface WorkData {
   seed?: { genre?: string; subGenre?: string }
-  characters?: Array<{ id: string; name: string; tags?: string[] }>
+  characters?: Array<{ id: string; name: string; role?: string; bio?: string; tags?: string[]; personality?: { traits?: string[] } }>
   chapters?: Array<{ id: string; title: string; userDirection?: string; content?: string; scenes?: Array<{ title?: string; summary?: string; content?: string }> }>
-  visualAssets?: { images?: Record<string, ImageAssetRecord> }
+  visualAssets?: { images?: Record<string, ImageAssetRecord>; candidateCache?: Record<string, { result?: Omit<CandidateAIResponse, 'clothing' | 'props'> & { characters?: Array<{ characterId?: string; name?: string; evidence?: string }>; bystanders?: CachedBystanderCandidate[]; clothing?: CachedSubjectCandidate[]; props?: CachedSubjectCandidate[] } }> }
 }
 
 interface CandidateCharacterInput {
@@ -84,9 +95,26 @@ interface CandidateAIResponse {
   chapter_summary?: string
 }
 
-type ImageViewDirection = 'front' | 'side' | 'back'
+interface CharacterMappingInput {
+  extracted_name?: string
+  matched_character_id?: string
+  matched_character_name?: string
+  confidence?: 'exact' | 'likely' | 'none'
+}
 
-const CHAPTER_EXCERPT_LIMIT = 900
+interface CharacterMappingAIResponse {
+  mappings?: CharacterMappingInput[]
+}
+
+type ImageViewDirection = 'front' | 'side' | 'back'
+type ImagePromptType = 'characterFace' | 'chapterObject' | 'chapterClothing' | 'chapterProp' | 'characterFullBody'
+type VisualCandidateKind = 'character' | 'bystander' | 'clothing' | 'prop'
+
+const NO_DESCRIPTION_CLOTHING_ID = 'clothing:no-description'
+
+const IMAGE_PROMPT_SYSTEM_PROMPT = `你是小说视觉设定提示词助手。你只输出适合图像生成模型的中文视觉提示词。
+不要生成剧情正文，不要补写章节，不要输出 JSON。`
+
 const VIEW_DIRECTION_SUFFIX: Record<ImageViewDirection, string> = {
   front: '生成角色设定用白色背景全身图，视角：正面。',
   side: '生成角色设定用白色背景全身图，视角：侧面。',
@@ -160,6 +188,31 @@ async function generateTextPrompt(messages: Array<{ role: 'system' | 'user'; con
   return text
 }
 
+function normalizedOverlapText(value: string) {
+  return value.replace(/\s+/g, '')
+}
+
+function hasLongSourceOverlap(output: string, sources: string[]) {
+  const normalizedOutput = normalizedOverlapText(output)
+  if (normalizedOutput.length < 80) return false
+  return sources.some(source => {
+    const normalizedSource = normalizedOverlapText(source)
+    if (normalizedSource.length < 80) return false
+    for (let index = 0; index <= normalizedOutput.length - 80; index += 20) {
+      if (normalizedSource.includes(normalizedOutput.slice(index, index + 80))) return true
+    }
+    return false
+  })
+}
+
+function safeVisualPromptOutput(prompt: string, work: WorkData) {
+  const output = safeText(prompt, 1200)
+  if (output.length < prompt.trim().length || hasLongSourceOverlap(output, (work.chapters || []).map(fullChapterContent))) {
+    throw new Error('视觉提示词包含过长章节摘录')
+  }
+  return output
+}
+
 function workAccess(req: AuthenticatedRequest, workId: string, requireOwner: boolean) {
   const row = db.prepare('SELECT * FROM works WHERE id = ?').get(workId) as WorkRow | undefined
   if (!row) return { status: 404, error: '作品不存在' } as const
@@ -209,11 +262,8 @@ function compact(value: string | undefined) {
   return (value || '').replace(/\s+/g, ' ').trim()
 }
 
-function buildChapterExcerpt(chapter: NonNullable<WorkData['chapters']>[number]) {
-  const sceneText = (chapter.scenes || []).map(scene => compact(scene.summary || scene.content)).filter(Boolean).join('\n')
-  if (sceneText) return sceneText.slice(0, CHAPTER_EXCERPT_LIMIT)
-  const paragraphs = String(chapter.content || '').replace(/\r\n?/g, '\n').split(/\n{2,}/).map(compact).filter(Boolean)
-  return paragraphs.slice(0, 3).join('\n').slice(0, CHAPTER_EXCERPT_LIMIT)
+function fullChapterContent(chapter: NonNullable<WorkData['chapters']>[number]) {
+  return String(chapter.content || '').replace(/\r\n?/g, '\n').trim()
 }
 
 function buildChapterVisualCandidateContext(work: WorkData, chapterId: string) {
@@ -223,52 +273,126 @@ function buildChapterVisualCandidateContext(work: WorkData, chapterId: string) {
     .map(scene => `${scene.title || '未命名'}：${compact(scene.summary || scene.content).slice(0, 180)}`)
     .filter(Boolean)
     .join(' / ')
-  const characterIndex = (work.characters || []).map(character => `- id: ${character.id}; name: ${character.name}; tags: ${(character.tags || []).slice(0, 6).join('、') || '暂无'}`).join('\n') || '暂无'
   return [
     `作品类型：${work.seed?.genre || '暂无'}${work.seed?.subGenre ? ` / ${work.seed.subGenre}` : ''}`,
     `章节：${chapter.title}`,
     `用户方向：${compact(chapter.userDirection) || '暂无'}`,
     `场景摘要：${sceneSummary || '暂无'}`,
-    `正文摘录：${buildChapterExcerpt(chapter) || '暂无'}`,
-    `已知人物列表（只包含 id、name、tags，不包含 bio 或整章正文）：\n${characterIndex}`,
+    `完整章节正文：\n${fullChapterContent(chapter) || '暂无'}`,
   ].join('\n\n')
 }
 
-function buildChapterVisualCandidateInstruction(context: string) {
+function buildCharacterMappingIndex(work: WorkData) {
+  return (work.characters || []).map(character => `- id: ${character.id}; name: ${character.name}; tags: ${(character.tags || []).slice(0, 6).join('、') || '暂无'}`).join('\n') || '暂无'
+}
+
+function buildPeopleExtractionInstruction(context: string) {
   return `# 角色
-你是一名专业的小说文本分析助手，擅长从小说章节小上下文中识别所有出现的人物（含路人）。
+你是一名专业的小说文本分析助手，擅长从小说完整章节中识别所有出现的人物（含路人）和视觉候选。
 
 # 任务
-从指定的小说章节小上下文中，提取本章节中出现的所有人物（包括主角、配角和路人），并将提取到的人物与“已知人物列表”进行映射匹配。
+从指定的小说完整章节中，提取本章节中出现的所有人物（包括主角、配角和路人）。本步骤只抽取章节人物，不要尝试把人物映射到作品角色库，也不要提取服饰或道具。
 
 # 输入数据
 
-## 1. 已知人物列表（主角 + 配角）
-见上下文中的“已知人物列表”。映射时 matched_character 必须填写该列表中的标准 name，不要填写 id。
-
-## 2. 当前章节内容
-由于系统禁止单次请求发送或接收整章内容，这里只提供章节标题、场景摘要和有界正文摘录。你只能依据这些小上下文提取人物，不能补写未出现的人物。
+## 当前章节内容
+服务端会提供完整章节正文用于视觉理解。你只能依据章节内容提取人物和视觉候选，不能补写未出现的人物或物件。
 
 # 输出要求
 
 只输出严格 JSON，不要输出解释、Markdown 或额外文本。JSON 结构必须完全符合：
-{"extracted_characters":[{"name":"章节中出现的角色名","alias_in_text":["章节中用过的别称/称呼/代称"],"mapping_status":"matched | new_character","matched_character":"已知人物列表中匹配到的标准名称（如未匹配则为空字符串）","character_type":"protagonist | supporting | unknown","context_summary":"该角色在本章节中的简要行为描述","first_mention":"首次出处的原文片段"}],"chapter_summary":"本章涉及的人物互动关系简述","clothing":[{"label":"服饰名称","description":"可见或可由身份/场景保守推断的材质、颜色、剪裁、层次、状态或配饰","characterName":"关联角色名或空字符串","evidence":"不超过40字的明文证据或推断依据"}],"props":[{"label":"道具名称","description":"可见材质、形状、尺寸或用途","characterName":"关联角色名或空字符串","evidence":"不超过40字的章节证据"}]}
+{"extracted_characters":[{"name":"章节中出现的角色名","alias_in_text":["章节中用过的别称/称呼/代称"],"mapping_status":"new_character","matched_character":"","character_type":"protagonist | supporting | unknown","context_summary":"该角色在本章节中的简要行为描述","first_mention":"首次出处的原文片段"}],"chapter_summary":"本章涉及的人物互动关系简述"}
 
 # 匹配规则
 
-1. 别名识别：章节中可能使用绰号、称号、姓氏、昵称、职位（如“掌门”、“将军”），需关联到对应人物。
+1. 别名识别：章节中可能使用绰号、称号、姓氏、昵称、职位（如“掌门”、“将军”），需汇总到同一章节人物的 alias_in_text。
 2. 指代消解：处理“他”、“她”、“此人”等代词时，需结合上下文判断指代对象；无法明确判断时不要单独输出代词人物。
-3. 未匹配处理：若某角色未在已知列表中找到匹配，标注为 new_character，并将 character_type 标注为 unknown，同时可在 name 中写可推测身份（如“酒楼小二”、“巡逻士兵”）。
+3. 未匹配处理：本步骤不做作品角色映射，所有 mapping_status 固定为 new_character，matched_character 固定为空字符串。
 4. 去重：同一角色多次出现只记录一次，alias_in_text 汇总所有出现过的称呼。
-5. 谨慎匹配：仅在有充分依据时进行匹配，避免误关联。所有路人、侍卫、店员、医者、围观者、远处人群等可见人物都必须保留。
-6. 服饰覆盖：clothing 必须尽量覆盖 extracted_characters 中的每一个人物；不能让任何可见人物没有可生成的服饰候选。
-7. 服饰明文优先：若章节明确写到衣袍、制服、盔甲、配饰、颜色、材质、破损、血迹、洁净程度等，必须记录为该人物的服饰候选。
-8. 保守推断：若章节没有明说服饰，也要根据人物身份、称谓、职业、场景时代、环境状态保守推断基础服饰，例如医者常服、侍卫制服、店员短打、路人布衣；evidence 写“根据身份/场景推断”，description 必须说明这是保守推断，不要编造华丽细节。
-9. 视觉候选：props 仍需提取可画成独立素材的武器、器物等；characterName 优先填写 extracted_characters 中的人物 name 或已匹配标准名称。
-10. 安全约束：不生成视觉提示词；不返回章节正文或长摘录；first_mention 不超过 40 字；信息不足时返回空数组。
+5. 谨慎抽取：所有路人、侍卫、店员、医者、围观者、远处人群等可见人物都必须保留。
+6. 安全约束：不生成视觉提示词；不返回章节正文或长摘录；first_mention 不超过 40 字；信息不足时返回空数组。
 
 上下文：
 ${context}`
+}
+
+function buildPropsExtractionInstruction(context: string) {
+  return `# 角色
+你是一名小说章节道具抽取助手。你只负责从完整章节中提取可画成独立素材的道具。
+
+# 任务
+从指定小说完整章节中提取明确出现的道具、武器、器物、符号、书信、钥匙等视觉素材。不要提取人物，不要生成视觉提示词。
+
+# 输出要求
+
+只输出严格 JSON，不要输出解释、Markdown 或额外文本。JSON 结构必须完全符合：
+{"props":[{"label":"道具名称","description":"可见材质、形状、尺寸、纹样、使用痕迹或用途","characterName":"关联的章节人物名或空字符串","evidence":"不超过40字的章节证据"}]}
+
+# 抽取规则
+
+1. 只提取章节中明确出现的道具，不要根据剧情氛围补写不存在的物件。
+2. 道具描述只写本体材质、形状、尺寸、纹样、使用痕迹和用途线索，不写人物动作、场景背景或镜头语言。
+3. characterName 只用于辅助关联，最终道具视觉提示词不得包含角色姓名或手持动作。
+4. 不返回章节正文或长摘录；信息不足时返回空数组。
+
+上下文：
+${context}`
+}
+
+function buildClothingExtractionInstruction(context: string, extractedCharacters: ExtractedCharacterInput[]) {
+  const people = extractedCharacters.map((item, index) => `- ${index + 1}. ${safeText(item.name, 40)}；别称：${Array.isArray(item.alias_in_text) && item.alias_in_text.length ? item.alias_in_text.join('、') : '暂无'}；证据：${safeText(item.first_mention || item.context_summary, 80) || '暂无'}`).join('\n') || '暂无'
+  return `# 角色
+你是一名小说章节服饰抽取助手。你只负责从完整章节中提取章节人物的明确服饰描述。
+
+# 任务
+基于“章节人物列表”和完整章节正文，提取章节中明确写到的衣袍、制服、盔甲、配饰、颜色、材质、破损、血迹、洁净程度等服饰候选。
+
+# 章节人物列表
+${people}
+
+# 输出要求
+
+只输出严格 JSON，不要输出解释、Markdown 或额外文本。JSON 结构必须完全符合：
+{"clothing":[{"label":"服饰名称","description":"明确可见的材质、颜色、剪裁、层次、状态或配饰","characterName":"关联的章节人物名或空字符串","evidence":"不超过40字的明文证据"}]}
+
+# 抽取规则
+
+1. 只记录章节明文服饰，不要根据人物身份、职业、时代或场景推断基础服饰。
+2. 没有明文服饰的人物不要输出服饰候选；用户可在前端选择固定“无描述”选项生成基础服饰草稿。
+3. description 只写服饰本体，不写人物脸、身体、动作、背景、色调或场景氛围。
+4. 不返回章节正文或长摘录；信息不足时返回空数组。
+
+上下文：
+${context}`
+}
+
+function buildPeopleMappingInstruction(extractedCharacters: ExtractedCharacterInput[], characterIndex: string) {
+  const extracted = extractedCharacters.map((item, index) => {
+    const aliases = Array.isArray(item.alias_in_text) ? item.alias_in_text.join('、') : ''
+    return `- ${index + 1}. name: ${safeText(item.name, 40)}; aliases: ${aliases || '暂无'}; evidence: ${safeText(item.first_mention || item.context_summary, 80) || '暂无'}`
+  }).join('\n') || '暂无'
+  return `# 角色
+你是一名小说角色映射助手。你只负责把“章节抽取人物”映射到“作品已知人物列表”，不要抽取新人物，不要生成视觉提示词。
+
+# 输入
+
+## 章节抽取人物
+${extracted}
+
+## 作品已知人物列表
+${characterIndex}
+
+# 输出要求
+
+只输出严格 JSON，不要输出解释、Markdown 或额外文本。JSON 结构必须完全符合：
+{"mappings":[{"extracted_name":"章节抽取人物 name","matched_character_id":"作品已知人物 id；无法确定则为空字符串","matched_character_name":"作品已知人物 name；无法确定则为空字符串","confidence":"exact | likely | none"}]}
+
+# 映射规则
+
+1. 只允许使用“作品已知人物列表”中的 id 和 name。
+2. 章节称谓、别名、职位或代词能唯一指向某个已知人物时才映射。
+3. 不确定、多义或列表中不存在时，matched_character_id 和 matched_character_name 都返回空字符串，confidence 返回 none。
+4. 不要编造人物 id、name、关系或背景。`
 }
 
 function parseCandidateJSON(text: string): CandidateAIResponse {
@@ -284,6 +408,15 @@ function parseCandidateJSON(text: string): CandidateAIResponse {
     props: Array.isArray(parsed.props) ? parsed.props : [],
     chapter_summary: typeof parsed.chapter_summary === 'string' ? parsed.chapter_summary : '',
   }
+}
+
+function parseCharacterMappingJSON(text: string): CharacterMappingAIResponse {
+  const trimmed = text.trim()
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]
+  const candidate = fenced || trimmed.slice(trimmed.indexOf('{'), trimmed.lastIndexOf('}') + 1)
+  if (!candidate || candidate === trimmed.slice(0, 0)) throw new Error('角色映射结果格式无效')
+  const parsed = JSON.parse(candidate) as CharacterMappingAIResponse
+  return { mappings: Array.isArray(parsed.mappings) ? parsed.mappings : [] }
 }
 
 function safeText(value: string | undefined, maxLength = 80) {
@@ -327,14 +460,26 @@ function candidateId(kind: 'bystander' | 'clothing' | 'prop', label: string, ind
   return `${kind}:${slug || index + 1}:${hash}`
 }
 
-function mapCandidateResponse(work: WorkData, response: CandidateAIResponse) {
+function mapCandidateResponse(work: WorkData, response: CandidateAIResponse, mappingResponse?: CharacterMappingAIResponse, mappingError?: string) {
   const seenCharacters = new Set<string>()
   const seenBystanders = new Set<string>()
   const bystanders: Array<{ kind: 'bystander'; id: string; name: string; evidence?: string }> = []
-  const extracted_characters = normalizeExtractedCharacters(response).map((item, index) => {
+  const mappings = Array.isArray(mappingResponse?.mappings) ? mappingResponse.mappings : []
+  const mappingByName = new Map(mappings.map(item => [normalizeCandidateKey(item.extracted_name), item]))
+  const findMappingMatch = (item: ExtractedCharacterInput, name: string, aliases: string[]) => {
+    const mapping = [name, ...aliases].map(value => mappingByName.get(normalizeCandidateKey(value))).find(Boolean)
+    if (!mapping || mapping.confidence === 'none') return undefined
+    const byId = (work.characters || []).find(character => character.id === safeText(mapping.matched_character_id, 80))
+    if (byId) return byId
+    return mapCharacterName(work, [safeText(mapping.matched_character_name, 80), safeText(item.matched_character, 80)])
+  }
+  const extractedMatches = normalizeExtractedCharacters(response).map((item, index) => {
     const aliases = Array.isArray(item.alias_in_text) ? item.alias_in_text.map(alias => safeText(alias, 40)).filter(Boolean) : []
     const name = safeText(item.name, 40) || aliases[0] || `未命名人物${index + 1}`
-    const matched = mapCharacterName(work, [safeText(item.matched_character, 40), name, ...aliases])
+    const matched = findMappingMatch(item, name, aliases) || mapCharacterName(work, [safeText(item.matched_character, 40), name, ...aliases])
+    return { item, aliases, name, matched }
+  })
+  const extracted_characters = extractedMatches.map(({ item, aliases, name, matched }) => {
     return {
       name,
       alias_in_text: Array.from(new Set(aliases.length ? aliases : [name])),
@@ -345,6 +490,10 @@ function mapCandidateResponse(work: WorkData, response: CandidateAIResponse) {
       first_mention: safeText(item.first_mention, 60),
     }
   })
+  const subjectOwnerByName = new Map<string, { character?: { id: string; name: string }; bystander?: { kind: 'bystander'; id: string; name: string; evidence?: string } }>()
+  const registerSubjectOwner = (names: string[], owner: { character?: { id: string; name: string }; bystander?: { kind: 'bystander'; id: string; name: string; evidence?: string } }) => {
+    names.map(normalizeCandidateKey).filter(Boolean).forEach(key => subjectOwnerByName.set(key, owner))
+  }
   const addBystander = (rawName: string | undefined, evidence: string | undefined, index: number) => {
     const name = safeText(rawName, 40)
     if (!name) return undefined
@@ -358,45 +507,28 @@ function mapCandidateResponse(work: WorkData, response: CandidateAIResponse) {
     }
     return bystander
   }
-  const characters = extracted_characters.flatMap(item => {
-    const matched = mapCharacterName(work, [item.matched_character, item.name, ...item.alias_in_text])
+  const characters = extractedMatches.flatMap(({ item, aliases, name, matched }) => {
+    const evidence = safeText(item.first_mention || item.context_summary, 60)
     if (!matched) {
-      addBystander(item.name, item.first_mention || item.context_summary, bystanders.length)
+      const bystander = addBystander(name, item.first_mention || item.context_summary, bystanders.length)
+      if (bystander) registerSubjectOwner([name, ...aliases], { bystander })
       return []
     }
+    registerSubjectOwner([name, ...aliases, safeText(item.matched_character, 40), matched.name], { character: { id: matched.id, name: matched.name } })
     if (seenCharacters.has(matched.id)) return []
     seenCharacters.add(matched.id)
-    return [{ kind: 'character' as const, characterId: matched.id, name: matched.name, matchedName: item.name || matched.name, evidence: safeText(item.first_mention || item.context_summary, 60) }]
+    return [{ kind: 'character' as const, characterId: matched.id, name: matched.name, matchedName: name || matched.name, evidence }]
   })
   const mapSubjects = (items: CandidateSubjectInput[] | undefined, kind: 'clothing' | 'prop') => (items || []).map((item, index) => {
-    const matched = mapCharacterName(work, item.characterName)
-    const bystander = matched ? undefined : addBystander(item.characterName, item.evidence, bystanders.length + index)
+    const owner = subjectOwnerByName.get(normalizeCandidateKey(item.characterName))
+    const matched = owner?.character || mapCharacterName(work, item.characterName)
+    const bystander = matched ? undefined : owner?.bystander || addBystander(item.characterName, item.evidence, bystanders.length + index)
     const label = safeText(item.label, 60) || (kind === 'clothing' ? '未命名服饰' : '未命名道具')
     return { kind, id: candidateId(kind, label, index, item.evidence), label, description: safeText(item.description, 120), characterId: matched?.id, characterCandidateId: bystander?.id, characterName: matched?.name || bystander?.name || safeText(item.characterName, 60), evidence: safeText(item.evidence, 60) }
   })
   const clothing = mapSubjects(response.clothing, 'clothing')
-  const coveredClothingSubjects = new Set(clothing.map(item => item.characterId ? `character:${item.characterId}` : item.characterCandidateId ? `bystander:${item.characterCandidateId}` : `name:${normalizeCandidateKey(item.characterName)}`))
-  const inferredClothing = extracted_characters.flatMap((item, index) => {
-    const matched = mapCharacterName(work, [item.matched_character, item.name, ...item.alias_in_text])
-    const bystander = matched ? undefined : addBystander(item.name, item.first_mention || item.context_summary, bystanders.length + index)
-    const subjectKey = matched ? `character:${matched.id}` : bystander ? `bystander:${bystander.id}` : `name:${normalizeCandidateKey(item.name)}`
-    if (coveredClothingSubjects.has(subjectKey)) return []
-    coveredClothingSubjects.add(subjectKey)
-    const characterName = matched?.name || bystander?.name || item.name
-    const label = `${characterName}的基础服饰`
-    const context = item.context_summary || item.first_mention || characterName
-    return [{
-      kind: 'clothing' as const,
-      id: candidateId('clothing', label, clothing.length + index, context),
-      label,
-      description: `章节未明说服饰，基于人物身份、称谓和场景保守推断的基础服饰；用于避免画面人物缺少衣着，生成时应保持朴素可信。${context ? `参考：${context}` : ''}`.slice(0, 120),
-      characterId: matched?.id,
-      characterCandidateId: bystander?.id,
-      characterName,
-      evidence: '根据身份/场景推断',
-    }]
-  })
-  return { extracted_characters, characters, bystanders, clothing: [...clothing, ...inferredClothing], props: mapSubjects(response.props, 'prop'), unmappedCharacters: bystanders.map(item => item.name) }
+  const result = { extracted_characters, characters, bystanders, clothing, props: mapSubjects(response.props, 'prop'), unmappedCharacters: bystanders.map(item => item.name), mappingStatus: mappingError ? 'partial' as const : 'ok' as const }
+  return mappingError ? { ...result, mappingError } : result
 }
 
 function normalizeReferenceImageIds(value: unknown) {
@@ -441,6 +573,92 @@ function promptTypeLabel(promptId: string) {
   if (type === 'characterFullBody') return 'character-full-body'
   if (type === 'chapterObject') return 'chapter-object-legacy'
   return 'character-face'
+}
+
+function visualPromptLabel(type: ImagePromptType) {
+  if (type === 'characterFace') return '角色高清面部特写'
+  if (type === 'chapterClothing') return '章节服饰'
+  if (type === 'chapterProp') return '章节道具'
+  if (type === 'chapterObject') return '章节服饰/道具（旧）'
+  return '角色多视角全身图'
+}
+
+function normalizePromptType(value: unknown): ImagePromptType | undefined {
+  return value === 'characterFace' || value === 'chapterObject' || value === 'chapterClothing' || value === 'chapterProp' || value === 'characterFullBody' ? value : undefined
+}
+
+function normalizeCandidateKind(value: unknown): VisualCandidateKind | undefined {
+  return value === 'character' || value === 'bystander' || value === 'clothing' || value === 'prop' ? value : undefined
+}
+
+function serverCharacterLine(work: WorkData, characterId: string | undefined) {
+  const character = (work.characters || []).find(item => item.id === characterId)
+  if (!character) return ''
+  const tags = (character.tags || []).slice(0, 6).join('、')
+  const traits = (character.personality?.traits || []).slice(0, 4).join('、')
+  return [`作品角色：${character.name}`, character.role ? `角色定位：${character.role}` : '', tags ? `标签：${tags}` : '', traits ? `性格关键词：${traits}` : ''].filter(Boolean).join('\n')
+}
+
+function serverChapterLine(work: WorkData, chapterId: string | undefined) {
+  const chapter = (work.chapters || []).find(item => item.id === chapterId)
+  if (!chapter) return ''
+  return [`章节：${chapter.title}`, `完整章节正文（仅用于提取必要主体证据，最终提示词不得照搬背景或长摘录）：\n${fullChapterContent(chapter) || '暂无'}`].join('\n')
+}
+
+function cachedVisualSubject(work: WorkData, chapterId: string | undefined, visualSubjectId: string | undefined, candidateKind: VisualCandidateKind | undefined): CachedSubjectCandidate | CachedBystanderCandidate | undefined {
+  if (!chapterId || !visualSubjectId) return undefined
+  if (visualSubjectId === NO_DESCRIPTION_CLOTHING_ID) return { kind: 'clothing' as const, id: visualSubjectId, label: '无描述', description: '当前章节未提供明确服饰描述。', evidence: '无描述' }
+  const result = work.visualAssets?.candidateCache?.[chapterId]?.result
+  if (!result) return undefined
+  if (candidateKind === 'bystander') return result.bystanders?.find(item => item.id === visualSubjectId)
+  if (candidateKind === 'clothing') return result.clothing?.find(item => item.id === visualSubjectId)
+  if (candidateKind === 'prop') return result.props?.find(item => item.id === visualSubjectId)
+  return result.clothing?.find(item => item.id === visualSubjectId) || result.props?.find(item => item.id === visualSubjectId) || result.bystanders?.find(item => item.id === visualSubjectId)
+}
+
+function isCachedBystanderSubject(subject: CachedSubjectCandidate | CachedBystanderCandidate): subject is CachedBystanderCandidate {
+  return 'name' in subject && !('label' in subject)
+}
+
+function serverSubjectLine(subject: ReturnType<typeof cachedVisualSubject>) {
+  if (!subject) return ''
+  if (isCachedBystanderSubject(subject)) return [`本章未关联人物：${safeText(subject.name, 60)}`, subject.evidence ? `章节证据：${safeText(subject.evidence, 120)}` : ''].filter(Boolean).join('\n')
+  return [`当前视觉主体：${safeText(subject.label, 80) || '未命名主体'}`, subject.description ? `主体描述：${safeText(subject.description, 180)}` : '主体描述：无描述', subject.evidence ? `章节证据：${safeText(subject.evidence, 120)}` : ''].filter(Boolean).join('\n')
+}
+
+function buildServerImagePromptContext(work: WorkData, body: Record<string, unknown>) {
+  const type = normalizePromptType(body.type)
+  if (!type) throw new Error('提示词类型无效')
+  const characterId = typeof body.characterId === 'string' ? body.characterId : undefined
+  const chapterId = typeof body.chapterId === 'string' ? body.chapterId : undefined
+  const visualSubjectId = typeof body.visualSubjectId === 'string' ? body.visualSubjectId : undefined
+  const candidateKind = normalizeCandidateKind(body.candidateKind)
+  const subject = cachedVisualSubject(work, chapterId, visualSubjectId, candidateKind)
+  return [
+    `提示词类型：${visualPromptLabel(type)}`,
+    serverCharacterLine(work, characterId),
+    serverSubjectLine(subject),
+    type === 'characterFullBody' ? '' : serverChapterLine(work, chapterId),
+  ].filter(Boolean).join('\n\n')
+}
+
+function buildServerImagePromptInstruction(type: ImagePromptType, context: string) {
+  return `任务：生成「${visualPromptLabel(type)}」视觉提示词草稿。
+
+要求：
+- 所有类型都优先生成纯白色背景、主体清晰、可复用的设定素材，不写复杂场景插画。
+- 禁止输出背景环境、整体色调、场景氛围、电影感光影、压抑感、破碎感、禁锢感、毛孔可见等无关画质堆叠；不要写霓虹灯、金属墙面、废墟、雨夜、烟雾、战场、宫殿等场景。
+- characterFace：纯白色背景，大头像或头肩近景，脸部占画面主体，清晰五官特征；必须描述眉形、眼睛、鼻梁、嘴唇、脸型、肤色、发型、表情和可复用面部特征；避免复杂环境、戏剧光影、剧情动作、身体姿势和道具。
+- 如果上下文中的主体类型是 bystander 或“本章未关联人物”，只根据章节证据描述可见外貌，不补写姓名以外的角色生平、阵营、关系或未出现设定。
+- chapterClothing：纯白色背景，服饰主体单独展示，突出材质、配色、剪裁、层次、纹样、磨损和时代线索；不要包含角色姓名、角色身份、人物脸、身体、姿势、手持动作、剧情动作、背景、色调或场景氛围。
+- chapterProp：纯白色背景，道具主体单独展示，突出材质、形状、尺寸、纹样、使用痕迹和用途线索；不要包含角色姓名、角色身份、人物脸、身体、手持动作、剧情动作、背景、色调或场景氛围。
+- characterFullBody：纯白色背景，全身设定图，清晰展示角色体型、服饰轮廓、配色和可复用视觉特征；不要写剧情场景或氛围背景。
+- 不写剧情正文，不写解释，不写模型参数。
+- 以一段可直接复制的提示词输出。
+- 如果信息不足，保留为可编辑的合理占位描述，不要编造关键设定。
+
+上下文：
+${context}`
 }
 
 function buildImmichFilename(work: WorkRow, body: Record<string, unknown>, mimeType: string) {
@@ -525,14 +743,41 @@ router.post('/extract-candidates', async (req, res) => {
   try {
     const work = JSON.parse(access.row.data) as WorkData
     const context = buildChapterVisualCandidateContext(work, chapterId)
-    if (context.length > 5000) return res.status(400).json({ error: '候选提取上下文过长' })
-    const rawText = await generateTextPrompt([
+    const extractionText = await generateTextPrompt([
       { role: 'system', content: '你是小说章节视觉候选提取助手。你只输出严格 JSON。' },
-      { role: 'user', content: buildChapterVisualCandidateInstruction(context) },
+      { role: 'user', content: buildPeopleExtractionInstruction(context) },
     ])
-    res.json(mapCandidateResponse(work, parseCandidateJSON(rawText)))
+    const extraction = parseCandidateJSON(extractionText)
+    const extracted = normalizeExtractedCharacters(extraction)
+    const [propsText, clothingText] = await Promise.all([
+      generateTextPrompt([
+        { role: 'system', content: '你是小说章节道具抽取助手。你只输出严格 JSON。' },
+        { role: 'user', content: buildPropsExtractionInstruction(context) },
+      ]),
+      generateTextPrompt([
+        { role: 'system', content: '你是小说章节服饰抽取助手。你只输出严格 JSON。' },
+        { role: 'user', content: buildClothingExtractionInstruction(context, extracted) },
+      ]),
+    ])
+    const props = parseCandidateJSON(propsText)
+    const clothing = parseCandidateJSON(clothingText)
+    const candidates = { ...extraction, props: props.props, clothing: clothing.clothing }
+    let mapping: CharacterMappingAIResponse | undefined
+    let mappingError: string | undefined
+    if (extracted.length > 0 && (work.characters || []).length > 0) {
+      try {
+        const mappingText = await generateTextPrompt([
+          { role: 'system', content: '你是小说角色映射助手。你只输出严格 JSON。' },
+          { role: 'user', content: buildPeopleMappingInstruction(extracted, buildCharacterMappingIndex(work)) },
+        ])
+        mapping = parseCharacterMappingJSON(mappingText)
+      } catch {
+        mappingError = '角色映射失败，已保留未关联人物候选。'
+      }
+    }
+    res.json(mapCandidateResponse(work, candidates, mapping, mappingError))
   } catch {
-    res.status(502).json({ extracted_characters: [], characters: [], bystanders: [], clothing: [], props: [], unmappedCharacters: [], error: '章节视觉候选提取失败，请稍后重试' })
+    res.status(502).json({ extracted_characters: [], characters: [], bystanders: [], clothing: [], props: [], unmappedCharacters: [], mappingStatus: 'failed', error: '章节视觉候选提取失败，请稍后重试' })
   }
 })
 
@@ -626,22 +871,24 @@ router.post('/prompt', async (req, res) => {
   const request = req as unknown as AuthenticatedRequest
   const body = req.body as Record<string, unknown>
   const workId = String(body.workId || '')
-  const instruction = String(body.instruction || '').trim()
-  const context = String(body.context || '').trim()
-  if (!workId || !instruction || !context) return res.status(400).json({ error: '缺少作品、任务或上下文' })
-  if (context.length > 5000 || instruction.length > 3000) return res.status(400).json({ error: '提示词上下文过长' })
+  const type = normalizePromptType(body.type)
+  if (!workId || !type) return res.status(400).json({ error: '缺少作品或提示词类型' })
   const config = loadImageGenerationConfig()
   if (!canUseImageGeneration(request, config)) return res.status(403).json({ error: '未授权使用生图功能' })
   const access = workAccess(request, workId, true)
   if (access.status !== 200) return res.status(access.status).json({ error: access.error })
   try {
+    const work = JSON.parse(access.row.data) as WorkData
+    const context = buildServerImagePromptContext(work, body)
+    const instruction = buildServerImagePromptInstruction(type, context)
+    if (context.length > 30000 || instruction.length > 36000) return res.status(400).json({ error: '提示词上下文过长' })
     const prompt = await generateTextPrompt([
-      { role: 'system', content: String(body.systemPrompt || '你是小说视觉设定提示词助手。') },
-      { role: 'user', content: `${instruction}\n\n${context}` },
+      { role: 'system', content: IMAGE_PROMPT_SYSTEM_PROMPT },
+      { role: 'user', content: instruction },
     ])
-    res.json({ prompt })
-  } catch (error) {
-    res.status(502).json({ error: error instanceof Error ? error.message : '视觉提示词生成失败' })
+    res.json({ prompt: safeVisualPromptOutput(prompt, work) })
+  } catch {
+    res.status(502).json({ error: '视觉提示词生成失败，请稍后重试' })
   }
 })
 
