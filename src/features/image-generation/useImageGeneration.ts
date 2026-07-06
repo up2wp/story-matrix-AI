@@ -1,11 +1,9 @@
 import { useMemo, useState } from 'react'
 import { message } from 'antd'
-import type { ImageAssetRecord, ImagePromptType, ImageViewDirection, VisualPromptRecord, WorkVisualAssetsConfig } from '@/core/types'
+import type { ChapterVisualCandidateResult, ImageAssetRecord, ImagePromptType, ImageViewDirection, VisualCandidateCacheEntry, VisualPromptRecord, Work, WorkVisualAssetsConfig } from '@/core/types'
 import { db } from '@/core/db'
 import { useStore } from '@/core/store'
 import { useSystemConfigStore } from '@/core/system-config-store'
-import { buildImagePromptInstruction, IMAGE_PROMPT_SYSTEM_PROMPT } from '@/ai/prompts/imageGeneration'
-import { buildImagePromptContext } from './promptContext'
 import type { ImagePromptSubjectContext } from './promptContext'
 import { emptyVisualAssets, visualAssetDelta } from './visualAssetState'
 import { imageGenerationClient } from './imageGenerationClient'
@@ -26,8 +24,30 @@ function promptTitle(type: ImagePromptType) {
   return '多视角全身图'
 }
 
+const CANDIDATE_EXTRACTION_VERSION = 'visual-candidates-v2'
+
+function stableHash(value: string) {
+  let hash = 0
+  for (let index = 0; index < value.length; index += 1) hash = ((hash << 5) - hash + value.charCodeAt(index)) | 0
+  return String(hash >>> 0)
+}
+
+function candidateCacheMetadata(work: Work, chapterId: string) {
+  const chapter = work.chapters.find(item => item.id === chapterId)
+  const characterIndex = work.characters.map(character => `${character.id}:${character.name}:${(character.tags || []).join('|')}`).join('\n')
+  return {
+    chapterContentHash: stableHash(chapter?.content || ''),
+    characterIndexHash: stableHash(characterIndex),
+    extractionVersion: CANDIDATE_EXTRACTION_VERSION,
+  }
+}
+
+function validCandidateCache(entry: VisualCandidateCacheEntry | undefined, metadata: ReturnType<typeof candidateCacheMetadata>) {
+  return Boolean(entry && entry.extractionVersion === metadata.extractionVersion && entry.chapterContentHash === metadata.chapterContentHash && entry.characterIndexHash === metadata.characterIndexHash && entry.status === 'success')
+}
+
 function ensureVisualAssets(config?: WorkVisualAssetsConfig): WorkVisualAssetsConfig {
-  return config || emptyVisualAssets()
+  return { ...emptyVisualAssets(), ...(config || {}), candidateCache: config?.candidateCache || {} }
 }
 
 export function useImageGeneration() {
@@ -62,9 +82,7 @@ export function useImageGeneration() {
     const id = promptId(type, characterId, chapterId, subject?.visualSubjectId)
     setGeneratingPromptId(id)
     try {
-      const context = buildImagePromptContext(currentWork, type, characterId, chapterId, subject)
-      const instruction = buildImagePromptInstruction(type, context)
-      const { prompt } = await imageGenerationClient.prompt({ workId: currentWork.id, systemPrompt: IMAGE_PROMPT_SYSTEM_PROMPT, instruction, context })
+      const { prompt } = await imageGenerationClient.prompt({ workId: currentWork.id, type, characterId, chapterId, visualSubjectId: subject?.visualSubjectId, candidateKind: subject?.candidateKind })
       const record: VisualPromptRecord = {
         ...(visualAssets.prompts[id] || {}),
         id,
@@ -164,10 +182,27 @@ export function useImageGeneration() {
     }
   }
 
-  const extractChapterCandidates = async (chapterId: string) => {
+  const persistCandidateCache = async (chapterId: string, result: ChapterVisualCandidateResult, status: 'success' | 'error' = 'success') => {
     if (!currentWork) return undefined
+    const metadata = candidateCacheMetadata(currentWork, chapterId)
+    const entry: VisualCandidateCacheEntry = { chapterId, ...metadata, result, status, error: result.error, updatedAt: now() }
+    await persistVisualAssets({
+      ...visualAssets,
+      candidateCache: { ...visualAssets.candidateCache, [chapterId]: entry },
+      updatedAt: now(),
+    })
+    return entry
+  }
+
+  const extractChapterCandidates = async (chapterId: string, options: { refresh?: boolean } = {}) => {
+    if (!currentWork) return undefined
+    const metadata = candidateCacheMetadata(currentWork, chapterId)
+    const cached = visualAssets.candidateCache?.[chapterId]
+    if (!options.refresh && validCandidateCache(cached, metadata)) return cached?.result
     try {
-      return await imageGenerationClient.extractCandidates({ workId: currentWork.id, chapterId })
+      const result = await imageGenerationClient.extractCandidates({ workId: currentWork.id, chapterId })
+      await persistCandidateCache(chapterId, result, result.error ? 'error' : 'success')
+      return result
     } catch (error) {
       message.error(error instanceof Error ? error.message : '章节视觉候选提取失败')
       return undefined

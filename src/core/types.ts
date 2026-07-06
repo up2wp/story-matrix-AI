@@ -391,7 +391,20 @@ export interface ChapterVisualCandidateResult {
   clothing: VisualSubjectCandidate[]
   props: VisualSubjectCandidate[]
   unmappedCharacters: string[]
+  mappingStatus?: 'ok' | 'partial' | 'failed'
+  mappingError?: string
   error?: string
+}
+
+export interface VisualCandidateCacheEntry {
+  chapterId: string
+  chapterContentHash: string
+  characterIndexHash: string
+  extractionVersion: string
+  result: ChapterVisualCandidateResult
+  status: 'success' | 'error'
+  error?: string
+  updatedAt: number
 }
 
 export interface VisualPromptRecord {
@@ -443,6 +456,7 @@ export interface WorkVisualAssetsConfig {
   images: Record<string, ImageAssetRecord>
   promptIdsByCharacter: Record<string, string[]>
   promptIdsByChapter: Record<string, string[]>
+  candidateCache: Record<string, VisualCandidateCacheEntry>
   updatedAt: number
 }
 
