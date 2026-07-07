@@ -23,9 +23,32 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
 }
 
+load_ntfy_env_file() {
+  local env_file=".env"
+  local line key value
+
+  [[ -f "$env_file" ]] || return 0
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%%$'\r'}"
+    line="${line#${line%%[![:space:]]*}}"
+
+    [[ "$line" =~ ^(export[[:space:]]+)?(NTFY_[A-Za-z0-9_]*)=(.*)$ ]] || continue
+
+    key="${BASH_REMATCH[2]}"
+    value="${BASH_REMATCH[3]}"
+    value="${value%%$'\r'}"
+    value="${value#\"}"
+    value="${value%\"}"
+    value="${value#\'}"
+    value="${value%\'}"
+    printf -v "$key" '%s' "$value"
+    export "$key"
+  done < "$env_file"
+}
+
 send_ntfy_notification() {
   local status="$1"
-  local exit_code="$2"
 
   if [[ "$NOTIFY_DEPLOY" != "1" ]]; then
     return 0
@@ -42,15 +65,20 @@ send_ntfy_notification() {
 
   local ntfy_url="${NTFY_URL%/}"
   local ntfy_topic="${NTFY_TOPIC#/}"
-  local message="Test Docker deploy ${status}: ${CONTAINER_NAME}
-Project: ${PROJECT_DIR}
-Branch: ${DEPLOY_BRANCH}
-Image: ${IMAGE_NAME}
-Exit code: ${exit_code}"
+  local status_text="成功"
+  local tag="white_check_mark"
+
+  if [[ "$status" != "success" ]]; then
+    status_text="失败"
+    tag="x"
+  fi
+
+  local title="Story Matrix AI 测试环境部署${status_text}"
+  local message="Story Matrix AI 测试环境部署${status_text}。"
 
   if ! curl -fsS -X POST "${ntfy_url}/${ntfy_topic}" \
-    -H "Title: Story Matrix AI test deploy" \
-    -H "Tags: docker,${status}" \
+    -H "Title: ${title}" \
+    -H "Tags: docker,${tag}" \
     --data-binary "${message}" >/dev/null; then
     printf '[deploy-test] WARN: Failed to send ntfy notification.\n' >&2
   fi
@@ -64,7 +92,7 @@ notify_on_exit() {
     status="failed"
   fi
 
-  send_ntfy_notification "$status" "$exit_code"
+  send_ntfy_notification "$status"
 }
 
 ensure_clean_worktree() {
@@ -128,6 +156,7 @@ main() {
   [[ -d "$PROJECT_DIR" ]] || fail "Project directory does not exist: $PROJECT_DIR"
   cd "$PROJECT_DIR"
   [[ -d .git ]] || fail "Project directory is not a git repository: $PROJECT_DIR"
+  load_ntfy_env_file
 
   ensure_clean_worktree
 
