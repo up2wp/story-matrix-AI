@@ -29,6 +29,14 @@ const VIEW_DIRECTION_OPTIONS: Array<{ value: ImageViewDirection; label: string }
 
 const CHARACTER_OPTION_PREFIX = 'character:'
 const BYSTANDER_OPTION_PREFIX = 'bystander:'
+const NO_DESCRIPTION_CLOTHING_ID = 'clothing:no-description'
+const NO_DESCRIPTION_CLOTHING_OPTION: VisualSubjectCandidate = {
+  kind: 'clothing',
+  id: NO_DESCRIPTION_CLOTHING_ID,
+  label: '无描述',
+  description: '当前章节未提供明确服饰描述，可基于章节和必要角色设定生成白底基础服饰素材。',
+  evidence: '无描述',
+}
 
 type CandidateState =
   | { status: 'idle'; chapterId?: string }
@@ -99,7 +107,20 @@ function subjectKind(type: ImagePromptType): VisualCandidateKind | undefined {
 }
 
 function subjectOptionLabel(candidate: VisualSubjectCandidate) {
-  return candidate.characterName ? `${candidate.label} / ${candidate.characterName}` : candidate.label
+  const label = candidate.label || (candidate.kind === 'clothing' ? '未命名服饰' : '未命名道具')
+  return candidate.characterName ? `${label} / ${candidate.characterName}` : label
+}
+
+function candidateResultHasCharacter(result: ChapterVisualCandidateResult, value: string | undefined) {
+  if (!value) return false
+  if (value.startsWith(CHARACTER_OPTION_PREFIX)) return result.characters.some(candidate => characterOptionValue(candidate.characterId) === value)
+  if (value.startsWith(BYSTANDER_OPTION_PREFIX)) return result.bystanders.some(candidate => bystanderOptionValue(candidate.id) === value)
+  return result.characters.some(candidate => candidate.characterId === value)
+}
+
+function candidateResultHasSubject(result: ChapterVisualCandidateResult, value: string | undefined) {
+  if (!value || value === NO_DESCRIPTION_CLOTHING_ID) return true
+  return result.clothing.some(candidate => candidate.id === value) || result.props.some(candidate => candidate.id === value)
 }
 
 function confirmPromptOverwrite() {
@@ -153,8 +174,8 @@ export default function ImageGenerationPage() {
   const subjectCandidates = useMemo(() => {
     if (candidateState.status !== 'success' || candidateState.chapterId !== chapterId) return []
     if (type === 'chapterClothing') {
-      if (selectedCharacterId) return candidateState.result.clothing.filter(candidate => candidate.characterId === selectedCharacterId)
-      if (selectedBystander) return candidateState.result.clothing.filter(candidate => candidate.characterCandidateId === selectedBystander.id)
+      if (selectedCharacterId) return [NO_DESCRIPTION_CLOTHING_OPTION, ...candidateState.result.clothing.filter(candidate => candidate.characterId === selectedCharacterId)]
+      if (selectedBystander) return [NO_DESCRIPTION_CLOTHING_OPTION, ...candidateState.result.clothing.filter(candidate => candidate.characterCandidateId === selectedBystander.id)]
       return []
     }
     if (type === 'chapterProp') return candidateState.result.props
@@ -231,15 +252,19 @@ export default function ImageGenerationPage() {
 
   if (!currentWork) return <Empty description="请先打开一个作品" />
 
-  const loadChapterCandidates = async (nextChapterId: string) => {
+  const loadChapterCandidates = async (nextChapterId: string, refresh = false) => {
     const requestId = candidateRequestId.current + 1
     candidateRequestId.current = requestId
     setCandidateState({ chapterId: nextChapterId, status: 'loading' })
-    const result = await extractChapterCandidates(nextChapterId)
+    const result = await extractChapterCandidates(nextChapterId, { refresh })
     if (candidateRequestId.current !== requestId) return
     if (!result) {
       setCandidateState({ chapterId: nextChapterId, status: 'error', error: '章节视觉候选提取失败，可点击刷新重试。' })
       return
+    }
+    if (refresh) {
+      if (!candidateResultHasCharacter(result, characterId)) setCharacterId(undefined)
+      if (!candidateResultHasSubject(result, visualSubjectId)) setVisualSubjectId(undefined)
     }
     setCandidateState({ chapterId: nextChapterId, status: 'success', result, error: result.error })
   }
@@ -277,7 +302,7 @@ export default function ImageGenerationPage() {
       message.warning('请先选择章节')
       return
     }
-    void loadChapterCandidates(chapterId)
+    void loadChapterCandidates(chapterId, true)
   }
 
   const handleReferenceToggle = (imageId: string) => {
