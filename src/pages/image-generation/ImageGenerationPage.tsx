@@ -235,8 +235,8 @@ export default function ImageGenerationPage() {
     : undefined
   const characterOptions = typeUsesChapterCharacters(type)
     ? [
-        ...candidateCharacters.map(candidate => ({ value: characterOptionValue(candidate.characterId), label: candidate.evidence ? `作品角色 / ${candidate.name} / ${candidate.evidence}` : `作品角色 / ${candidate.name}` })),
-        ...candidateBystanders.map(candidate => ({ value: bystanderOptionValue(candidate.id), label: candidate.evidence ? `本章未关联人物 / ${candidate.name} / ${candidate.evidence}` : `本章未关联人物 / ${candidate.name}` })),
+        ...candidateCharacters.map(candidate => ({ value: characterOptionValue(candidate.characterId), label: `作品角色 / ${candidate.name}` })),
+        ...candidateBystanders.map(candidate => ({ value: bystanderOptionValue(candidate.id), label: `本章未关联人物 / ${candidate.name}` })),
       ]
     : currentWork?.characters.map(character => ({ value: character.id, label: character.name })) || []
   const characterSelectDisabled = typeUsesChapterCharacters(type)
