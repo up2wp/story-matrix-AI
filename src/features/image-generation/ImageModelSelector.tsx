@@ -20,6 +20,7 @@ export default function ImageModelSelector({ models, value, onChange }: Props) {
         disabled={!enabledModels.length}
         placeholder={enabledModels.length ? '选择生图模型' : '暂无可用模型'}
         options={enabledModels.map(model => ({ value: model.id, label: model.label }))}
+        style={{ width: '100%' }}
       />
       {enabledModels.length ? (
         <Space wrap>

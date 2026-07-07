@@ -75,7 +75,7 @@ function mergeAudiobook(current: unknown, patch: Record<string, unknown>): Recor
 }
 
 function defaultVisualAssets(): Record<string, unknown> {
-  return { prompts: {}, images: {}, promptIdsByCharacter: {}, promptIdsByChapter: {}, updatedAt: Date.now() }
+  return { prompts: {}, images: {}, promptIdsByCharacter: {}, promptIdsByChapter: {}, candidateCache: {}, updatedAt: Date.now() }
 }
 
 function mergeVisualAssets(current: unknown, patch: Record<string, unknown>): Record<string, unknown> {
@@ -86,6 +86,7 @@ function mergeVisualAssets(current: unknown, patch: Record<string, unknown>): Re
     images: mergeRecord(existing.images, patch.images),
     promptIdsByCharacter: mergeRecord(existing.promptIdsByCharacter, patch.promptIdsByCharacter),
     promptIdsByChapter: mergeRecord(existing.promptIdsByChapter, patch.promptIdsByChapter),
+    candidateCache: mergeRecord(existing.candidateCache, patch.candidateCache),
     updatedAt: Date.now(),
   }
   return next

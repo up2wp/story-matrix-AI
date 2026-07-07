@@ -79,6 +79,7 @@ function migrateWork(work: Work): Work {
     images: {},
     promptIdsByCharacter: {},
     promptIdsByChapter: {},
+    candidateCache: {},
     updatedAt: timestamp,
   }
 

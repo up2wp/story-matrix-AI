@@ -1,4 +1,4 @@
-import type { ChapterVisualCandidateResult, ImageViewDirection } from '@/core/types'
+import type { ChapterVisualCandidateResult, ImagePromptType, ImageViewDirection, VisualCandidateKind } from '@/core/types'
 
 export interface ImageGenerateRequest {
   workId: string
@@ -56,9 +56,11 @@ export interface ImageProviderModelCandidate {
 
 export interface ImagePromptRequest {
   workId: string
-  systemPrompt: string
-  instruction: string
-  context: string
+  type: ImagePromptType
+  characterId?: string
+  chapterId?: string
+  visualSubjectId?: string
+  candidateKind?: VisualCandidateKind
 }
 
 export interface ImageRetryUploadRequest {

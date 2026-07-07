@@ -346,7 +346,7 @@ export interface WorkAudiobookConfig {
 export type ImagePromptType = 'characterFace' | 'chapterObject' | 'chapterClothing' | 'chapterProp' | 'characterFullBody'
 export type ImagePromptStatus = 'empty' | 'draft' | 'dirty' | 'saving' | 'saved' | 'saveFailed' | 'generatingImage' | 'imageFailed' | 'imageSucceeded'
 export type ImageViewDirection = 'front' | 'side' | 'back'
-export type VisualCandidateKind = 'character' | 'clothing' | 'prop'
+export type VisualCandidateKind = 'character' | 'bystander' | 'clothing' | 'prop'
 
 export interface VisualCharacterCandidate {
   kind: 'character'
@@ -356,22 +356,55 @@ export interface VisualCharacterCandidate {
   evidence?: string
 }
 
+export interface VisualBystanderCandidate {
+  kind: 'bystander'
+  id: string
+  name: string
+  evidence?: string
+}
+
 export interface VisualSubjectCandidate {
   kind: 'clothing' | 'prop'
   id: string
   label: string
   description?: string
   characterId?: string
+  characterCandidateId?: string
   characterName?: string
   evidence?: string
 }
 
+export interface VisualExtractedCharacter {
+  name: string
+  alias_in_text: string[]
+  mapping_status: 'matched' | 'new_character'
+  matched_character: string
+  character_type: 'protagonist' | 'supporting' | 'unknown'
+  context_summary: string
+  first_mention: string
+}
+
 export interface ChapterVisualCandidateResult {
+  extracted_characters: VisualExtractedCharacter[]
   characters: VisualCharacterCandidate[]
+  bystanders: VisualBystanderCandidate[]
   clothing: VisualSubjectCandidate[]
   props: VisualSubjectCandidate[]
   unmappedCharacters: string[]
+  mappingStatus?: 'ok' | 'partial' | 'failed'
+  mappingError?: string
   error?: string
+}
+
+export interface VisualCandidateCacheEntry {
+  chapterId: string
+  chapterContentHash: string
+  characterIndexHash: string
+  extractionVersion: string
+  result: ChapterVisualCandidateResult
+  status: 'success' | 'error'
+  error?: string
+  updatedAt: number
 }
 
 export interface VisualPromptRecord {
@@ -423,6 +456,7 @@ export interface WorkVisualAssetsConfig {
   images: Record<string, ImageAssetRecord>
   promptIdsByCharacter: Record<string, string[]>
   promptIdsByChapter: Record<string, string[]>
+  candidateCache: Record<string, VisualCandidateCacheEntry>
   updatedAt: number
 }
 
