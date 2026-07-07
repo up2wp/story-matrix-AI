@@ -182,6 +182,20 @@ export function useImageGeneration() {
     }
   }
 
+  const deleteImage = async (image: ImageAssetRecord) => {
+    if (!currentWork) return false
+    try {
+      const result = await imageGenerationClient.deleteAsset({ workId: currentWork.id, imageId: image.id })
+      const work = useStore.getState().currentWork
+      if (work?.id === currentWork.id) setCurrentWork({ ...work, visualAssets: result.visualAssets, updatedAt: result.updatedAt })
+      message.success('图片资产已删除')
+      return true
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '图片资产删除失败')
+      return false
+    }
+  }
+
   const persistCandidateCache = async (chapterId: string, result: ChapterVisualCandidateResult, status: 'success' | 'error' = 'success') => {
     if (!currentWork) return undefined
     const metadata = candidateCacheMetadata(currentWork, chapterId)
@@ -219,5 +233,6 @@ export function useImageGeneration() {
     generateImage,
     extractChapterCandidates,
     retryImmichUpload,
+    deleteImage,
   }
 }
