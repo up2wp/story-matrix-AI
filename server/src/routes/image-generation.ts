@@ -121,6 +121,8 @@ const VIEW_DIRECTION_SUFFIX: Record<ImageViewDirection, string> = {
   back: '生成角色设定用白色背景全身图，视角：背面。',
 }
 
+const CHARACTER_FACE_GENERATION_SUFFIX = '最终生图限定：只生成纯白背景的脸部或头肩近景头像，脸部是唯一主体；不要生成完整服装展示、服饰单品、盔甲、披风、首饰特写、手持道具、武器、器物、场景背景或剧情动作。'
+
 function loadImageGenerationConfig(): ImageGenerationConfig {
   const row = db.prepare('SELECT imageGenerationConfig FROM systemConfig WHERE id = ?').get('singleton') as { imageGenerationConfig?: string } | undefined
   return normalizeImageGenerationConfig(row?.imageGenerationConfig ? JSON.parse(row.imageGenerationConfig) : defaultImageGenerationConfig())
@@ -575,6 +577,11 @@ function promptTypeLabel(promptId: string) {
   return 'character-face'
 }
 
+function generationPromptForRequest(prompt: string, promptId: string, viewDirection?: ImageViewDirection) {
+  const typedPrompt = promptId.split(':')[0] === 'characterFace' ? `${prompt}\n${CHARACTER_FACE_GENERATION_SUFFIX}` : prompt
+  return viewDirection ? `${typedPrompt}\n${VIEW_DIRECTION_SUFFIX[viewDirection]}` : typedPrompt
+}
+
 function visualPromptLabel(type: ImagePromptType) {
   if (type === 'characterFace') return '角色高清面部特写'
   if (type === 'chapterClothing') return '章节服饰'
@@ -808,7 +815,7 @@ router.post('/generate', async (req, res) => {
     if (referenceImageIds.length > maxReferenceImages) return res.status(400).json({ error: `参考图最多选择 ${maxReferenceImages} 张` })
     const referenceImages: ProviderReferenceImage[] = []
     for (const imageId of referenceImageIds) referenceImages.push(await resolveReferenceImageBytes(workId, work, imageId, config))
-    const generationPrompt = viewDirection ? `${prompt}\n${VIEW_DIRECTION_SUFFIX[viewDirection]}` : prompt
+    const generationPrompt = generationPromptForRequest(prompt, String(body.promptId || ''), viewDirection)
     const storageMode = config.storageMode === 'immich' ? 'immich' : 'local'
     const immichClient = storageMode === 'immich' ? immichClientFromConfig(config) : undefined
     if (immichClient) await immichClient.assertReadyForUpload()
