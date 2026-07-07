@@ -825,7 +825,7 @@ router.post('/generate', async (req, res) => {
     const snapshots = { basePromptSnapshot: prompt, generationPromptSnapshot: generationPrompt, viewDirection, referenceImageIds }
     if (storageMode === 'local') {
       const saved = saveImageAsset(workId, buffer)
-      return res.json({ ...saved, localAssetId: saved.id, storageMode: 'local', storageStatus: 'succeeded', status: 'succeeded', modelId: model.id, modelName: model.model, provider: model.provider, ...snapshots })
+      return res.json({ ...saved, localAssetId: saved.id, storageMode: 'local', storageStatus: 'succeeded', status: 'succeeded', modelId: model.id, modelName: model.label, provider: model.provider, ...snapshots })
     }
     const albumId = await immichClient!.ensureProjectAlbum()
     const filename = buildImmichFilename(access.row, { ...body, immichProjectName: config.immich?.projectName }, mimeType)
@@ -843,7 +843,7 @@ router.post('/generate', async (req, res) => {
         thumbnailUrl: `/api/image-generation/assets/${encodeURIComponent(workId)}/${encodeURIComponent(id)}/thumbnail`,
         originalUrl: `/api/image-generation/assets/${encodeURIComponent(workId)}/${encodeURIComponent(id)}/original`,
         modelId: model.id,
-        modelName: model.model,
+        modelName: model.label,
         provider: model.provider,
         ...snapshots,
       })
@@ -862,7 +862,7 @@ router.post('/generate', async (req, res) => {
         thumbnailUrl: fallback.thumbnailUrl,
         originalUrl: fallback.originalUrl,
         modelId: model.id,
-        modelName: model.model,
+        modelName: model.label,
         provider: model.provider,
         ...snapshots,
         error: uploadError instanceof Error ? uploadError.message : 'Immich 上传失败，已保留可重试状态',
