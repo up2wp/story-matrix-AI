@@ -15,9 +15,9 @@ const { Content } = Layout
 const { Title } = Typography
 
 // 不需要 AI 面板的页面
-const NO_AI_PANEL_PATHS = ['/works', '/admin', '/preview']
+const NO_AI_PANEL_PATHS = ['/works', '/admin', '/preview', '/proofread']
 // 不需要页面头部的页面
-const NO_HEADER_PATHS = ['/works', '/admin', '/login', '/preview']
+const NO_HEADER_PATHS = ['/works', '/admin', '/login', '/preview', '/proofread']
 
 export default function AppLayout() {
   const aiPanelOpen = useStore((s) => s.aiPanelOpen)
@@ -38,7 +38,8 @@ export default function AppLayout() {
   const showHeader = currentWork && !NO_HEADER_PATHS.includes(location.pathname)
   const isChaptersPage = location.pathname === '/chapters'
   const isPreviewPage = location.pathname === '/preview'
-  const isFixedHeightPage = isChaptersPage || isPreviewPage
+  const isProofreadPage = location.pathname === '/proofread'
+  const isFixedHeightPage = isChaptersPage || isPreviewPage || isProofreadPage
 
   useEffect(() => {
     const media = window.matchMedia('(max-width: 768px)')
