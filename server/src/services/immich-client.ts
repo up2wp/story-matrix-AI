@@ -169,4 +169,13 @@ export class ImmichClient {
     if (buffer.length > IMMICH_MAX_RESPONSE_BYTES) throw new Error('Immich 图片超过大小限制')
     return { buffer, contentType }
   }
+
+  async deleteAsset(assetId: string) {
+    const response = await this.request('/assets', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [assetId], force: true }),
+    })
+    if (!response.ok) throw new Error(`Immich 图片删除失败：${await readError(response)}`)
+  }
 }

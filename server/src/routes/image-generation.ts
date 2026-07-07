@@ -21,6 +21,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ASSET_DIR = path.join(__dirname, '..', '..', 'data', 'image-assets')
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024
 const IMMICH_UPLOAD_RETRY_LIMIT = 3
+const IMMICH_THUMBNAIL_READY_ATTEMPTS = 20
+const IMMICH_THUMBNAIL_READY_DELAY_MS = 1500
 
 interface AIConfigPayload {
   apiKey?: string
@@ -258,6 +260,10 @@ function readLocalImageAsset(workId: string, assetId: string) {
   const filePath = path.join(workDir, fileName)
   const buffer = fs.readFileSync(filePath)
   return { buffer, mimeType: detectMime(buffer), filePath }
+}
+
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms))
 }
 
 function compact(value: string | undefined) {
@@ -563,6 +569,30 @@ function deleteLocalStagedImageAsset(workId: string, assetId: string) {
   fs.unlinkSync(local.filePath)
 }
 
+function deleteLocalImageAssetIfPresent(workId: string, assetId: string | undefined) {
+  if (!assetId || !/^[a-f0-9-]{36}$/i.test(assetId)) return
+  try {
+    const local = readLocalImageAsset(workId, assetId)
+    fs.unlinkSync(local.filePath)
+  } catch {
+    // The record can outlive its temporary file; deletion should still remove the stale record.
+  }
+}
+
+async function waitForImmichThumbnail(client: ImmichClient, assetId: string) {
+  let lastError: unknown
+  for (let attempt = 0; attempt < IMMICH_THUMBNAIL_READY_ATTEMPTS; attempt += 1) {
+    try {
+      await client.fetchAssetBytes(assetId, 'thumbnail')
+      return
+    } catch (error) {
+      lastError = error
+      if (attempt < IMMICH_THUMBNAIL_READY_ATTEMPTS - 1) await sleep(IMMICH_THUMBNAIL_READY_DELAY_MS)
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Immich 缩略图尚未生成')
+}
+
 function slugPart(value: string | undefined, fallback: string) {
   const normalized = String(value || fallback).trim().replace(/\s+/g, '-').replace(/[\\/:*?"<>|#%&{}$!'@+`=]/g, '').slice(0, 48)
   return normalized || fallback
@@ -831,6 +861,12 @@ router.post('/generate', async (req, res) => {
     const filename = buildImmichFilename(access.row, { ...body, immichProjectName: config.immich?.projectName }, mimeType)
     try {
       const uploaded = await uploadToImmichWithRetry(immichClient!, buffer, filename, mimeType, albumId)
+      try {
+        await waitForImmichThumbnail(immichClient!, uploaded.assetId)
+      } catch (thumbnailError) {
+        await immichClient!.deleteAsset(uploaded.assetId).catch(() => undefined)
+        throw thumbnailError
+      }
       const id = randomUUID()
       return res.json({
         id,
@@ -928,6 +964,12 @@ router.post('/assets/:workId/:assetId/retry-immich', async (req, res) => {
     const albumId = await client.ensureProjectAlbum()
     const local = readLocalImageAsset(req.params.workId, image.localAssetId)
     const uploaded = await uploadToImmichWithRetry(client, local.buffer, image.immichFilename, local.mimeType, albumId)
+    try {
+      await waitForImmichThumbnail(client, uploaded.assetId)
+    } catch (thumbnailError) {
+      await client.deleteAsset(uploaded.assetId).catch(() => undefined)
+      throw thumbnailError
+    }
     deleteLocalStagedImageAsset(req.params.workId, image.localAssetId)
     res.json({
       storageMode: 'immich',
@@ -943,6 +985,30 @@ router.post('/assets/:workId/:assetId/retry-immich', async (req, res) => {
     })
   } catch (error) {
     res.status(502).json({ error: error instanceof Error ? error.message : 'Immich 重传失败' })
+  }
+})
+
+router.delete('/assets/:workId/:assetId', async (req, res) => {
+  const request = req as unknown as AuthenticatedRequest
+  const access = workAccess(request, req.params.workId, true)
+  if (access.status !== 200) return res.status(access.status).json({ error: access.error })
+  const data = JSON.parse(access.row.data) as WorkData
+  const visualAssets = data.visualAssets
+  const image = visualAssets?.images?.[req.params.assetId]
+  if (!visualAssets || !image) return res.status(404).json({ error: '图片记录不存在' })
+  try {
+    if (image.storageMode === 'immich' && image.immichAssetId) {
+      await immichClientFromConfig(loadImageGenerationConfig()).deleteAsset(image.immichAssetId)
+    }
+    deleteLocalImageAssetIfPresent(req.params.workId, image.localAssetId || (image.storageMode === 'local' ? image.id : undefined))
+    const images = { ...(visualAssets.images || {}) }
+    delete images[req.params.assetId]
+    const nextVisualAssets = { ...visualAssets, images, updatedAt: Date.now() }
+    const updatedAt = Date.now()
+    db.prepare('UPDATE works SET updatedAt = ?, data = ? WHERE id = ?').run(updatedAt, JSON.stringify({ ...data, visualAssets: nextVisualAssets }), req.params.workId)
+    res.json({ visualAssets: nextVisualAssets, updatedAt })
+  } catch (error) {
+    res.status(502).json({ error: error instanceof Error ? error.message : '图片资产删除失败' })
   }
 })
 
