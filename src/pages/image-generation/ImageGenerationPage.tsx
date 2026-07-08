@@ -142,7 +142,7 @@ export default function ImageGenerationPage() {
   const setCurrentWork = useStore(state => state.setCurrentWork)
   const readOnly = useStore(state => state.readOnly)
   const canUseFeature = useSystemConfigStore(state => state.canUseFeature)
-  const { imageGenerationConfig, visualAssets, generatingPromptId, generatingImagePromptId, generatePromptDraft, savePrompt, generateImage, extractChapterCandidates, retryImmichUpload } = useImageGeneration()
+  const { imageGenerationConfig, visualAssets, generatingPromptId, generatingImagePromptId, generatePromptDraft, savePrompt, generateImage, extractChapterCandidates, retryImmichUpload, deleteImage } = useImageGeneration()
   const [type, setType] = useState<ImagePromptType>('characterFace')
   const [characterId, setCharacterId] = useState<string | undefined>()
   const [chapterId, setChapterId] = useState<string | undefined>()
@@ -154,6 +154,7 @@ export default function ImageGenerationPage() {
   const [referenceImageIds, setReferenceImageIds] = useState<string[]>([])
   const [refreshingImages, setRefreshingImages] = useState(false)
   const [galleryRefreshKey, setGalleryRefreshKey] = useState(0)
+  const [deletingImageId, setDeletingImageId] = useState<string | null>(null)
   const candidateRequestId = useRef(0)
 
   const editable = Boolean(currentWork && !readOnly && canUseFeature(user, 'imageGeneration'))
@@ -414,6 +415,16 @@ export default function ImageGenerationPage() {
     }
   }
 
+  const handleDeleteImage = async (image: ImageAssetRecord) => {
+    setDeletingImageId(image.id)
+    try {
+      const deleted = await deleteImage(image)
+      if (deleted) setReferenceImageIds(current => current.filter(id => id !== image.id))
+    } finally {
+      setDeletingImageId(null)
+    }
+  }
+
   const renderCandidateStatus = () => {
     if (!chapterId) return <Text type="secondary">选择章节后可加载本章角色、服饰和道具候选。</Text>
     if (candidateState.status === 'loading') return <Alert type="info" showIcon message="正在提取当前章节视觉候选" />
@@ -570,7 +581,7 @@ export default function ImageGenerationPage() {
       </div>
 
       <Card title="图片结果" style={{ marginTop: 16 }} extra={<Button size="small" icon={<ReloadOutlined />} loading={refreshingImages} onClick={handleRefreshImages}>刷新</Button>}>
-        <ImageResultGallery key={galleryRefreshKey} images={images} editable={editable} onRetryUpload={retryImmichUpload} />
+        <ImageResultGallery key={galleryRefreshKey} images={images} editable={editable} onRetryUpload={retryImmichUpload} onDelete={handleDeleteImage} deletingImageId={deletingImageId} />
       </Card>
     </div>
   )

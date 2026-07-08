@@ -42,17 +42,20 @@ body {
     display: none;
   }
 
-  .preview-page-layout {
+  .preview-page-layout,
+  .proofread-page-layout {
     display: block !important;
     overflow: auto !important;
   }
 
   .preview-page-toc,
-  .preview-fullscreen-toc {
+  .preview-fullscreen-toc,
+  .proofread-page-toc {
     display: none !important;
   }
 
-  .preview-page-main {
+  .preview-page-main,
+  .proofread-page-main {
     min-width: 0;
     overflow: visible !important;
   }
