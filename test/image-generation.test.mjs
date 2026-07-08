@@ -194,10 +194,11 @@ assert.match(pageSource, /Object\.values\(visualAssets\.images\)[\s\S]*status ==
 assert.match(editorSource, /生成草稿[\s\S]*保存提示词[\s\S]*复制[\s\S]*生成图片/, 'prompt editor should expose draft, save, copy, and image generation actions')
 assert.match(selectorSource, /style=\{\{ width: '100%' \}\}[\s\S]*capabilities\.sizes[\s\S]*capabilities\.qualities[\s\S]*capabilities\.formats/, 'model selector should fill the panel width and surface model capability summaries')
 assert.match(selectorSource, /capabilities\.referenceImages[\s\S]*maxReferenceImages[\s\S]*参考图/, 'model selector should surface reference-image support and max count')
-assert.match(gallerySource, /const displayUrl = getImageAssetDisplayUrl\(image\)[\s\S]*Image src=\{displayUrl\}/, 'gallery should render storage-agnostic backend proxy URLs')
+assert.match(gallerySource, /const visibleImages = images\.filter\(image => getImageAssetDisplayUrl\(image\) && !loadFailures\[image\.id\]\)[\s\S]*visibleImages\.map/, 'gallery should hide assets without a loadable thumbnail display URL')
+assert.match(gallerySource, /const displayUrl = getImageAssetDisplayUrl\(image\)[\s\S]*Image src=\{displayUrl\}/, 'gallery should render storage-agnostic backend thumbnail proxy URLs')
 assert.match(gallerySource, /const originalUrl = getImageAssetDisplayUrl\(image, 'original'\)[\s\S]*preview=\{originalUrl \? \{ src: originalUrl \} : false\}/, 'gallery previews should open the original image URL instead of reusing the thumbnail URL')
 assert.match(gallerySource, /Popconfirm[\s\S]*删除这张图片资产[\s\S]*onConfirm=\{\(\) => onDelete\?\.\(image\)\}/, 'gallery should expose a confirmed delete action for editable image assets')
-assert.match(gallerySource, /onError[\s\S]*setLoadFailures[\s\S]*历史图片定位不完整/, 'gallery should surface thumbnail load failures and legacy locator gaps')
+assert.match(gallerySource, /onError[\s\S]*setLoadFailures/, 'gallery should hide thumbnail load failures after the image reports an error')
 assert.match(cssSource, /image-generation-layout[\s\S]*@media \(max-width: 768px\)[\s\S]*grid-template-columns: 1fr/, 'visual workspace should collapse into a single-column mobile layout')
 assert.match(cssSource, /image-reference-grid[\s\S]*minmax\(128px, 1fr\)[\s\S]*@media \(max-width: 768px\)[\s\S]*image-reference-grid[\s\S]*minmax\(112px, 1fr\)/, 'reference image grid should remain readable in desktop and mobile single-column flows')
 

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { DeleteOutlined, PictureOutlined } from '@ant-design/icons'
+import { DeleteOutlined } from '@ant-design/icons'
 import { Button, Card, Empty, Image, Popconfirm, Space, Tag, Typography } from 'antd'
 import type { ImageAssetRecord } from '@/core/types'
 import { getImageAssetDisplayUrl } from './imageGenerationClient'
@@ -16,26 +16,20 @@ interface Props {
 
 export default function ImageResultGallery({ images, editable, onRetryUpload, onDelete, deletingImageId }: Props) {
   const [loadFailures, setLoadFailures] = useState<Record<string, boolean>>({})
-  if (!images.length) return <Empty description="暂无图片结果" />
+  const visibleImages = images.filter(image => getImageAssetDisplayUrl(image) && !loadFailures[image.id])
+  if (!visibleImages.length) return <Empty description="暂无可展示的图片结果" />
   return (
     <div className="image-result-grid">
-      {images.map(image => {
+      {visibleImages.map(image => {
         const displayUrl = getImageAssetDisplayUrl(image)
         const originalUrl = getImageAssetDisplayUrl(image, 'original')
-        const missingLocator = !displayUrl
-        const loadFailure = loadFailures[image.id]
-        const cover = missingLocator ? (
-          <Empty description="图片定位不完整" />
-        ) : loadFailure ? (
-          <Empty image={<PictureOutlined style={{ fontSize: 48 }} />} description={false} />
-        ) : (
+        const cover = (
           <Image src={displayUrl} preview={originalUrl ? { src: originalUrl } : false} alt="生成图片" style={{ objectFit: 'cover', maxHeight: 260 }} onError={() => setLoadFailures(current => ({ ...current, [image.id]: true }))} />
         )
         return (
         <Card key={image.id} size="small" cover={cover}>
           <Space direction="vertical" size={4} style={{ width: '100%' }}>
             <Space wrap><Tag>{image.modelName}</Tag><Tag>{image.mimeType}</Tag><Tag>{image.storageMode === 'immich' ? 'Immich' : '本地'}</Tag></Space>
-            {missingLocator && <Text type="danger">历史图片定位不完整，无法展示。</Text>}
             {image.status !== 'succeeded' && <Text type="danger">{image.error || '图片存储未完成，可稍后重试'}</Text>}
             {editable && (
               <Space wrap>
