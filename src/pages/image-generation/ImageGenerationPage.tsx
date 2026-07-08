@@ -77,7 +77,7 @@ function legacyPromptId(type: ImagePromptType, characterId?: string, chapterId?:
 }
 
 function typeRequiresChapter(type: ImagePromptType) {
-  return type === 'characterFace' || type === 'chapterClothing' || type === 'chapterProp'
+  return type === 'characterFace' || type === 'chapterClothing' || type === 'chapterProp' || type === 'characterFullBody'
 }
 
 function typeUsesCandidateSubject(type: ImagePromptType) {
@@ -85,11 +85,11 @@ function typeUsesCandidateSubject(type: ImagePromptType) {
 }
 
 function typeUsesChapterCharacters(type: ImagePromptType) {
-  return type === 'characterFace' || type === 'chapterClothing'
+  return type === 'characterFace' || type === 'chapterClothing' || type === 'characterFullBody'
 }
 
 function typeRequiresCharacter(type: ImagePromptType) {
-  return type === 'characterFace' || type === 'chapterClothing'
+  return type === 'characterFace' || type === 'chapterClothing' || type === 'characterFullBody'
 }
 
 function promptTitle(type: ImagePromptType) {
@@ -557,8 +557,8 @@ export default function ImageGenerationPage() {
         </Card>
 
         <Card title="提示词编辑" className="image-generation-panel image-generation-main">
-          {missingRequiredChapter && <Alert style={{ marginBottom: 12 }} type="info" showIcon message="请先选择章节" description="章节服饰和章节道具提示词需要章节标题、摘要、场景信息和小段摘录作为上下文。" />}
-          {missingRequiredCharacter && !missingRequiredChapter && <Alert style={{ marginBottom: 12 }} type="info" showIcon message="请先选择本章角色" description={type === 'chapterClothing' ? '章节服饰需要先选择本章出现的作品角色，再选择该角色服饰。' : '高清头像需要先选择本章出现的作品角色。'} />}
+          {missingRequiredChapter && <Alert style={{ marginBottom: 12 }} type="info" showIcon message="请先选择章节" description="章节人物、服饰、道具和多视角全身图会按当前章节加载候选。" />}
+          {missingRequiredCharacter && !missingRequiredChapter && <Alert style={{ marginBottom: 12 }} type="info" showIcon message="请先选择本章角色" description={type === 'chapterClothing' ? '章节服饰需要先选择本章出现的人物，再选择该人物服饰。' : '当前类型需要先选择本章出现的人物。'} />}
           {missingRequiredSubject && !missingRequiredChapter && !missingRequiredCharacter && <Alert style={{ marginBottom: 12 }} type="info" showIcon message="请先选择章节候选主体" description={type === 'chapterClothing' ? '章节服饰会按角色和服饰候选保存独立提示词记录。' : '章节道具会按道具候选保存独立提示词记录，避免同一章节内多个素材互相覆盖。'} />}
           <ImagePromptEditor
             record={recordForActions}
