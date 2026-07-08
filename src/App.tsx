@@ -16,6 +16,7 @@ import ConstraintsPage from '@/pages/constraints/ConstraintsPage'
 import CharacterVoicesPage from '@/pages/character-voices/CharacterVoicesPage'
 import ChaptersPage from '@/pages/chapters/ChaptersPage'
 import PreviewPage from '@/pages/preview/PreviewPage'
+import ProofreadPage from '@/pages/proofread/ProofreadPage'
 import VoicesPage from '@/pages/voices/VoicesPage'
 import ImportBackfillPage from '@/pages/backfill/ImportBackfillPage'
 import ImageGenerationPage from '@/pages/image-generation/ImageGenerationPage'
@@ -54,6 +55,7 @@ export default function App() {
             <Route path="/character-voices" element={<CharacterVoicesPage />} />
             <Route path="/chapters" element={<ChaptersPage />} />
             <Route path="/preview" element={<PreviewPage />} />
+            <Route path="/proofread" element={<ProofreadPage />} />
             <Route path="/voices" element={<VoicesPage />} />
             <Route element={<AdminRoute><Outlet /></AdminRoute>}>
               <Route path="/admin" element={<AdminPage />} />

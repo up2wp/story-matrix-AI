@@ -11,6 +11,7 @@ import {
   CustomerServiceOutlined,
   SafetyCertificateOutlined,
   PictureOutlined,
+  CheckCircleOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation } from 'react-router'
 import { useStore } from '@/core/store'
@@ -59,6 +60,7 @@ export default function Sidebar() {
             ? [{ key: '/character-voices', icon: <CustomerServiceOutlined />, label: '角色声音' }]
             : []),
           { key: '/chapters', icon: <FileTextOutlined />, label: '章节丰盈' },
+          { key: '/proofread', icon: <CheckCircleOutlined />, label: '全文校对' },
           { key: '/preview', icon: <ReadOutlined />, label: '全文预览' },
         ]
       : []),
