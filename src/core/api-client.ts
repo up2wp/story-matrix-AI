@@ -11,6 +11,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${url}`, {
     headers,
     credentials: 'include',
+    cache: 'no-store',
     ...options,
   })
   if (res.status === 404) return undefined as T

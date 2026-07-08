@@ -579,6 +579,22 @@ function deleteLocalImageAssetIfPresent(workId: string, assetId: string | undefi
   }
 }
 
+function findImageAssetRecord(images: Record<string, ImageAssetRecord>, assetId: string) {
+  const direct = images[assetId]
+  if (direct) return direct
+  return Object.values(images).find(image => image.id === assetId)
+}
+
+function removeMatchingImageAssetRecords(images: Record<string, ImageAssetRecord>, deleted: ImageAssetRecord) {
+  return Object.fromEntries(Object.entries(images).filter(([key, image]) => {
+    if (key === deleted.id || image.id === deleted.id) return false
+    if (deleted.immichAssetId && image.immichAssetId === deleted.immichAssetId) return false
+    if (deleted.immichFilename && image.immichFilename === deleted.immichFilename) return false
+    if (deleted.localAssetId && image.localAssetId === deleted.localAssetId) return false
+    return true
+  }))
+}
+
 async function waitForImmichThumbnail(client: ImmichClient, assetId: string) {
   let lastError: unknown
   for (let attempt = 0; attempt < IMMICH_THUMBNAIL_READY_ATTEMPTS; attempt += 1) {
@@ -994,15 +1010,14 @@ router.delete('/assets/:workId/:assetId', async (req, res) => {
   if (access.status !== 200) return res.status(access.status).json({ error: access.error })
   const data = JSON.parse(access.row.data) as WorkData
   const visualAssets = data.visualAssets
-  const image = visualAssets?.images?.[req.params.assetId]
+  const image = visualAssets?.images ? findImageAssetRecord(visualAssets.images, req.params.assetId) : undefined
   if (!visualAssets || !image) return res.status(404).json({ error: '图片记录不存在' })
   try {
     if (image.storageMode === 'immich' && image.immichAssetId) {
       await immichClientFromConfig(loadImageGenerationConfig()).deleteAsset(image.immichAssetId)
     }
     deleteLocalImageAssetIfPresent(req.params.workId, image.localAssetId || (image.storageMode === 'local' ? image.id : undefined))
-    const images = { ...(visualAssets.images || {}) }
-    delete images[req.params.assetId]
+    const images = removeMatchingImageAssetRecords(visualAssets.images || {}, image)
     const nextVisualAssets = { ...visualAssets, images, updatedAt: Date.now() }
     const updatedAt = Date.now()
     db.prepare('UPDATE works SET updatedAt = ?, data = ? WHERE id = ?').run(updatedAt, JSON.stringify({ ...data, visualAssets: nextVisualAssets }), req.params.workId)
