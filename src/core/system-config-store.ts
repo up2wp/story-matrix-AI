@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { db } from './db'
+import { DEFAULT_IMAGE_REQUEST_TIMEOUT_MS } from './types'
 import type { AIConfig, AIModelConfig, FeatureKey, ImageGenerationConfig, NovelImportConfig, User, VoiceboxConfig } from './types'
 import { canUseFeature, normalizeNovelImportConfig } from './feature-permissions'
 import { useStore } from './store'
@@ -71,6 +72,10 @@ export const defaultImageGenerationConfig: ImageGenerationConfig = {
   },
 }
 
+function normalizeImageRequestTimeoutMs(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : DEFAULT_IMAGE_REQUEST_TIMEOUT_MS
+}
+
 function normalizeImageGenerationConfig(config: ImageGenerationConfig): ImageGenerationConfig {
   const providers = Array.isArray(config.providers) ? config.providers : []
   return {
@@ -93,6 +98,7 @@ function normalizeImageGenerationConfig(config: ImageGenerationConfig): ImageGen
           referenceImages: model.capabilities?.referenceImages === true,
           maxReferenceImages: model.capabilities?.referenceImages === true ? Math.min(Math.max(Math.floor(model.capabilities?.maxReferenceImages || 0), 0), 3) : 0,
         },
+        requestTimeoutMs: normalizeImageRequestTimeoutMs(model.requestTimeoutMs),
       }
     }),
     storageMode: config.storageMode === 'immich' ? 'immich' : 'local',
