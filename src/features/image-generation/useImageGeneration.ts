@@ -26,6 +26,14 @@ function promptTitle(type: ImagePromptType) {
 
 const CANDIDATE_EXTRACTION_VERSION = 'visual-candidates-v2'
 
+interface PromptDraftInput {
+  type: ImagePromptType
+  characterId?: string
+  chapterId?: string
+  subject?: ImagePromptSubjectContext
+  referenceImageIds?: string[]
+}
+
 function stableHash(value: string) {
   let hash = 0
   for (let index = 0; index < value.length; index += 1) hash = ((hash << 5) - hash + value.charCodeAt(index)) | 0
@@ -77,12 +85,12 @@ export function useImageGeneration() {
     })
   }
 
-  const generatePromptDraft = async (type: ImagePromptType, characterId?: string, chapterId?: string, subject?: ImagePromptSubjectContext) => {
+  const generatePromptDraft = async ({ type, characterId, chapterId, subject, referenceImageIds }: PromptDraftInput) => {
     if (!currentWork) return undefined
     const id = promptId(type, characterId, chapterId, subject?.visualSubjectId)
     setGeneratingPromptId(id)
     try {
-      const { prompt } = await imageGenerationClient.prompt({ workId: currentWork.id, type, characterId, chapterId, visualSubjectId: subject?.visualSubjectId, candidateKind: subject?.candidateKind })
+      const { prompt } = await imageGenerationClient.prompt({ workId: currentWork.id, type, characterId, chapterId, visualSubjectId: subject?.visualSubjectId, candidateKind: subject?.candidateKind, referenceImageIds })
       const record: VisualPromptRecord = {
         ...(visualAssets.prompts[id] || {}),
         id,

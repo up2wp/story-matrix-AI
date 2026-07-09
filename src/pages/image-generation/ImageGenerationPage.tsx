@@ -215,11 +215,10 @@ export default function ImageGenerationPage() {
   const characterNameById = useMemo(() => new Map(currentWork?.characters.map(character => [character.id, character.name]) || []), [currentWork?.characters])
   const eligibleReferenceImages = useMemo<EligibleReferenceImage[]>(() => Object.values(visualAssets.images)
     .filter(image => image.status === 'succeeded' && image.storageStatus === 'succeeded')
-    .map(image => ({ image, displayUrl: getImageAssetDisplayUrl(image) }))
-    .filter((item): item is { image: ImageAssetRecord; displayUrl: string } => Boolean(item.displayUrl))
+    .map(image => ({ image, prompt: visualAssets.prompts[image.promptId], displayUrl: getImageAssetDisplayUrl(image) }))
+    .filter(item => Boolean(item.displayUrl) && item.prompt?.type !== 'characterFullBody')
     .sort((a, b) => b.image.createdAt - a.image.createdAt)
-    .map(({ image, displayUrl }) => {
-      const prompt = visualAssets.prompts[image.promptId]
+    .map(({ image, prompt, displayUrl }) => {
       const characterName = prompt?.characterId ? characterNameById.get(prompt.characterId) : undefined
       const label = prompt?.subjectLabel || characterName || prompt?.title || image.promptSnapshot.slice(0, 18) || '已生成图片'
       const detail = `${image.modelName} / ${new Date(image.createdAt).toLocaleString('zh-CN')}`
@@ -350,7 +349,7 @@ export default function ImageGenerationPage() {
       : selectedBystander
         ? { visualSubjectId: selectedBystander.id, subjectLabel: selectedBystander.name, subjectEvidence: selectedBystander.evidence, candidateKind: 'bystander' as const }
         : undefined
-    const draft = await generatePromptDraft(type, selectedCharacterId, chapterId, draftSubject)
+    const draft = await generatePromptDraft({ type, characterId: selectedCharacterId, chapterId, subject: draftSubject, referenceImageIds: type === 'characterFullBody' ? referenceImageIds : undefined })
     if (draft?.draftPrompt) setPromptDrafts(current => ({ ...current, [draft.id]: draft.draftPrompt || '' }))
   }
 
