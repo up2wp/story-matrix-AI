@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ReloadOutlined } from '@ant-design/icons'
 import { Alert, Button, Card, Empty, Modal, Select, Segmented, Space, Tag, Typography, message } from 'antd'
 import type { ChapterVisualCandidateResult, ImageAssetRecord, ImageGenerationModelConfig, ImagePromptType, ImageViewDirection, VisualCandidateKind, VisualPromptRecord, VisualSubjectCandidate } from '@/core/types'
@@ -225,6 +225,10 @@ export default function ImageGenerationPage() {
     }), [visualAssets.images, visualAssets.prompts])
   const eligibleReferenceIds = useMemo(() => new Set(eligibleReferenceImages.map(item => item.image.id)), [eligibleReferenceImages])
   const invalidSelectedReferenceIds = referenceImageIds.filter(id => !eligibleReferenceIds.has(id))
+  useEffect(() => {
+    if (!invalidSelectedReferenceIds.length) return
+    setReferenceImageIds(current => current.filter(id => eligibleReferenceIds.has(id)))
+  }, [eligibleReferenceIds, invalidSelectedReferenceIds.length])
   const referenceGenerateBlockReason = type === 'characterFullBody' && referenceImageIds.length > 0
     ? (!modelSupportsReferenceImages
         ? '当前模型不支持参考图；清空参考图后可继续普通文生图，或切换到支持参考图的模型。'
