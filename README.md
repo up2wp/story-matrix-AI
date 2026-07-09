@@ -79,6 +79,18 @@ docker run -itd --name story-matrix-ai --restart always -p 3001:3001 -v story-ma
 
 Docker 部署默认访问 `http://localhost:3001`。源码本地构建镜像部署的方法见 [Docker 部署手册](docs/docker-deploy.md)。
 
+如果测试环境需要在局域网内通过 `http://服务器IP:3001` 访问，请用 `NODE_ENV=development` 启动容器，避免浏览器因 HTTP 访问拒收生产模式下的 `Secure` 登录 Cookie：
+
+```bash
+docker run -d --name story-matrix-ai \
+  -e NODE_ENV=development \
+  -p 3001:3001 \
+  -v story-matrix-data:/app/server/data \
+  ghcr.io/up2wp/story-matrix-ai:latest
+```
+
+正式公网部署建议使用 HTTPS 访问，并保留镜像默认的生产模式。
+
 ### 5. 默认账号
 
 系统首次启动会自动创建管理员账号：

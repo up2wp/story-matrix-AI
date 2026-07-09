@@ -142,6 +142,7 @@ replace_container() {
   docker run -itd \
     --name "$CONTAINER_NAME" \
     --restart always \
+    -e NODE_ENV=development \
     -p "$HOST_PORT:$CONTAINER_PORT" \
     -v "$DATA_DIR:/app/server/data" \
     "$IMAGE_NAME"
