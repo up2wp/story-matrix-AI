@@ -61,6 +61,7 @@ export interface ImagePromptRequest {
   chapterId?: string
   visualSubjectId?: string
   candidateKind?: VisualCandidateKind
+  referenceImageIds?: string[]
 }
 
 export interface ImageRetryUploadRequest {
