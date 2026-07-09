@@ -35,6 +35,7 @@ export interface ImageGenerationModelConfig {
   providerModel: string
   enabled: boolean
   capabilities: ImageGenerationModelCapability
+  requestTimeoutMs: number
 }
 
 export interface ImageGenerationConfig {
@@ -52,6 +53,7 @@ export interface ImageGenerationConfig {
 }
 
 const MASKED_SECRET = '__server_configured__'
+export const DEFAULT_IMAGE_REQUEST_TIMEOUT_MS = 300000
 type ImageGenerationConfigInput = Record<string, unknown>
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -93,6 +95,12 @@ function normalizeReferenceImageCapability(value: unknown, provider: ImageGenera
 function normalizeMaxReferenceImages(value: unknown, referenceImages: boolean) {
   if (!referenceImages || typeof value !== 'number' || value <= 0) return 0
   return Math.min(Math.floor(value), 3)
+}
+
+function normalizeRequestTimeoutMs(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : DEFAULT_IMAGE_REQUEST_TIMEOUT_MS
 }
 
 function providerType(value: unknown): ImageProviderType {
@@ -213,6 +221,7 @@ export function normalizeImageGenerationConfig(inputValue: unknown): ImageGenera
         referenceImages,
         maxReferenceImages,
       },
+      requestTimeoutMs: normalizeRequestTimeoutMs(modelInput.requestTimeoutMs),
     })
   }
 

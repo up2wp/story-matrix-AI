@@ -111,6 +111,7 @@ async function generateOpenAIReferenceImages(provider: ImageGenerationProviderCo
     method: 'POST',
     headers: multipartHeaders(provider.apiKey),
     body: form,
+    timeoutMs: model.requestTimeoutMs,
   })
   if (!response.ok) throw new Error(await readUpstreamError(response))
   const data = await response.json() as { data?: Array<{ b64_json?: string; url?: string }> }
@@ -131,13 +132,14 @@ export async function generateProviderImages(provider: ImageGenerationProviderCo
       method: 'POST',
       headers: providerHeaders(provider.apiKey),
       body: JSON.stringify({ model: model.providerModel || model.model, prompt, ...minimaxOptions(body, model), ...subjectReference }),
+      timeoutMs: model.requestTimeoutMs,
     })
     if (!response.ok) throw new Error(await readUpstreamError(response))
     const data = await response.json() as { base_resp?: { status_code?: number; status_msg?: string }; data?: { image_base64?: string[]; image_urls?: string[] }; metadata?: { success_count?: string | number; failed_count?: string | number } }
     if (data.base_resp?.status_code && data.base_resp.status_code !== 0) throw new Error(minimaxErrorMessage(data.base_resp.status_code, data.base_resp.status_msg))
     const buffers = (data.data?.image_base64 || []).map(decodeBase64Image)
     if (buffers.length === 0 && data.data?.image_urls?.length) {
-      const responseFromUrl = await safeUpstreamFetch(data.data.image_urls[0])
+      const responseFromUrl = await safeUpstreamFetch(data.data.image_urls[0], { timeoutMs: model.requestTimeoutMs })
       if (!responseFromUrl.ok) throw new Error(await readUpstreamError(responseFromUrl))
       buffers.push(await readSafeImageBuffer(responseFromUrl))
     }
@@ -152,6 +154,7 @@ export async function generateProviderImages(provider: ImageGenerationProviderCo
     method: 'POST',
     headers: providerHeaders(provider.apiKey),
     body: JSON.stringify({ model: model.providerModel || model.model, prompt, response_format: 'b64_json', ...openAIOptions(body, model) }),
+    timeoutMs: model.requestTimeoutMs,
   })
   if (!response.ok) throw new Error(await readUpstreamError(response))
   const data = await response.json() as { data?: Array<{ b64_json?: string; url?: string }> }

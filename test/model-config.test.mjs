@@ -179,6 +179,18 @@ assert.match(
 )
 
 assert.match(
+  imageConfigService,
+  /requestTimeoutMs[\s\S]*300000/,
+  'backend image model config should normalize a configurable per-model request timeout with a 5-minute default for long-running image generation',
+)
+
+assert.doesNotMatch(
+  imageConfigService.match(/export function maskImageGenerationConfigForUser[\s\S]*?\n}\n/)?.[0] || '',
+  /requestTimeoutMs/,
+  'ordinary user image model config responses should never expose the per-model request timeout',
+)
+
+assert.match(
   featurePermissionsSource,
   /setUserFeatureGrant/,
   'feature permission helper should update one user-feature grant without hard-coding the admin UI',

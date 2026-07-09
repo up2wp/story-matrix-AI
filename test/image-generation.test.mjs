@@ -80,6 +80,11 @@ assert.match(imageProviderSource, /referenceImages[\s\S]*images\/edits|images\/e
 assert.match(imageProviderSource, /discoveredOpenAICapabilities[\s\S]*gpt-image-\[12\][\s\S]*referenceImages: supportsReferenceImages[\s\S]*MiniMax image-01-live[\s\S]*referenceImages: true, maxReferenceImages: 1/, 'provider discovery should mark GPT Image and MiniMax image models as reference-image capable')
 assert.match(imageProviderSource, /minimaxReferenceLimit[\s\S]*model\.capabilities\.referenceImages[\s\S]*referenceImages\.length > minimaxReferenceLimit[\s\S]*subject_reference/, 'MiniMax reference-image support should follow configured model capabilities instead of a hard-coded model id')
 assert.match(imageProviderSource, /subject_reference[\s\S]*type: 'character'[\s\S]*image_file/, 'MiniMax reference-image payload should use the documented character subject_reference image_file shape')
+assert.match(
+  imageProviderSource,
+  /timeoutMs:\s*model\.requestTimeoutMs/,
+  'image provider generation should pass the per-model request timeout into every safeUpstreamFetch call',
+)
 assert.match(imageRouteSource, /CHARACTER_FACE_GENERATION_SUFFIX[\s\S]*不要生成完整服装展示[\s\S]*手持道具[\s\S]*generationPromptForRequest[\s\S]*promptId\.split\(':'\)\[0\] === 'characterFace'[\s\S]*basePromptSnapshot: prompt, generationPromptSnapshot: generationPrompt/, 'character face image generation should append a final anti-clothing/prop guard while preserving the saved prompt snapshot')
 assert.match(imageRouteSource, /saveImageAsset[\s\S]*server[\\/]data[\\/]image-assets|const ASSET_DIR = path\.join\(__dirname, '\.\.', '\.\.', 'data', 'image-assets'\)/, 'image route should store images under the controlled server data asset directory')
 assert.match(imageRouteSource, /assertReadyForUpload\(\)[\s\S]*generateProviderImages|assertReadyForUpload\(\)[\s\S]*generateImageWithProvider/, 'Immich readiness should happen before provider generation')
@@ -164,6 +169,11 @@ assert.match(imageClientSource, /ImagePromptRequest[\s\S]*type: ImagePromptType[
 assert.doesNotMatch(imageClientSource, /systemPrompt|instruction|context:/, 'browser image client should not send freeform prompt context fields')
 assert.match(imageClientSource, /extractCandidates: \(payload: ImageCandidateRequest\)/, 'browser image client should call a dedicated chapter candidate extraction endpoint')
 assert.match(imageClientSource, /referenceImageIds\?: string\[\][\s\S]*viewDirection\?: ImageViewDirection/, 'browser image generation request should carry reference image ids and one-shot view direction')
+assert.doesNotMatch(
+  imageClientSource,
+  /requestTimeoutMs|timeoutMs/,
+  'browser image generation request should not carry a per-model request timeout so admins stay in control of the backend timeout',
+)
 assert.match(imageClientSource, /deleteAsset: \(payload: ImageDeleteRequest\)[\s\S]*method: 'DELETE'/, 'browser image client should expose an internal image asset delete request')
 assert.match(hookSource, /interface PromptDraftInput[\s\S]*referenceImageIds\?: string\[\][\s\S]*generatePromptDraft = async \(\{ type, characterId, chapterId, subject, referenceImageIds \}: PromptDraftInput\)[\s\S]*imageGenerationClient\.prompt\(\{ workId: currentWork\.id, type, characterId, chapterId, visualSubjectId: subject\?\.visualSubjectId, candidateKind: subject\?\.candidateKind, referenceImageIds \}\)/, 'image generation hook should request prompt drafts with typed identifiers and selected references only')
 assert.doesNotMatch(hookSource, /buildImagePromptContext|buildImagePromptInstruction|IMAGE_PROMPT_SYSTEM_PROMPT/, 'image generation hook should not build visual prompt context in the browser')

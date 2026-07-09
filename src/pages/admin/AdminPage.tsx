@@ -10,6 +10,7 @@ import type { FeatureKey, User, VoiceboxConfig, ImageGenerationConfig, ImageGene
 import { generateId } from '@/utils/id'
 import { imageGenerationClient } from '@/features/image-generation/imageGenerationClient'
 import type { ImageProviderModelCandidate } from '@/features/image-generation/imageGenerationClient'
+import { DEFAULT_IMAGE_REQUEST_TIMEOUT_MS } from '@/core/types'
 
 const { Title, Text } = Typography
 
@@ -35,6 +36,10 @@ export default function AdminPage() {
 function normalizeCapabilityInput(value: unknown) {
   if (Array.isArray(value)) return value.map(item => String(item).trim()).filter(Boolean)
   return String(value || '').split(',').map(item => item.trim()).filter(Boolean)
+}
+
+function normalizeImageRequestTimeoutMs(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : DEFAULT_IMAGE_REQUEST_TIMEOUT_MS
 }
 
 const IMAGE_PROVIDER_PRESETS: Record<string, { label: string; type: ImageProviderType; protocol: ImageProviderProtocol; baseUrl: string; models: string[] }> = {
@@ -113,6 +118,7 @@ function createModelFromCandidate(provider: ImageGenerationProviderConfig, candi
       formats: candidate.capabilities?.formats || [],
       aspectRatios: candidate.capabilities?.aspectRatios || [],
     },
+    requestTimeoutMs: DEFAULT_IMAGE_REQUEST_TIMEOUT_MS,
   }
 }
 
@@ -193,6 +199,7 @@ function serializeImageConfigForForm(config: ImageGenerationConfig) {
       ...model,
       providerId: model.providerId || providerByKey.get(providerFingerprint({ type: providerTypeFromValue(model.provider), baseUrl: model.baseUrl || '', apiKey: model.apiKey }))?.id || '',
       providerModel: model.providerModel || model.model,
+      requestTimeoutMs: normalizeImageRequestTimeoutMs(model.requestTimeoutMs),
       capabilities: {
         ...serializeCapabilitiesForForm(model.capabilities),
       },
@@ -219,6 +226,7 @@ function normalizeImageConfigFromForm(values: ImageGenerationConfig): ImageGener
       apiKey: provider.apiKey || '',
       model: providerModel,
       providerModel,
+      requestTimeoutMs: normalizeImageRequestTimeoutMs(model.requestTimeoutMs),
       capabilities: {
         sizes: normalizeCapabilityInput(model.capabilities?.sizes),
         qualities: normalizeCapabilityInput(model.capabilities?.qualities),
@@ -500,6 +508,9 @@ function ImageGenerationSettings() {
                         <Form.Item {...field} name={[field.name, 'capabilities', 'aspectRatios']} label="比例" style={{ minWidth: 220, flex: 1, marginBottom: 0 }}>
                           <Input placeholder="1:1, 16:9, 9:16" />
                         </Form.Item>
+                        <Form.Item {...field} name={[field.name, 'requestTimeoutMs']} label="请求超时（毫秒）" rules={[{ required: true, message: '请输入请求超时' }]} style={{ minWidth: 180, flex: 1, marginBottom: 0 }}>
+                          <InputNumber min={1} step={30000} precision={0} style={{ width: '100%' }} />
+                        </Form.Item>
                         <Form.Item {...field} name={[field.name, 'id']} hidden><Input /></Form.Item>
                       </Space>
                     </Space>
@@ -524,6 +535,7 @@ function ImageGenerationSettings() {
                     providerModel: '',
                     enabled: true,
                     capabilities: defaultCapabilitiesForProvider(provider.type),
+                    requestTimeoutMs: DEFAULT_IMAGE_REQUEST_TIMEOUT_MS,
                   })
                 }}
               >
