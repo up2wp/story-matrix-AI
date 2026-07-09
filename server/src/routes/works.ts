@@ -80,10 +80,11 @@ function defaultVisualAssets(): Record<string, unknown> {
 
 function mergeVisualAssets(current: unknown, patch: Record<string, unknown>): Record<string, unknown> {
   const existing = current && typeof current === 'object' && !Array.isArray(current) ? current as Record<string, unknown> : defaultVisualAssets()
+  const replaceImages = patch._replaceImages === true
   const next = {
     ...existing,
     prompts: mergeRecord(existing.prompts, patch.prompts),
-    images: mergeRecord(existing.images, patch.images),
+    images: replaceImages ? mergeRecord({}, patch.images) : mergeRecord(existing.images, patch.images),
     promptIdsByCharacter: mergeRecord(existing.promptIdsByCharacter, patch.promptIdsByCharacter),
     promptIdsByChapter: mergeRecord(existing.promptIdsByChapter, patch.promptIdsByChapter),
     candidateCache: mergeRecord(existing.candidateCache, patch.candidateCache),
