@@ -69,16 +69,27 @@ jobs:
 
           ntfy_url="${NTFY_URL%/}"
           ntfy_topic="${NTFY_TOPIC#/}"
-          printf -v message 'Docker image build %s: %s\nRepository: %s\nRef: %s\nRun: %s' \
-            "${JOB_STATUS}" \
+          status_text="成功"
+          tag="white_check_mark"
+          if [[ "${JOB_STATUS}" == "cancelled" ]]; then
+            status_text="取消"
+            tag="warning"
+          elif [[ "${JOB_STATUS}" != "success" ]]; then
+            status_text="失败"
+            tag="x"
+          fi
+
+          title="Story Matrix AI Docker 镜像构建${status_text}"
+          printf -v message 'Story Matrix AI Docker 镜像构建%s。镜像标签：%s\n仓库：%s\n分支：%s\n运行记录：%s' \
+            "${status_text}" \
             "${IMAGE_TAG}" \
             "${{ github.repository }}" \
             "${{ github.ref_name }}" \
             "${RUN_URL}"
 
           if ! curl -fsS -X POST "${ntfy_url}/${ntfy_topic}" \
-            -H "Title: Story Matrix AI Docker image" \
-            -H "Tags: docker,${JOB_STATUS}" \
+            -H "Title: ${title}" \
+            -H "Tags: docker,${tag}" \
             --data-binary "${message}"; then
             echo "::warning::Failed to send ntfy notification."
           fi

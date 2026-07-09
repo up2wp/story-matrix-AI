@@ -74,19 +74,31 @@ jobs:
 
           ntfy_url="${NTFY_URL%/}"
           ntfy_topic="${NTFY_TOPIC#/}"
-          message="Auto tag on merge ${JOB_STATUS}"
-          if [[ -n "${NEXT_TAG}" ]]; then
-            message="${message}: ${NEXT_TAG}"
+          status_text="成功"
+          tag="white_check_mark"
+          if [[ "${JOB_STATUS}" == "cancelled" ]]; then
+            status_text="取消"
+            tag="warning"
+          elif [[ "${JOB_STATUS}" != "success" ]]; then
+            status_text="失败"
+            tag="x"
           fi
-          printf -v message '%s\nRepository: %s\nRef: %s\nRun: %s' \
-            "${message}" \
+
+          title="Story Matrix AI 自动打版本标签${status_text}"
+          if [[ -n "${NEXT_TAG}" ]]; then
+            summary="Story Matrix AI 已经打好新版本标签：${NEXT_TAG}。"
+          else
+            summary="Story Matrix AI 自动打版本标签${status_text}。"
+          fi
+          printf -v message '%s\n仓库：%s\n分支：%s\n运行记录：%s' \
+            "${summary}" \
             "${{ github.repository }}" \
             "${{ github.ref_name }}" \
             "${RUN_URL}"
 
           if ! curl -fsS -X POST "${ntfy_url}/${ntfy_topic}" \
-            -H "Title: Story Matrix AI auto tag" \
-            -H "Tags: github,${JOB_STATUS}" \
+            -H "Title: ${title}" \
+            -H "Tags: github,${tag}" \
             --data-binary "${message}"; then
             echo "::warning::Failed to send ntfy notification."
           fi
