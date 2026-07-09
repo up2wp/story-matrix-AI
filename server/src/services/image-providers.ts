@@ -22,6 +22,11 @@ export interface ProviderReferenceImage {
 const OPENAI_DEFAULT_SIZE = '1024x1024'
 const MINIMAX_ASPECT_RATIOS = ['1:1', '16:9', '4:3', '3:2', '2:3', '3:4', '9:16', '21:9']
 
+function discoveredOpenAICapabilities(providerModel: string) {
+  const supportsReferenceImages = /^gpt-image-[12]$/i.test(providerModel)
+  return { sizes: [], qualities: [], formats: [], referenceImages: supportsReferenceImages, maxReferenceImages: supportsReferenceImages ? 3 : 0 }
+}
+
 function providerHeaders(apiKey?: string) {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`
@@ -106,6 +111,7 @@ async function generateOpenAIReferenceImages(provider: ImageGenerationProviderCo
     method: 'POST',
     headers: multipartHeaders(provider.apiKey),
     body: form,
+    timeoutMs: model.requestTimeoutMs,
   })
   if (!response.ok) throw new Error(await readUpstreamError(response))
   const data = await response.json() as { data?: Array<{ b64_json?: string; url?: string }> }
@@ -119,19 +125,21 @@ export async function generateProviderImages(provider: ImageGenerationProviderCo
   const referenceImages = Array.isArray(body.referenceImages) ? body.referenceImages : []
   if (provider.protocol === 'minimax-image-generation' || provider.type === 'minimax') {
     if (prompt.length > 1500) throw new Error('MiniMax 提示词不能超过 1500 字')
-    if (referenceImages.length > 1 || (referenceImages.length === 1 && (model.providerModel || model.model) !== 'image-01')) throw new Error('MiniMax 仅 image-01 支持 1 张参考图')
+    const minimaxReferenceLimit = model.capabilities.referenceImages ? (model.capabilities.maxReferenceImages || 1) : 0
+    if (referenceImages.length > minimaxReferenceLimit) throw new Error('MiniMax 当前模型最多支持 1 张参考图')
     const subjectReference = referenceImages.length === 1 ? { subject_reference: [{ type: 'character', image_file: `data:${referenceImages[0].mimeType};base64,${referenceImages[0].buffer.toString('base64')}` }] } : {}
     const response = await safeUpstreamFetch(`${normalizeSafeBaseUrl(provider.baseUrl)}/v1/image_generation`, {
       method: 'POST',
       headers: providerHeaders(provider.apiKey),
       body: JSON.stringify({ model: model.providerModel || model.model, prompt, ...minimaxOptions(body, model), ...subjectReference }),
+      timeoutMs: model.requestTimeoutMs,
     })
     if (!response.ok) throw new Error(await readUpstreamError(response))
     const data = await response.json() as { base_resp?: { status_code?: number; status_msg?: string }; data?: { image_base64?: string[]; image_urls?: string[] }; metadata?: { success_count?: string | number; failed_count?: string | number } }
     if (data.base_resp?.status_code && data.base_resp.status_code !== 0) throw new Error(minimaxErrorMessage(data.base_resp.status_code, data.base_resp.status_msg))
     const buffers = (data.data?.image_base64 || []).map(decodeBase64Image)
     if (buffers.length === 0 && data.data?.image_urls?.length) {
-      const responseFromUrl = await safeUpstreamFetch(data.data.image_urls[0])
+      const responseFromUrl = await safeUpstreamFetch(data.data.image_urls[0], { timeoutMs: model.requestTimeoutMs })
       if (!responseFromUrl.ok) throw new Error(await readUpstreamError(responseFromUrl))
       buffers.push(await readSafeImageBuffer(responseFromUrl))
     }
@@ -146,6 +154,7 @@ export async function generateProviderImages(provider: ImageGenerationProviderCo
     method: 'POST',
     headers: providerHeaders(provider.apiKey),
     body: JSON.stringify({ model: model.providerModel || model.model, prompt, response_format: 'b64_json', ...openAIOptions(body, model) }),
+    timeoutMs: model.requestTimeoutMs,
   })
   if (!response.ok) throw new Error(await readUpstreamError(response))
   const data = await response.json() as { data?: Array<{ b64_json?: string; url?: string }> }
@@ -164,7 +173,7 @@ export async function discoverProviderModels(provider: ImageGenerationProviderCo
     return ['image-01', 'image-01-live'].map(providerModel => ({
       providerModel,
       label: providerModel === 'image-01-live' ? 'MiniMax image-01-live' : 'MiniMax image-01',
-      capabilities: { sizes: ['1024x1024', '1792x1024', '1024x1792'], qualities: ['standard'], formats: ['png'], aspectRatios: MINIMAX_ASPECT_RATIOS, referenceImages: providerModel === 'image-01', maxReferenceImages: providerModel === 'image-01' ? 1 : 0 },
+      capabilities: { sizes: ['1024x1024', '1792x1024', '1024x1792'], qualities: ['standard'], formats: ['png'], aspectRatios: MINIMAX_ASPECT_RATIOS, referenceImages: true, maxReferenceImages: 1 },
       source: 'preset',
       requiresConfirmation: false,
     }))
@@ -175,7 +184,7 @@ export async function discoverProviderModels(provider: ImageGenerationProviderCo
   return (data.data || []).map(item => String(item.id || '').trim()).filter(Boolean).map(providerModel => ({
     providerModel,
     label: providerModel,
-    capabilities: { sizes: [], qualities: [], formats: [], referenceImages: false, maxReferenceImages: 0 },
+    capabilities: discoveredOpenAICapabilities(providerModel),
     source: 'provider',
     requiresConfirmation: true,
   }))

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ReloadOutlined } from '@ant-design/icons'
 import { Alert, Button, Card, Empty, Modal, Select, Segmented, Space, Tag, Typography, message } from 'antd'
 import type { ChapterVisualCandidateResult, ImageAssetRecord, ImageGenerationModelConfig, ImagePromptType, ImageViewDirection, VisualCandidateKind, VisualPromptRecord, VisualSubjectCandidate } from '@/core/types'
@@ -77,7 +77,7 @@ function legacyPromptId(type: ImagePromptType, characterId?: string, chapterId?:
 }
 
 function typeRequiresChapter(type: ImagePromptType) {
-  return type === 'characterFace' || type === 'chapterClothing' || type === 'chapterProp'
+  return type === 'characterFace' || type === 'chapterClothing' || type === 'chapterProp' || type === 'characterFullBody'
 }
 
 function typeUsesCandidateSubject(type: ImagePromptType) {
@@ -85,11 +85,11 @@ function typeUsesCandidateSubject(type: ImagePromptType) {
 }
 
 function typeUsesChapterCharacters(type: ImagePromptType) {
-  return type === 'characterFace' || type === 'chapterClothing'
+  return type === 'characterFace' || type === 'chapterClothing' || type === 'characterFullBody'
 }
 
 function typeRequiresCharacter(type: ImagePromptType) {
-  return type === 'characterFace' || type === 'chapterClothing'
+  return type === 'characterFace' || type === 'chapterClothing' || type === 'characterFullBody'
 }
 
 function promptTitle(type: ImagePromptType) {
@@ -142,7 +142,7 @@ export default function ImageGenerationPage() {
   const setCurrentWork = useStore(state => state.setCurrentWork)
   const readOnly = useStore(state => state.readOnly)
   const canUseFeature = useSystemConfigStore(state => state.canUseFeature)
-  const { imageGenerationConfig, visualAssets, generatingPromptId, generatingImagePromptId, generatePromptDraft, savePrompt, generateImage, extractChapterCandidates, retryImmichUpload } = useImageGeneration()
+  const { imageGenerationConfig, visualAssets, generatingPromptId, generatingImagePromptId, generatePromptDraft, savePrompt, generateImage, extractChapterCandidates, retryImmichUpload, deleteImage } = useImageGeneration()
   const [type, setType] = useState<ImagePromptType>('characterFace')
   const [characterId, setCharacterId] = useState<string | undefined>()
   const [chapterId, setChapterId] = useState<string | undefined>()
@@ -154,6 +154,7 @@ export default function ImageGenerationPage() {
   const [referenceImageIds, setReferenceImageIds] = useState<string[]>([])
   const [refreshingImages, setRefreshingImages] = useState(false)
   const [galleryRefreshKey, setGalleryRefreshKey] = useState(0)
+  const [deletingImageId, setDeletingImageId] = useState<string | null>(null)
   const candidateRequestId = useRef(0)
 
   const editable = Boolean(currentWork && !readOnly && canUseFeature(user, 'imageGeneration'))
@@ -211,19 +212,24 @@ export default function ImageGenerationPage() {
   const selectedModel = useMemo(() => imageGenerationConfig.models.find(model => model.id === effectiveModelId), [imageGenerationConfig.models, effectiveModelId])
   const maxReferenceImages = modelReferenceLimit(selectedModel)
   const modelSupportsReferenceImages = Boolean(selectedModel?.capabilities.referenceImages && maxReferenceImages > 0)
+  const characterNameById = useMemo(() => new Map(currentWork?.characters.map(character => [character.id, character.name]) || []), [currentWork?.characters])
   const eligibleReferenceImages = useMemo<EligibleReferenceImage[]>(() => Object.values(visualAssets.images)
     .filter(image => image.status === 'succeeded' && image.storageStatus === 'succeeded')
-    .map(image => ({ image, displayUrl: getImageAssetDisplayUrl(image) }))
-    .filter((item): item is { image: ImageAssetRecord; displayUrl: string } => Boolean(item.displayUrl))
+    .map(image => ({ image, prompt: visualAssets.prompts[image.promptId], displayUrl: getImageAssetDisplayUrl(image) }))
+    .filter(item => Boolean(item.displayUrl) && item.prompt?.type !== 'characterFullBody')
     .sort((a, b) => b.image.createdAt - a.image.createdAt)
-    .map(({ image, displayUrl }) => {
-      const prompt = visualAssets.prompts[image.promptId]
-      const label = prompt?.subjectLabel || prompt?.title || image.promptSnapshot.slice(0, 18) || '已生成图片'
+    .map(({ image, prompt, displayUrl }) => {
+      const characterName = prompt?.characterId ? characterNameById.get(prompt.characterId) : undefined
+      const label = prompt?.subjectLabel || characterName || prompt?.title || image.promptSnapshot.slice(0, 18) || '已生成图片'
       const detail = `${image.modelName} / ${new Date(image.createdAt).toLocaleString('zh-CN')}`
       return { image, displayUrl, label, detail }
-    }), [visualAssets.images, visualAssets.prompts])
+    }), [characterNameById, visualAssets.images, visualAssets.prompts])
   const eligibleReferenceIds = useMemo(() => new Set(eligibleReferenceImages.map(item => item.image.id)), [eligibleReferenceImages])
   const invalidSelectedReferenceIds = referenceImageIds.filter(id => !eligibleReferenceIds.has(id))
+  useEffect(() => {
+    if (!invalidSelectedReferenceIds.length) return
+    setReferenceImageIds(current => current.filter(id => eligibleReferenceIds.has(id)))
+  }, [eligibleReferenceIds, invalidSelectedReferenceIds.length])
   const referenceGenerateBlockReason = type === 'characterFullBody' && referenceImageIds.length > 0
     ? (!modelSupportsReferenceImages
         ? '当前模型不支持参考图；清空参考图后可继续普通文生图，或切换到支持参考图的模型。'
@@ -343,7 +349,7 @@ export default function ImageGenerationPage() {
       : selectedBystander
         ? { visualSubjectId: selectedBystander.id, subjectLabel: selectedBystander.name, subjectEvidence: selectedBystander.evidence, candidateKind: 'bystander' as const }
         : undefined
-    const draft = await generatePromptDraft(type, selectedCharacterId, chapterId, draftSubject)
+    const draft = await generatePromptDraft({ type, characterId: selectedCharacterId, chapterId, subject: draftSubject, referenceImageIds: type === 'characterFullBody' ? referenceImageIds : undefined })
     if (draft?.draftPrompt) setPromptDrafts(current => ({ ...current, [draft.id]: draft.draftPrompt || '' }))
   }
 
@@ -411,6 +417,16 @@ export default function ImageGenerationPage() {
       setGalleryRefreshKey(key => key + 1)
     } finally {
       setRefreshingImages(false)
+    }
+  }
+
+  const handleDeleteImage = async (image: ImageAssetRecord) => {
+    setDeletingImageId(image.id)
+    try {
+      const deleted = await deleteImage(image)
+      if (deleted) setReferenceImageIds(current => current.filter(id => id !== image.id))
+    } finally {
+      setDeletingImageId(null)
     }
   }
 
@@ -546,8 +562,8 @@ export default function ImageGenerationPage() {
         </Card>
 
         <Card title="提示词编辑" className="image-generation-panel image-generation-main">
-          {missingRequiredChapter && <Alert style={{ marginBottom: 12 }} type="info" showIcon message="请先选择章节" description="章节服饰和章节道具提示词需要章节标题、摘要、场景信息和小段摘录作为上下文。" />}
-          {missingRequiredCharacter && !missingRequiredChapter && <Alert style={{ marginBottom: 12 }} type="info" showIcon message="请先选择本章角色" description={type === 'chapterClothing' ? '章节服饰需要先选择本章出现的作品角色，再选择该角色服饰。' : '高清头像需要先选择本章出现的作品角色。'} />}
+          {missingRequiredChapter && <Alert style={{ marginBottom: 12 }} type="info" showIcon message="请先选择章节" description="章节人物、服饰、道具和多视角全身图会按当前章节加载候选。" />}
+          {missingRequiredCharacter && !missingRequiredChapter && <Alert style={{ marginBottom: 12 }} type="info" showIcon message="请先选择本章角色" description={type === 'chapterClothing' ? '章节服饰需要先选择本章出现的人物，再选择该人物服饰。' : '当前类型需要先选择本章出现的人物。'} />}
           {missingRequiredSubject && !missingRequiredChapter && !missingRequiredCharacter && <Alert style={{ marginBottom: 12 }} type="info" showIcon message="请先选择章节候选主体" description={type === 'chapterClothing' ? '章节服饰会按角色和服饰候选保存独立提示词记录。' : '章节道具会按道具候选保存独立提示词记录，避免同一章节内多个素材互相覆盖。'} />}
           <ImagePromptEditor
             record={recordForActions}
@@ -570,7 +586,7 @@ export default function ImageGenerationPage() {
       </div>
 
       <Card title="图片结果" style={{ marginTop: 16 }} extra={<Button size="small" icon={<ReloadOutlined />} loading={refreshingImages} onClick={handleRefreshImages}>刷新</Button>}>
-        <ImageResultGallery key={galleryRefreshKey} images={images} editable={editable} onRetryUpload={retryImmichUpload} />
+        <ImageResultGallery key={galleryRefreshKey} images={images} editable={editable} onRetryUpload={retryImmichUpload} onDelete={handleDeleteImage} deletingImageId={deletingImageId} />
       </Card>
     </div>
   )

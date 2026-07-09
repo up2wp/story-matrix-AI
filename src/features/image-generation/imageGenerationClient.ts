@@ -1,4 +1,4 @@
-import type { ChapterVisualCandidateResult, ImagePromptType, ImageViewDirection, VisualCandidateKind } from '@/core/types'
+import type { ChapterVisualCandidateResult, ImagePromptType, ImageViewDirection, VisualCandidateKind, WorkVisualAssetsConfig } from '@/core/types'
 
 export interface ImageGenerateRequest {
   workId: string
@@ -61,9 +61,15 @@ export interface ImagePromptRequest {
   chapterId?: string
   visualSubjectId?: string
   candidateKind?: VisualCandidateKind
+  referenceImageIds?: string[]
 }
 
 export interface ImageRetryUploadRequest {
+  workId: string
+  imageId: string
+}
+
+export interface ImageDeleteRequest {
   workId: string
   imageId: string
 }
@@ -96,6 +102,9 @@ export const imageGenerationClient = {
   }),
   retryImmichUpload: (payload: ImageRetryUploadRequest) => request<Partial<ImageGenerateResponse>>(`/assets/${encodeURIComponent(payload.workId)}/${encodeURIComponent(payload.imageId)}/retry-immich`, {
     method: 'POST',
+  }),
+  deleteAsset: (payload: ImageDeleteRequest) => request<{ visualAssets: WorkVisualAssetsConfig; updatedAt: number }>(`/assets/${encodeURIComponent(payload.workId)}/${encodeURIComponent(payload.imageId)}`, {
+    method: 'DELETE',
   }),
   discoverProviderModels: (payload: ImageProviderDiscoveryRequest) => request<{ candidates: ImageProviderModelCandidate[] }>('/providers/discover-models', {
     method: 'POST',

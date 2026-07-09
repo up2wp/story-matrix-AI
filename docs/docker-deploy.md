@@ -32,6 +32,18 @@ docker compose up -d --build
 
 默认访问地址：http://localhost:3001
 
+如果测试环境需要在局域网内通过 `http://服务器IP:3001` 访问，请在容器启动时设置 `NODE_ENV=development`。否则镜像默认的生产模式会为登录 Cookie 加上 `Secure` 标记，浏览器在普通 HTTP 地址下不会保存该 Cookie，表现为登录成功后又回到登录页。
+
+```bash
+docker run -d --name story-matrix-ai \
+  -e NODE_ENV=development \
+  -p 3001:3001 \
+  -v story-matrix-data:/app/server/data \
+  ghcr.io/up2wp/story-matrix-ai:latest
+```
+
+该方式只建议用于内网测试。正式公网部署建议使用 HTTPS，并保留镜像默认的生产模式。
+
 查看运行日志：
 
 ```bash
@@ -75,6 +87,16 @@ docker build -t story-matrix-ai:local .
 
 ```bash
 docker run -d --name story-matrix-ai -p 3001:3001 -v story-matrix-data:/app/server/data story-matrix-ai:local
+```
+
+如果本地镜像也用于内网 HTTP 测试，同样可以加上 `-e NODE_ENV=development`：
+
+```bash
+docker run -d --name story-matrix-ai \
+  -e NODE_ENV=development \
+  -p 3001:3001 \
+  -v story-matrix-data:/app/server/data \
+  story-matrix-ai:local
 ```
 
 ## 发布标签触发镜像构建

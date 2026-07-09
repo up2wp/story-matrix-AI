@@ -175,6 +175,8 @@ export type ImageProviderType = 'openai' | 'openai-compatible' | 'custom' | 'min
 
 export type ImageProviderProtocol = 'openai-images' | 'openai-compatible-images' | 'minimax-image-generation'
 
+export const DEFAULT_IMAGE_REQUEST_TIMEOUT_MS = 300000
+
 export interface ImageGenerationModelCapability {
   sizes: string[]
   qualities: string[]
@@ -207,6 +209,7 @@ export interface ImageGenerationModelConfig {
   providerModel?: string
   enabled: boolean
   capabilities: ImageGenerationModelCapability
+  requestTimeoutMs: number
 }
 
 export type ImageStorageMode = 'local' | 'immich'

@@ -35,6 +35,7 @@ export interface ImageGenerationModelConfig {
   providerModel: string
   enabled: boolean
   capabilities: ImageGenerationModelCapability
+  requestTimeoutMs: number
 }
 
 export interface ImageGenerationConfig {
@@ -52,6 +53,7 @@ export interface ImageGenerationConfig {
 }
 
 const MASKED_SECRET = '__server_configured__'
+export const DEFAULT_IMAGE_REQUEST_TIMEOUT_MS = 300000
 type ImageGenerationConfigInput = Record<string, unknown>
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -75,13 +77,30 @@ export function normalizeStringList(value: unknown) {
   return Array.from(new Set(value.map(item => String(item || '').trim()).filter(Boolean)))
 }
 
-function normalizeReferenceImageCapability(value: unknown) {
-  return value === true
+function defaultReferenceImageCapability(provider: ImageGenerationProviderConfig, providerModel: string) {
+  const model = providerModel.trim().toLowerCase()
+  if (provider.protocol === 'minimax-image-generation' || provider.type === 'minimax') return true
+  if ((provider.protocol === 'openai-images' || provider.protocol === 'openai-compatible-images') && /^gpt-image-[12]$/.test(model)) return true
+  return false
+}
+
+function defaultMaxReferenceImages(provider: ImageGenerationProviderConfig) {
+  return provider.protocol === 'minimax-image-generation' || provider.type === 'minimax' ? 1 : 3
+}
+
+function normalizeReferenceImageCapability(value: unknown, provider: ImageGenerationProviderConfig, providerModel: string) {
+  return value === true || defaultReferenceImageCapability(provider, providerModel)
 }
 
 function normalizeMaxReferenceImages(value: unknown, referenceImages: boolean) {
   if (!referenceImages || typeof value !== 'number' || value <= 0) return 0
   return Math.min(Math.floor(value), 3)
+}
+
+function normalizeRequestTimeoutMs(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : DEFAULT_IMAGE_REQUEST_TIMEOUT_MS
 }
 
 function providerType(value: unknown): ImageProviderType {
@@ -182,7 +201,8 @@ export function normalizeImageGenerationConfig(inputValue: unknown): ImageGenera
     const providerModel = String(modelInput.providerModel || modelInput.model || '').trim()
     const id = uniqueId(String(modelInput.id || `${provider.id}-${providerModel || 'model'}`), modelIds)
     const rawCapabilities = objectValue(modelInput.capabilities)
-    const referenceImages = normalizeReferenceImageCapability(rawCapabilities.referenceImages)
+    const referenceImages = normalizeReferenceImageCapability(rawCapabilities.referenceImages, provider, providerModel)
+    const maxReferenceImages = normalizeMaxReferenceImages(rawCapabilities.maxReferenceImages, referenceImages) || (referenceImages ? defaultMaxReferenceImages(provider) : 0)
     normalizedModels.push({
       id,
       label: String(modelInput.label || providerModel || id).trim(),
@@ -199,8 +219,9 @@ export function normalizeImageGenerationConfig(inputValue: unknown): ImageGenera
         formats: normalizeStringList(rawCapabilities.formats),
         aspectRatios: normalizeStringList(rawCapabilities.aspectRatios),
         referenceImages,
-        maxReferenceImages: normalizeMaxReferenceImages(rawCapabilities.maxReferenceImages, referenceImages),
+        maxReferenceImages,
       },
+      requestTimeoutMs: normalizeRequestTimeoutMs(modelInput.requestTimeoutMs),
     })
   }
 

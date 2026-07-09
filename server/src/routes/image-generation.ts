@@ -21,6 +21,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ASSET_DIR = path.join(__dirname, '..', '..', 'data', 'image-assets')
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024
 const IMMICH_UPLOAD_RETRY_LIMIT = 3
+const IMMICH_THUMBNAIL_READY_ATTEMPTS = 20
+const IMMICH_THUMBNAIL_READY_DELAY_MS = 1500
 
 interface AIConfigPayload {
   apiKey?: string
@@ -38,6 +40,8 @@ interface WorkRow {
 
 interface ImageAssetRecord {
   id: string
+  promptId?: string
+  promptSnapshot?: string
   status?: string
   storageMode?: 'local' | 'immich'
   storageStatus?: string
@@ -45,6 +49,15 @@ interface ImageAssetRecord {
   immichAssetId?: string
   immichFilename?: string
   assetUrl?: string
+}
+
+interface VisualPromptRecordSummary {
+  type?: ImagePromptType
+  characterId?: string
+  subjectLabel?: string
+  title?: string
+  prompt?: string
+  draftPrompt?: string
 }
 
 interface CachedSubjectCandidate extends CandidateSubjectInput {
@@ -62,7 +75,7 @@ interface WorkData {
   seed?: { genre?: string; subGenre?: string }
   characters?: Array<{ id: string; name: string; role?: string; bio?: string; tags?: string[]; personality?: { traits?: string[] } }>
   chapters?: Array<{ id: string; title: string; userDirection?: string; content?: string; scenes?: Array<{ title?: string; summary?: string; content?: string }> }>
-  visualAssets?: { images?: Record<string, ImageAssetRecord>; candidateCache?: Record<string, { result?: Omit<CandidateAIResponse, 'clothing' | 'props'> & { characters?: Array<{ characterId?: string; name?: string; evidence?: string }>; bystanders?: CachedBystanderCandidate[]; clothing?: CachedSubjectCandidate[]; props?: CachedSubjectCandidate[] } }> }
+  visualAssets?: { images?: Record<string, ImageAssetRecord>; prompts?: Record<string, VisualPromptRecordSummary>; candidateCache?: Record<string, { result?: Omit<CandidateAIResponse, 'clothing' | 'props'> & { characters?: Array<{ characterId?: string; name?: string; evidence?: string }>; bystanders?: CachedBystanderCandidate[]; clothing?: CachedSubjectCandidate[]; props?: CachedSubjectCandidate[] } }> }
 }
 
 interface CandidateCharacterInput {
@@ -208,11 +221,10 @@ function hasLongSourceOverlap(output: string, sources: string[]) {
 }
 
 function safeVisualPromptOutput(prompt: string, work: WorkData) {
-  const output = safeText(prompt, 1200)
-  if (output.length < prompt.trim().length || hasLongSourceOverlap(output, (work.chapters || []).map(fullChapterContent))) {
+  if (hasLongSourceOverlap(prompt, (work.chapters || []).map(fullChapterContent))) {
     throw new Error('视觉提示词包含过长章节摘录')
   }
-  return output
+  return safeText(prompt, 1200)
 }
 
 function workAccess(req: AuthenticatedRequest, workId: string, requireOwner: boolean) {
@@ -258,6 +270,10 @@ function readLocalImageAsset(workId: string, assetId: string) {
   const filePath = path.join(workDir, fileName)
   const buffer = fs.readFileSync(filePath)
   return { buffer, mimeType: detectMime(buffer), filePath }
+}
+
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms))
 }
 
 function compact(value: string | undefined) {
@@ -563,6 +579,46 @@ function deleteLocalStagedImageAsset(workId: string, assetId: string) {
   fs.unlinkSync(local.filePath)
 }
 
+function deleteLocalImageAssetIfPresent(workId: string, assetId: string | undefined) {
+  if (!assetId || !/^[a-f0-9-]{36}$/i.test(assetId)) return
+  try {
+    const local = readLocalImageAsset(workId, assetId)
+    fs.unlinkSync(local.filePath)
+  } catch {
+    // The record can outlive its temporary file; deletion should still remove the stale record.
+  }
+}
+
+function findImageAssetRecord(images: Record<string, ImageAssetRecord>, assetId: string) {
+  const direct = images[assetId]
+  if (direct) return direct
+  return Object.values(images).find(image => image.id === assetId)
+}
+
+function removeMatchingImageAssetRecords(images: Record<string, ImageAssetRecord>, deleted: ImageAssetRecord) {
+  return Object.fromEntries(Object.entries(images).filter(([key, image]) => {
+    if (key === deleted.id || image.id === deleted.id) return false
+    if (deleted.immichAssetId && image.immichAssetId === deleted.immichAssetId) return false
+    if (deleted.immichFilename && image.immichFilename === deleted.immichFilename) return false
+    if (deleted.localAssetId && image.localAssetId === deleted.localAssetId) return false
+    return true
+  }))
+}
+
+async function waitForImmichThumbnail(client: ImmichClient, assetId: string) {
+  let lastError: unknown
+  for (let attempt = 0; attempt < IMMICH_THUMBNAIL_READY_ATTEMPTS; attempt += 1) {
+    try {
+      await client.fetchAssetBytes(assetId, 'thumbnail')
+      return
+    } catch (error) {
+      lastError = error
+      if (attempt < IMMICH_THUMBNAIL_READY_ATTEMPTS - 1) await sleep(IMMICH_THUMBNAIL_READY_DELAY_MS)
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Immich 缩略图尚未生成')
+}
+
 function slugPart(value: string | undefined, fallback: string) {
   const normalized = String(value || fallback).trim().replace(/\s+/g, '-').replace(/[\\/:*?"<>|#%&{}$!'@+`=]/g, '').slice(0, 48)
   return normalized || fallback
@@ -633,6 +689,35 @@ function serverSubjectLine(subject: ReturnType<typeof cachedVisualSubject>) {
   return [`当前视觉主体：${safeText(subject.label, 80) || '未命名主体'}`, subject.description ? `主体描述：${safeText(subject.description, 180)}` : '主体描述：无描述', subject.evidence ? `章节证据：${safeText(subject.evidence, 120)}` : ''].filter(Boolean).join('\n')
 }
 
+function referenceUsageLine(type: ImagePromptType | undefined, index: number, label: string) {
+  if (type === 'characterFace') return `面部和身份以参考图${index}为准，不再细写眉眼鼻口、脸型、肤色等面部细节。`
+  if (type === 'chapterClothing') return `穿着参考图${index}所示的服装，不再展开服饰材质、剪裁、配色和纹样细节。`
+  if (type === 'chapterProp') {
+    if (/剑|刀|枪|弓|弩|匕首|杖|棍|斧|锤|鞭|武器/.test(label)) return `根据正文生成与参考图${index}所示道具的关系，例如拿着或佩戴；不要重新细写道具外观。`
+    if (/戒指|项链|耳环|耳坠|发簪|冠|护符|徽章|披风|腰带|配饰/.test(label)) return `根据正文生成与参考图${index}所示配饰的关系，例如佩戴；不要重新细写配饰外观。`
+    return `根据正文生成与参考图${index}所示道具的关系，例如携带、拿着或佩戴；不要重新细写道具外观。`
+  }
+  return `参考图${index}只作为视觉一致性参考，不复述原提示词。`
+}
+
+function serverReferenceImageLines(work: WorkData, body: Record<string, unknown>) {
+  const referenceImageIds = normalizeReferenceImageIds(body.referenceImageIds)
+  if (referenceImageIds.length === 0) return ''
+  const images = work.visualAssets?.images || {}
+  const prompts = work.visualAssets?.prompts || {}
+  const lines = referenceImageIds.flatMap((imageId, index) => {
+    const image = images[imageId]
+    if (!image || image.status !== 'succeeded' || image.storageStatus !== 'succeeded') return []
+    const prompt = image.promptId ? prompts[image.promptId] : undefined
+    const promptType = prompt?.type || normalizePromptType(image.promptId?.split(':')[0])
+    if (promptType === 'characterFullBody') return []
+    const label = safeText(prompt?.subjectLabel || prompt?.title || image.promptSnapshot || `参考图${index + 1}`, 80)
+    const sourcePrompt = safeText(prompt?.prompt || prompt?.draftPrompt || image.promptSnapshot, 180)
+    return [`- 参考图${index + 1}：${visualPromptLabel(promptType || 'chapterObject')}；主体：${label}；用法：${referenceUsageLine(promptType, index + 1, label)}${sourcePrompt ? `；原提示词摘要：${sourcePrompt}` : ''}`]
+  })
+  return lines.length ? `已选参考图：\n${lines.join('\n')}` : ''
+}
+
 function buildServerImagePromptContext(work: WorkData, body: Record<string, unknown>) {
   const type = normalizePromptType(body.type)
   if (!type) throw new Error('提示词类型无效')
@@ -645,6 +730,7 @@ function buildServerImagePromptContext(work: WorkData, body: Record<string, unkn
     `提示词类型：${visualPromptLabel(type)}`,
     serverCharacterLine(work, characterId),
     serverSubjectLine(subject),
+    type === 'characterFullBody' ? serverReferenceImageLines(work, body) : '',
     type === 'characterFullBody' ? '' : serverChapterLine(work, chapterId),
   ].filter(Boolean).join('\n\n')
 }
@@ -657,11 +743,14 @@ function buildServerImagePromptInstruction(type: ImagePromptType, context: strin
 - 禁止输出背景环境、整体色调、场景氛围、电影感光影、压抑感、破碎感、禁锢感、毛孔可见等无关画质堆叠；不要写霓虹灯、金属墙面、废墟、雨夜、烟雾、战场、宫殿等场景。
 - characterFace：纯白色背景，大头像或头肩近景，脸部占画面主体，清晰五官特征；必须描述眉形、眼睛、鼻梁、嘴唇、脸型、肤色、发型、表情和可复用面部特征；避免复杂环境、戏剧光影、剧情动作、身体姿势和道具。
 - 如果上下文中的主体类型是 bystander 或“本章未关联人物”，只根据章节证据描述可见外貌，不补写姓名以外的角色生平、阵营、关系或未出现设定。
-- chapterClothing：纯白色背景，服饰主体单独展示，突出材质、配色、剪裁、层次、纹样、磨损和时代线索；不要包含角色姓名、角色身份、人物脸、身体、姿势、手持动作、剧情动作、背景、色调或场景氛围。
+- chapterClothing：纯白色背景，服饰主体单独展示，只总结该角色或路人的服饰形象；突出材质、配色、剪裁、层次、纹样、磨损和时代线索；当上下文是“无描述”时，只基于章节人物身份和已知形象生成可编辑的基础服饰，不要扩写章节正文；不要包含角色姓名、角色身份、人物脸、身体、姿势、手持动作、剧情动作、背景、色调或场景氛围。
 - chapterProp：纯白色背景，道具主体单独展示，突出材质、形状、尺寸、纹样、使用痕迹和用途线索；不要包含角色姓名、角色身份、人物脸、身体、手持动作、剧情动作、背景、色调或场景氛围。
-- characterFullBody：纯白色背景，全身设定图，清晰展示角色体型、服饰轮廓、配色和可复用视觉特征；不要写剧情场景或氛围背景。
+- characterFullBody：纯白色背景，全身设定图，只总结该角色或路人的形象；清晰展示体型、发型、脸部识别点、服饰轮廓、配色和可复用视觉特征；不要复述章节事件、人物关系、心理、阵营、动作链条、剧情场景或氛围背景。
+- characterFullBody 如果没有参考图：完整描述面部识别点、体型、发型、服装、配饰和可复用视觉特征。
+- characterFullBody 如果上下文包含参考图：严格遵守每张参考图的“用法”；头像参考图只写“面部和身份以参考图X为准”，不要再细写面部；服饰参考图只写“穿着参考图Y所示的服装”，不要再细写穿着；道具参考图根据正文只写拿着、佩戴或携带等关系，不要重写道具外观。
 - 不写剧情正文，不写解释，不写模型参数。
-- 以一段可直接复制的提示词输出。
+- 输出不超过 300 个汉字；只保留可画出来的视觉信息；即使输入上下文很长，也不要复述输入上下文或把证据扩写成设定。
+- 以一段可直接复制的短提示词输出。
 - 如果信息不足，保留为可编辑的合理占位描述，不要编造关键设定。
 
 上下文：
@@ -825,12 +914,18 @@ router.post('/generate', async (req, res) => {
     const snapshots = { basePromptSnapshot: prompt, generationPromptSnapshot: generationPrompt, viewDirection, referenceImageIds }
     if (storageMode === 'local') {
       const saved = saveImageAsset(workId, buffer)
-      return res.json({ ...saved, localAssetId: saved.id, storageMode: 'local', storageStatus: 'succeeded', status: 'succeeded', modelId: model.id, modelName: model.model, provider: model.provider, ...snapshots })
+      return res.json({ ...saved, localAssetId: saved.id, storageMode: 'local', storageStatus: 'succeeded', status: 'succeeded', modelId: model.id, modelName: model.label, provider: model.provider, ...snapshots })
     }
     const albumId = await immichClient!.ensureProjectAlbum()
     const filename = buildImmichFilename(access.row, { ...body, immichProjectName: config.immich?.projectName }, mimeType)
     try {
       const uploaded = await uploadToImmichWithRetry(immichClient!, buffer, filename, mimeType, albumId)
+      try {
+        await waitForImmichThumbnail(immichClient!, uploaded.assetId)
+      } catch (thumbnailError) {
+        await immichClient!.deleteAsset(uploaded.assetId).catch(() => undefined)
+        throw thumbnailError
+      }
       const id = randomUUID()
       return res.json({
         id,
@@ -843,7 +938,7 @@ router.post('/generate', async (req, res) => {
         thumbnailUrl: `/api/image-generation/assets/${encodeURIComponent(workId)}/${encodeURIComponent(id)}/thumbnail`,
         originalUrl: `/api/image-generation/assets/${encodeURIComponent(workId)}/${encodeURIComponent(id)}/original`,
         modelId: model.id,
-        modelName: model.model,
+        modelName: model.label,
         provider: model.provider,
         ...snapshots,
       })
@@ -862,7 +957,7 @@ router.post('/generate', async (req, res) => {
         thumbnailUrl: fallback.thumbnailUrl,
         originalUrl: fallback.originalUrl,
         modelId: model.id,
-        modelName: model.model,
+        modelName: model.label,
         provider: model.provider,
         ...snapshots,
         error: uploadError instanceof Error ? uploadError.message : 'Immich 上传失败，已保留可重试状态',
@@ -928,6 +1023,12 @@ router.post('/assets/:workId/:assetId/retry-immich', async (req, res) => {
     const albumId = await client.ensureProjectAlbum()
     const local = readLocalImageAsset(req.params.workId, image.localAssetId)
     const uploaded = await uploadToImmichWithRetry(client, local.buffer, image.immichFilename, local.mimeType, albumId)
+    try {
+      await waitForImmichThumbnail(client, uploaded.assetId)
+    } catch (thumbnailError) {
+      await client.deleteAsset(uploaded.assetId).catch(() => undefined)
+      throw thumbnailError
+    }
     deleteLocalStagedImageAsset(req.params.workId, image.localAssetId)
     res.json({
       storageMode: 'immich',
@@ -943,6 +1044,29 @@ router.post('/assets/:workId/:assetId/retry-immich', async (req, res) => {
     })
   } catch (error) {
     res.status(502).json({ error: error instanceof Error ? error.message : 'Immich 重传失败' })
+  }
+})
+
+router.delete('/assets/:workId/:assetId', async (req, res) => {
+  const request = req as unknown as AuthenticatedRequest
+  const access = workAccess(request, req.params.workId, true)
+  if (access.status !== 200) return res.status(access.status).json({ error: access.error })
+  const data = JSON.parse(access.row.data) as WorkData
+  const visualAssets = data.visualAssets
+  const image = visualAssets?.images ? findImageAssetRecord(visualAssets.images, req.params.assetId) : undefined
+  if (!visualAssets || !image) return res.status(404).json({ error: '图片记录不存在' })
+  try {
+    if (image.storageMode === 'immich' && image.immichAssetId) {
+      await immichClientFromConfig(loadImageGenerationConfig()).deleteAsset(image.immichAssetId)
+    }
+    deleteLocalImageAssetIfPresent(req.params.workId, image.localAssetId || (image.storageMode === 'local' ? image.id : undefined))
+    const images = removeMatchingImageAssetRecords(visualAssets.images || {}, image)
+    const nextVisualAssets = { ...visualAssets, images, updatedAt: Date.now() }
+    const updatedAt = Date.now()
+    db.prepare('UPDATE works SET updatedAt = ?, data = ? WHERE id = ?').run(updatedAt, JSON.stringify({ ...data, visualAssets: nextVisualAssets }), req.params.workId)
+    res.json({ visualAssets: nextVisualAssets, updatedAt })
+  } catch (error) {
+    res.status(502).json({ error: error instanceof Error ? error.message : '图片资产删除失败' })
   }
 })
 
