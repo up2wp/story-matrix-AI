@@ -210,11 +210,10 @@ function hasLongSourceOverlap(output: string, sources: string[]) {
 }
 
 function safeVisualPromptOutput(prompt: string, work: WorkData) {
-  const output = safeText(prompt, 1200)
-  if (output.length < prompt.trim().length || hasLongSourceOverlap(output, (work.chapters || []).map(fullChapterContent))) {
+  if (hasLongSourceOverlap(prompt, (work.chapters || []).map(fullChapterContent))) {
     throw new Error('视觉提示词包含过长章节摘录')
   }
-  return output
+  return safeText(prompt, 1200)
 }
 
 function workAccess(req: AuthenticatedRequest, workId: string, requireOwner: boolean) {
