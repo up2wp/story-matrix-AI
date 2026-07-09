@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ReloadOutlined } from '@ant-design/icons'
 import { Alert, Button, Card, Empty, Modal, Select, Segmented, Space, Tag, Typography, message } from 'antd'
 import type { ChapterVisualCandidateResult, ImageAssetRecord, ImageGenerationModelConfig, ImagePromptType, ImageViewDirection, VisualCandidateKind, VisualPromptRecord, VisualSubjectCandidate } from '@/core/types'
@@ -212,6 +212,7 @@ export default function ImageGenerationPage() {
   const selectedModel = useMemo(() => imageGenerationConfig.models.find(model => model.id === effectiveModelId), [imageGenerationConfig.models, effectiveModelId])
   const maxReferenceImages = modelReferenceLimit(selectedModel)
   const modelSupportsReferenceImages = Boolean(selectedModel?.capabilities.referenceImages && maxReferenceImages > 0)
+  const characterNameById = useMemo(() => new Map(currentWork?.characters.map(character => [character.id, character.name]) || []), [currentWork?.characters])
   const eligibleReferenceImages = useMemo<EligibleReferenceImage[]>(() => Object.values(visualAssets.images)
     .filter(image => image.status === 'succeeded' && image.storageStatus === 'succeeded')
     .map(image => ({ image, displayUrl: getImageAssetDisplayUrl(image) }))
@@ -219,12 +220,17 @@ export default function ImageGenerationPage() {
     .sort((a, b) => b.image.createdAt - a.image.createdAt)
     .map(({ image, displayUrl }) => {
       const prompt = visualAssets.prompts[image.promptId]
-      const label = prompt?.subjectLabel || prompt?.title || image.promptSnapshot.slice(0, 18) || '已生成图片'
+      const characterName = prompt?.characterId ? characterNameById.get(prompt.characterId) : undefined
+      const label = prompt?.subjectLabel || characterName || prompt?.title || image.promptSnapshot.slice(0, 18) || '已生成图片'
       const detail = `${image.modelName} / ${new Date(image.createdAt).toLocaleString('zh-CN')}`
       return { image, displayUrl, label, detail }
-    }), [visualAssets.images, visualAssets.prompts])
+    }), [characterNameById, visualAssets.images, visualAssets.prompts])
   const eligibleReferenceIds = useMemo(() => new Set(eligibleReferenceImages.map(item => item.image.id)), [eligibleReferenceImages])
   const invalidSelectedReferenceIds = referenceImageIds.filter(id => !eligibleReferenceIds.has(id))
+  useEffect(() => {
+    if (!invalidSelectedReferenceIds.length) return
+    setReferenceImageIds(current => current.filter(id => eligibleReferenceIds.has(id)))
+  }, [eligibleReferenceIds, invalidSelectedReferenceIds.length])
   const referenceGenerateBlockReason = type === 'characterFullBody' && referenceImageIds.length > 0
     ? (!modelSupportsReferenceImages
         ? '当前模型不支持参考图；清空参考图后可继续普通文生图，或切换到支持参考图的模型。'
