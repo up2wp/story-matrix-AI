@@ -164,7 +164,10 @@ export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
     set({ imageGenerationConfig })
   },
 
-  canUseFeature: (user, feature) => canUseFeature(user, get().novelImportConfig, feature),
+  canUseFeature: (user, feature) => {
+    const { novelImportConfig, imageGenerationConfig } = get()
+    return canUseFeature(user, { novelImportConfig, imageGenerationConfig }, feature)
+  },
 
   saveAIConfig: async (config: AIConfig) => {
     await db.systemConfig.update('singleton', { aiConfig: config })

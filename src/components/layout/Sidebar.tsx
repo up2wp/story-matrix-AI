@@ -17,6 +17,8 @@ import { useNavigate, useLocation } from 'react-router'
 import { useStore } from '@/core/store'
 import { useAuthStore } from '@/core/auth-store'
 import { useSystemConfigStore } from '@/core/system-config-store'
+import { canUseFeature } from '@/core/feature-permissions'
+import type { FeaturePermissionSources } from '@/core/feature-permissions'
 
 const { Sider } = Layout
 const appVersion = __APP_VERSION__
@@ -31,11 +33,16 @@ export default function Sidebar() {
   const location = useLocation()
   const user = useAuthStore((s) => s.user)
   const voiceboxConfig = useSystemConfigStore((s) => s.voiceboxConfig)
-  const canUseFeature = useSystemConfigStore((s) => s.canUseFeature)
+  const novelImportConfig = useSystemConfigStore((s) => s.novelImportConfig)
+  const imageGenerationEnabled = useSystemConfigStore((s) => s.imageGenerationConfig.enabled)
 
+  const permissionSources: FeaturePermissionSources = {
+    novelImportConfig,
+    imageGenerationConfig: { enabled: imageGenerationEnabled },
+  }
   const hasWork = !!currentWork
-  const canBackfill = Boolean(currentWork?.chapters?.some(chapter => chapter.content.trim())) && !readOnly && canUseFeature(user, 'importBackfill')
-  const canOpenImageGeneration = hasWork && (readOnly || canUseFeature(user, 'imageGeneration'))
+  const canBackfill = Boolean(currentWork?.chapters?.some(chapter => chapter.content.trim())) && !readOnly && canUseFeature(user, permissionSources, 'importBackfill')
+  const canOpenImageGeneration = hasWork && (readOnly || canUseFeature(user, permissionSources, 'imageGeneration'))
   const voiceboxReady = voiceboxConfig.serviceUrl !== 'http://127.0.0.1:17493'
 
   const menuItems = [

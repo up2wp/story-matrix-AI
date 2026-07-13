@@ -275,7 +275,7 @@ assert.doesNotMatch(
 
 assert.match(
   sidebarSource,
-  /canUseFeature\(user, 'importBackfill'\)/,
+  /canUseFeature\(user, permissionSources, 'importBackfill'\)/,
   'stage backfill navigation should require the reusable feature permission gate',
 )
 

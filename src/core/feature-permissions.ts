@@ -1,4 +1,9 @@
-import type { FeatureKey, FeaturePermissionConfig, NovelImportConfig, User } from './types'
+import type { FeatureKey, FeaturePermissionConfig, ImageGenerationConfig, NovelImportConfig, User } from './types'
+
+export type FeaturePermissionSources = {
+  readonly novelImportConfig: NovelImportConfig
+  readonly imageGenerationConfig: Pick<ImageGenerationConfig, 'enabled'>
+}
 
 export const FEATURE_LABELS: Record<FeatureKey, string> = {
   novelImport: '本地小说导入',
@@ -28,10 +33,16 @@ export function normalizeNovelImportConfig(config?: Partial<NovelImportConfig>):
   }
 }
 
-export function canUseFeature(user: User | null | undefined, config: NovelImportConfig, feature: FeatureKey) {
-  if (!user || !config.enabled) return false
+export function canUseFeature(user: User | null | undefined, sources: FeaturePermissionSources, feature: FeatureKey): boolean {
+  const featureEnabled: Record<FeatureKey, boolean> = {
+    novelImport: sources.novelImportConfig.enabled,
+    importBackfill: sources.novelImportConfig.enabled,
+    imageGeneration: sources.imageGenerationConfig.enabled,
+  }
+
+  if (!user || !featureEnabled[feature]) return false
   if (user.role === 'owner' || user.role === 'admin') return true
-  return normalizeFeaturePermissionConfig(config.featurePermissions).userGrants.some(grant => {
+  return normalizeFeaturePermissionConfig(sources.novelImportConfig.featurePermissions).userGrants.some(grant => {
     return grant.userId === user.id && grant.features.includes(feature)
   })
 }
