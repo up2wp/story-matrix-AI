@@ -214,6 +214,29 @@ export interface ImageGenerationModelConfig {
 
 export type ImageStorageMode = 'local' | 'immich'
 export type ImageStorageStatus = 'succeeded' | 'pendingImmichUpload' | 'storageUploadFailed' | 'failed'
+export type ImagegenHistoryStatus = ImageStorageStatus
+
+export interface ImagegenHistoryRecord {
+  id: string
+  ownerId: string
+  prompt: string
+  generationPromptSnapshot: string
+  provider: ImageProviderType
+  providerLabel: string
+  modelId: string
+  modelName: string
+  mimeType?: string
+  storageMode: ImageStorageMode
+  storageStatus: ImageStorageStatus
+  status: ImagegenHistoryStatus
+  localAssetId?: string
+  immichAssetId?: string
+  immichFilename?: string
+  thumbnailUrl?: string
+  originalUrl?: string
+  error?: string
+  createdAt: number
+}
 
 export interface ImmichImageStorageConfig {
   serviceUrl: string

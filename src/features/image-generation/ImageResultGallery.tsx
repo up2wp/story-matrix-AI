@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { DeleteOutlined } from '@ant-design/icons'
-import { Button, Card, Empty, Image, Popconfirm, Space, Tag, Typography } from 'antd'
+import { CopyOutlined, DeleteOutlined } from '@ant-design/icons'
+import { Button, Card, Empty, Image, message, Popconfirm, Space, Tag, Typography } from 'antd'
 import type { ImageAssetRecord } from '@/core/types'
 import { getImageAssetDisplayUrl } from './imageGenerationClient'
 
-const { Text } = Typography
+const { Paragraph, Text } = Typography
 
 interface Props {
   images: ImageAssetRecord[]
@@ -12,6 +12,15 @@ interface Props {
   onRetryUpload?: (image: ImageAssetRecord) => void
   onDelete?: (image: ImageAssetRecord) => void
   deletingImageId?: string | null
+}
+
+async function copyProviderPrompt(generationPromptSnapshot: string) {
+  try {
+    await navigator.clipboard.writeText(generationPromptSnapshot)
+    message.success('已复制实际调用提示词')
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '复制失败')
+  }
 }
 
 export default function ImageResultGallery({ images, editable, onRetryUpload, onDelete, deletingImageId }: Props) {
@@ -31,6 +40,17 @@ export default function ImageResultGallery({ images, editable, onRetryUpload, on
           <Space direction="vertical" size={4} style={{ width: '100%' }}>
             <Space wrap><Tag>{image.modelName}</Tag><Tag>{image.mimeType}</Tag><Tag>{image.storageMode === 'immich' ? 'Immich' : '本地'}</Tag></Space>
             {image.status !== 'succeeded' && <Text type="danger">{image.error || '图片存储未完成，可稍后重试'}</Text>}
+            {image.generationPromptSnapshot && (
+              <div>
+                <Space align="center" style={{ marginBottom: 4 }}>
+                  <Text type="secondary">实际调用提示词</Text>
+                  <Button size="small" type="text" icon={<CopyOutlined />} onClick={() => void copyProviderPrompt(image.generationPromptSnapshot || '')}>复制</Button>
+                </Space>
+                <Paragraph ellipsis={{ rows: 3, expandable: true, symbol: '展开' }} style={{ marginBottom: 0 }}>
+                  {image.generationPromptSnapshot}
+                </Paragraph>
+              </div>
+            )}
             {editable && (
               <Space wrap>
                 {image.storageMode === 'immich' && image.status !== 'succeeded' && <Button size="small" onClick={() => onRetryUpload?.(image)}>重传到 Immich</Button>}

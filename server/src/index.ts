@@ -10,6 +10,7 @@ import worksRouter from './routes/works.js'
 import systemConfigRouter from './routes/system-config.js'
 import aiRouter from './routes/ai.js'
 import imageGenerationRouter from './routes/image-generation.js'
+import imagegenRouter from './routes/imagegen.js'
 import voiceboxRouter from './routes/voicebox.js'
 import userVoicesRouter from './routes/user-voices.js'
 import { requireAuth } from './middleware/auth.js'
@@ -36,6 +37,7 @@ app.use('/api/users', usersRouter)
 app.use('/api/works', requireAuth, worksRouter)
 app.use('/api/ai', requireAuth, aiRouter)
 app.use('/api/image-generation', requireAuth, imageGenerationRouter)
+app.use('/api/imagegen', requireAuth, imagegenRouter)
 app.use('/api/voicebox', requireAuth, voiceboxRouter)
 app.use('/api/user-voices', requireAuth, userVoicesRouter)
 // system-config 路由：GET 公开，POST/PATCH 需管理员

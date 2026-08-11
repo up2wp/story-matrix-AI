@@ -70,6 +70,31 @@ db.exec(`
     FOREIGN KEY (ownerId) REFERENCES users(id)
   );
 
+  CREATE TABLE IF NOT EXISTS imagegenHistory (
+    id TEXT PRIMARY KEY,
+    ownerId TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    generationPromptSnapshot TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    providerLabel TEXT NOT NULL,
+    modelId TEXT NOT NULL,
+    modelName TEXT NOT NULL,
+    mimeType TEXT,
+    storageMode TEXT NOT NULL CHECK (storageMode IN ('local', 'immich')),
+    storageStatus TEXT NOT NULL CHECK (storageStatus IN ('succeeded', 'pendingImmichUpload', 'storageUploadFailed', 'failed')),
+    status TEXT NOT NULL CHECK (status IN ('succeeded', 'pendingImmichUpload', 'storageUploadFailed', 'failed')),
+    localAssetId TEXT,
+    immichAssetId TEXT,
+    immichFilename TEXT,
+    thumbnailUrl TEXT,
+    originalUrl TEXT,
+    error TEXT,
+    createdAt INTEGER NOT NULL,
+    FOREIGN KEY (ownerId) REFERENCES users(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_imagegenHistory_ownerCreatedAt ON imagegenHistory(ownerId, createdAt);
+
   CREATE TABLE IF NOT EXISTS sessions (
     token TEXT PRIMARY KEY,
     userId TEXT NOT NULL,
@@ -128,6 +153,33 @@ export function migrateDatabase(database: DatabaseInstance = db) {
       FOREIGN KEY (ownerId) REFERENCES users(id)
     )
   `)
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS imagegenHistory (
+      id TEXT PRIMARY KEY,
+      ownerId TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      generationPromptSnapshot TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      providerLabel TEXT NOT NULL,
+      modelId TEXT NOT NULL,
+      modelName TEXT NOT NULL,
+      mimeType TEXT,
+      storageMode TEXT NOT NULL CHECK (storageMode IN ('local', 'immich')),
+      storageStatus TEXT NOT NULL CHECK (storageStatus IN ('succeeded', 'pendingImmichUpload', 'storageUploadFailed', 'failed')),
+      status TEXT NOT NULL CHECK (status IN ('succeeded', 'pendingImmichUpload', 'storageUploadFailed', 'failed')),
+      localAssetId TEXT,
+      immichAssetId TEXT,
+      immichFilename TEXT,
+      thumbnailUrl TEXT,
+      originalUrl TEXT,
+      error TEXT,
+      createdAt INTEGER NOT NULL,
+      FOREIGN KEY (ownerId) REFERENCES users(id)
+    )
+  `)
+
+  database.exec('CREATE INDEX IF NOT EXISTS idx_imagegenHistory_ownerCreatedAt ON imagegenHistory(ownerId, createdAt)')
 
   database.prepare("UPDATE users SET role = 'owner' WHERE username = 'admin' AND role = 'admin'").run()
 }

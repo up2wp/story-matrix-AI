@@ -1,28 +1,26 @@
 import { Router } from 'express'
 import { createHash, randomUUID } from 'crypto'
 import fs from 'fs'
-import path from 'path'
-import { fileURLToPath } from 'url'
 import db from '../db.js'
 import type { AuthenticatedRequest } from '../middleware/auth.js'
-import { ImmichClient } from '../services/immich-client.js'
 import {
   defaultImageGenerationConfig,
   normalizeImageGenerationConfig,
-  resolveEnabledImageModel,
   type ImageGenerationConfig,
-  type ImageGenerationModelConfig,
   type ImageGenerationProviderConfig,
 } from '../services/image-generation-config.js'
-import { discoverProviderModels, generateProviderImages, type ProviderReferenceImage } from '../services/image-providers.js'
+import {
+  extensionForMime,
+  immichClientFromConfig,
+  readLocalImageAsset,
+  resolveRunnableImageGenerationModel,
+  runImageGeneration,
+  uploadToImmichWithRetry,
+  waitForImmichThumbnail,
+} from '../services/image-generation-runner.js'
+import { discoverProviderModels, type ProviderReferenceImage } from '../services/image-providers.js'
 
 const router = Router()
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const ASSET_DIR = path.join(__dirname, '..', '..', 'data', 'image-assets')
-const MAX_IMAGE_BYTES = 12 * 1024 * 1024
-const IMMICH_UPLOAD_RETRY_LIMIT = 3
-const IMMICH_THUMBNAIL_READY_ATTEMPTS = 20
-const IMMICH_THUMBNAIL_READY_DELAY_MS = 1500
 
 interface AIConfigPayload {
   apiKey?: string
@@ -159,17 +157,6 @@ function canUseImageGeneration(req: AuthenticatedRequest, config: ImageGeneratio
   return loadFeaturePermissions().some(grant => grant.userId === user.id && grant.features?.includes('imageGeneration'))
 }
 
-function safeGenerationOptions(body: Record<string, unknown>, model: ImageGenerationModelConfig) {
-  const options: Record<string, string | number> = {}
-  const capabilities = model.capabilities || {}
-  if (typeof body.size === 'string' && capabilities.sizes?.includes(body.size)) options.size = body.size
-  if (typeof body.quality === 'string' && capabilities.qualities?.includes(body.quality)) options.quality = body.quality
-  if (typeof body.format === 'string' && capabilities.formats?.includes(body.format)) options.format = body.format
-  if (typeof body.aspectRatio === 'string' && capabilities.aspectRatios?.includes(body.aspectRatio)) options.aspect_ratio = body.aspectRatio
-  if (typeof body.n === 'number' && body.n > 0 && body.n <= 4) options.n = Math.floor(body.n)
-  return options
-}
-
 async function readProviderError(response: Response) {
   const text = await response.text().catch(() => '')
   if (!text) return response.statusText
@@ -235,45 +222,6 @@ function workAccess(req: AuthenticatedRequest, workId: string, requireOwner: boo
   if (!canAccess) return { status: 403, error: '无权查看该作品' } as const
   if (requireOwner && row.ownerId !== user.id) return { status: 403, error: '无权修改该作品' } as const
   return { status: 200, row } as const
-}
-
-function extensionForMime(mimeType: string) {
-  if (mimeType === 'image/jpeg') return 'jpg'
-  if (mimeType === 'image/webp') return 'webp'
-  return 'png'
-}
-
-function detectMime(buffer: Buffer) {
-  if (buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png'
-  if (buffer.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))) return 'image/jpeg'
-  if (buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP') return 'image/webp'
-  throw new Error('Provider 返回的内容不是受支持的图片格式')
-}
-
-function saveImageAsset(workId: string, buffer: Buffer) {
-  if (buffer.length === 0 || buffer.length > MAX_IMAGE_BYTES) throw new Error('图片为空或超过大小限制')
-  const mimeType = detectMime(buffer)
-  const id = randomUUID()
-  const workDir = path.join(ASSET_DIR, workId)
-  fs.mkdirSync(workDir, { recursive: true })
-  const filePath = path.join(workDir, `${id}.${extensionForMime(mimeType)}`)
-  fs.writeFileSync(filePath, buffer)
-  return { id, mimeType, assetUrl: `/api/image-generation/assets/${encodeURIComponent(workId)}/${encodeURIComponent(id)}`, thumbnailUrl: `/api/image-generation/assets/${encodeURIComponent(workId)}/${encodeURIComponent(id)}`, originalUrl: `/api/image-generation/assets/${encodeURIComponent(workId)}/${encodeURIComponent(id)}` }
-}
-
-function readLocalImageAsset(workId: string, assetId: string) {
-  if (!/^[a-f0-9-]{36}$/i.test(assetId)) throw new Error('图片 ID 无效')
-  const workDir = path.join(ASSET_DIR, workId)
-  const files = fs.existsSync(workDir) ? fs.readdirSync(workDir) : []
-  const fileName = files.find(file => file.startsWith(`${assetId}.`))
-  if (!fileName) throw new Error('图片不存在')
-  const filePath = path.join(workDir, fileName)
-  const buffer = fs.readFileSync(filePath)
-  return { buffer, mimeType: detectMime(buffer), filePath }
-}
-
-function sleep(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms))
 }
 
 function compact(value: string | undefined) {
@@ -605,20 +553,6 @@ function removeMatchingImageAssetRecords(images: Record<string, ImageAssetRecord
   }))
 }
 
-async function waitForImmichThumbnail(client: ImmichClient, assetId: string) {
-  let lastError: unknown
-  for (let attempt = 0; attempt < IMMICH_THUMBNAIL_READY_ATTEMPTS; attempt += 1) {
-    try {
-      await client.fetchAssetBytes(assetId, 'thumbnail')
-      return
-    } catch (error) {
-      lastError = error
-      if (attempt < IMMICH_THUMBNAIL_READY_ATTEMPTS - 1) await sleep(IMMICH_THUMBNAIL_READY_DELAY_MS)
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error('Immich 缩略图尚未生成')
-}
-
 function slugPart(value: string | undefined, fallback: string) {
   const normalized = String(value || fallback).trim().replace(/\s+/g, '-').replace(/[\\/:*?"<>|#%&{}$!'@+`=]/g, '').slice(0, 48)
   return normalized || fallback
@@ -777,24 +711,6 @@ function buildImmichFilename(work: WorkRow, body: Record<string, unknown>, mimeT
   ].join('-') + `.${extensionForMime(mimeType)}`
 }
 
-function immichClientFromConfig(config: ImageGenerationConfig) {
-  const immich = config.immich
-  if (!immich?.serviceUrl || !immich.apiKey || !immich.projectName) throw new Error('Immich 存储配置不完整')
-  return new ImmichClient({ serviceUrl: immich.serviceUrl, apiKey: immich.apiKey, projectName: immich.projectName, allowPrivateNetwork: immich.allowPrivateNetwork })
-}
-
-async function uploadToImmichWithRetry(client: ImmichClient, buffer: Buffer, filename: string, mimeType: string, albumId: string) {
-  let lastError: unknown
-  for (let attempt = 0; attempt <= IMMICH_UPLOAD_RETRY_LIMIT; attempt += 1) {
-    try {
-      return await client.uploadImage({ buffer, filename, mimeType, albumId })
-    } catch (error) {
-      lastError = error
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error('Immich 上传失败')
-}
-
 function providerFromDiscoveryDraft(body: Record<string, unknown>, existing: ImageGenerationConfig): ImageGenerationProviderConfig | null {
   const providerId = String(body.providerId || '').trim()
   const savedProvider = providerId ? existing.providers.find(provider => provider.id === providerId) : undefined
@@ -892,10 +808,9 @@ router.post('/generate', async (req, res) => {
   if (!canUseImageGeneration(request, config)) return res.status(403).json({ error: '未授权使用生图功能' })
   const access = workAccess(request, workId, true)
   if (access.status !== 200) return res.status(access.status).json({ error: access.error })
-  const resolved = resolveEnabledImageModel(config, String(body.modelId || config.defaultModelId))
-  if (!resolved) return res.status(400).json({ error: '生图模型不可用' })
+  const resolved = resolveRunnableImageGenerationModel(config, String(body.modelId || config.defaultModelId))
+  if (!resolved.ok) return res.status(resolved.statusCode).json({ error: resolved.error })
   const { provider, model } = resolved
-  if (!provider.apiKey) return res.status(400).json({ error: '生图厂商未配置 API Key' })
 
   try {
     const work = JSON.parse(access.row.data) as WorkData
@@ -905,64 +820,23 @@ router.post('/generate', async (req, res) => {
     const referenceImages: ProviderReferenceImage[] = []
     for (const imageId of referenceImageIds) referenceImages.push(await resolveReferenceImageBytes(workId, work, imageId, config))
     const generationPrompt = generationPromptForRequest(prompt, String(body.promptId || ''), viewDirection)
-    const storageMode = config.storageMode === 'immich' ? 'immich' : 'local'
-    const immichClient = storageMode === 'immich' ? immichClientFromConfig(config) : undefined
-    if (immichClient) await immichClient.assertReadyForUpload()
-    const generated = await generateProviderImages(provider, model, generationPrompt, { ...safeGenerationOptions(body, model), referenceImages })
-    const buffer = generated[0].buffer
-    const mimeType = detectMime(buffer)
-    const snapshots = { basePromptSnapshot: prompt, generationPromptSnapshot: generationPrompt, viewDirection, referenceImageIds }
-    if (storageMode === 'local') {
-      const saved = saveImageAsset(workId, buffer)
-      return res.json({ ...saved, localAssetId: saved.id, storageMode: 'local', storageStatus: 'succeeded', status: 'succeeded', modelId: model.id, modelName: model.label, provider: model.provider, ...snapshots })
-    }
-    const albumId = await immichClient!.ensureProjectAlbum()
-    const filename = buildImmichFilename(access.row, { ...body, immichProjectName: config.immich?.projectName }, mimeType)
-    try {
-      const uploaded = await uploadToImmichWithRetry(immichClient!, buffer, filename, mimeType, albumId)
-      try {
-        await waitForImmichThumbnail(immichClient!, uploaded.assetId)
-      } catch (thumbnailError) {
-        await immichClient!.deleteAsset(uploaded.assetId).catch(() => undefined)
-        throw thumbnailError
-      }
-      const id = randomUUID()
-      return res.json({
-        id,
-        mimeType,
-        storageMode: 'immich',
-        storageStatus: 'succeeded',
-        status: 'succeeded',
-        immichAssetId: uploaded.assetId,
-        immichFilename: uploaded.filename,
-        thumbnailUrl: `/api/image-generation/assets/${encodeURIComponent(workId)}/${encodeURIComponent(id)}/thumbnail`,
-        originalUrl: `/api/image-generation/assets/${encodeURIComponent(workId)}/${encodeURIComponent(id)}/original`,
-        modelId: model.id,
-        modelName: model.label,
-        provider: model.provider,
-        ...snapshots,
-      })
-    } catch (uploadError) {
-      const id = randomUUID()
-      const fallback = saveImageAsset(workId, buffer)
-      return res.status(202).json({
-        id,
-        mimeType,
-        storageMode: 'immich',
-        storageStatus: 'storageUploadFailed',
-        status: 'storageUploadFailed',
-        localAssetId: fallback.id,
-        assetUrl: fallback.assetUrl,
-        immichFilename: filename,
-        thumbnailUrl: fallback.thumbnailUrl,
-        originalUrl: fallback.originalUrl,
-        modelId: model.id,
-        modelName: model.label,
-        provider: model.provider,
-        ...snapshots,
-        error: uploadError instanceof Error ? uploadError.message : 'Immich 上传失败，已保留可重试状态',
-      })
-    }
+    const result = await runImageGeneration({
+      config,
+      provider,
+      model,
+      providerPrompt: generationPrompt,
+      requestBody: body,
+      referenceImages,
+      promptSnapshot: { basePromptSnapshot: prompt, generationPromptSnapshot: generationPrompt, referenceImageIds, ...(viewDirection ? { viewDirection } : {}) },
+      storage: {
+        localScopeId: workId,
+        publicAssetUrl: (assetId, variant) => variant
+          ? `/api/image-generation/assets/${encodeURIComponent(workId)}/${encodeURIComponent(assetId)}/${variant}`
+          : `/api/image-generation/assets/${encodeURIComponent(workId)}/${encodeURIComponent(assetId)}`,
+        immichFilename: mimeType => buildImmichFilename(access.row, { ...body, immichProjectName: config.immich?.projectName }, mimeType),
+      },
+    })
+    return res.status(result.httpStatus).json(result.image)
   } catch (error) {
     const message = error instanceof Error ? error.message : '生图请求失败'
     res.status(502).json({ error: message })
@@ -1022,7 +896,7 @@ router.post('/assets/:workId/:assetId/retry-immich', async (req, res) => {
     await client.assertReadyForUpload()
     const albumId = await client.ensureProjectAlbum()
     const local = readLocalImageAsset(req.params.workId, image.localAssetId)
-    const uploaded = await uploadToImmichWithRetry(client, local.buffer, image.immichFilename, local.mimeType, albumId)
+    const uploaded = await uploadToImmichWithRetry({ client, buffer: local.buffer, filename: image.immichFilename, mimeType: local.mimeType, albumId })
     try {
       await waitForImmichThumbnail(client, uploaded.assetId)
     } catch (thumbnailError) {

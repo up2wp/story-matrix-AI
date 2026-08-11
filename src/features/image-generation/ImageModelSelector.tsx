@@ -7,9 +7,10 @@ interface Props {
   models: ImageGenerationModelConfig[]
   value?: string
   onChange: (modelId: string) => void
+  disabled?: boolean
 }
 
-export default function ImageModelSelector({ models, value, onChange }: Props) {
+export default function ImageModelSelector({ models, value, onChange, disabled }: Props) {
   const enabledModels = models.filter(model => model.enabled)
   const selectedModel = enabledModels.find(model => model.id === value)
   return (
@@ -17,7 +18,7 @@ export default function ImageModelSelector({ models, value, onChange }: Props) {
       <Select
         value={value}
         onChange={onChange}
-        disabled={!enabledModels.length}
+        disabled={disabled || !enabledModels.length}
         placeholder={enabledModels.length ? '选择生图模型' : '暂无可用模型'}
         options={enabledModels.map(model => ({ value: model.id, label: model.label }))}
         style={{ width: '100%' }}

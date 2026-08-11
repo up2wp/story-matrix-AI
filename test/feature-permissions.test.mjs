@@ -3,6 +3,9 @@ import { readFile } from 'node:fs/promises'
 import ts from 'typescript'
 
 const source = await readFile(new URL('../src/core/feature-permissions.ts', import.meta.url), 'utf8')
+const serverIndexSource = await readFile(new URL('../server/src/index.ts', import.meta.url), 'utf8')
+const imagegenRouteSource = await readFile(new URL('../server/src/routes/imagegen.ts', import.meta.url), 'utf8')
+const sidebarSource = await readFile(new URL('../src/components/layout/Sidebar.tsx', import.meta.url), 'utf8')
 
 function loadFeaturePermissionsForTest() {
   const executableSource = source
@@ -73,6 +76,12 @@ assert.deepEqual(grantedFeaturesForUser(grantedBoth, user.id), ['novelImport', '
 
 const grantedImage = setUserFeatureGrant(grantedBoth, user.id, 'imageGeneration', true)
 assert.equal(canUseFeature(user, featureSources(grantedImage, true), 'imageGeneration'), true, 'image generation should use the same explicit grant model as other gated features')
+assert.match(serverIndexSource, /app\.use\('\/api\/imagegen', requireAuth, imagegenRouter\)/, 'imagegen test API should be mounted behind the same authentication middleware as work image generation')
+assert.match(imagegenRouteSource, /canUseImageGeneration[\s\S]*config\.enabled[\s\S]*features\?\.includes\('imageGeneration'\)/, 'imagegen test API should gate ordinary users through the imageGeneration feature key')
+assert.match(imagegenRouteSource, /owner|admin/, 'imagegen test API should preserve owner and admin default access when image generation is enabled')
+assert.doesNotMatch(imagegenRouteSource, /import \{ canUseFeature \}|import\s+workAccess|workAccess\(/, 'imagegen test API should not reuse frontend permission helpers or work access for owner-scoped test assets')
+assert.match(sidebarSource, /canOpenImagegen = imageGenerationEnabled && canUseFeature\(user, permissionSources, 'imageGeneration'\)[\s\S]*key: '\/imagegen'[\s\S]*label: '生图测试'/, 'sidebar should gate the independent imagegen console with the global switch and imageGeneration feature permission')
+assert.doesNotMatch(sidebarSource, /canOpenImagegen = hasWork|canOpenImagegen = Boolean\(currentWork/, 'sidebar imagegen console should remain available without currentWork')
 
 const revokedImport = setUserFeatureGrant(grantedImage, user.id, 'novelImport', false)
 assert.deepEqual(grantedFeaturesForUser(revokedImport, user.id), ['importBackfill', 'imageGeneration'], 'revoking one feature should preserve the rest')
