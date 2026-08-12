@@ -72,8 +72,6 @@ export default function ImagegenPage() {
     status: record.status,
     error: record.error,
   })), [visibleHistory])
-  const failedHistory = useMemo(() => visibleHistory.filter(record => !record.thumbnailUrl && !record.originalUrl && record.status === 'failed'), [visibleHistory])
-  const displayableGalleryImages = useMemo(() => galleryImages.filter(image => image.thumbnailUrl || image.originalUrl || image.assetUrl), [galleryImages])
 
   const refreshHistory = useCallback(async () => {
     setHistoryLoading(true)
@@ -313,23 +311,7 @@ export default function ImagegenPage() {
             extra={<Button size="small" loading={historyLoading} disabled={!canUseImagegen} onClick={() => void refreshHistory()}>刷新</Button>}
           >
             {visibleHistoryError ? <Alert type="warning" showIcon message={visibleHistoryError} /> : historyLoading && visibleHistory.length === 0 ? <Spin /> : visibleHistory.length ? (
-              <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-                {failedHistory.map(record => (
-                  <Alert
-                    key={record.id}
-                    type="error"
-                    showIcon
-                    message="测试生成失败"
-                    description={(
-                      <Space direction="vertical" size={4}>
-                        <Text>{record.error || 'Provider 或存储未返回可展示图片。'}</Text>
-                        <Text type="secondary">{record.generationPromptSnapshot}</Text>
-                      </Space>
-                    )}
-                  />
-                ))}
-                {displayableGalleryImages.length ? <ImageResultGallery images={displayableGalleryImages} /> : null}
-              </Space>
+              <ImageResultGallery images={galleryImages} showFailedPlaceholders />
             ) : <Empty description="暂无测试历史" />}
           </Card>
         </div>

@@ -189,6 +189,28 @@ body {
   gap: 16px;
 }
 
+.image-result-failed-card {
+  border-color: var(--ant-color-error-border);
+}
+
+.image-result-failed-cover {
+  display: flex;
+  aspect-ratio: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--ant-color-error-bg);
+  color: var(--ant-color-error-text);
+}
+
+.image-result-failed-cover .anticon {
+  font-size: 24px;
+}
+
+.image-result-failed-detail {
+  overflow-wrap: anywhere;
+}
+
 .image-reference-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
