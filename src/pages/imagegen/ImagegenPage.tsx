@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { DeleteOutlined } from '@ant-design/icons'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Card, Empty, Input, Select, Space, Spin, Tag, Typography, message } from 'antd'
 import type { ImageAssetRecord } from '@/core/types'
 import { useAuthStore } from '@/core/auth-store'
@@ -8,11 +9,18 @@ import type { FeaturePermissionSources } from '@/core/feature-permissions'
 import ImageModelSelector from '@/features/image-generation/ImageModelSelector'
 import ImageResultGallery from '@/features/image-generation/ImageResultGallery'
 import { getImagegenReferenceAssetUrl, ImagegenClientError, imagegenClient } from '@/features/imagegen/imagegenClient'
-import type { ImagegenHistoryResponse, ImagegenReferenceAssetResponse } from '@/features/imagegen/imagegenClient'
+import type { ImagegenHistoryResponse, ImagegenReferenceAssetResponse, ImagegenReferenceInput } from '@/features/imagegen/imagegenClient'
 
 const { Paragraph, Text, Title } = Typography
 const EMPTY_HISTORY: ImagegenHistoryResponse[] = []
 const EMPTY_REFERENCE_ASSETS: ImagegenReferenceAssetResponse[] = []
+
+type ReferenceSlot =
+  | { readonly kind: 'empty'; readonly file: undefined; readonly previewUrl: undefined; readonly assetId: undefined }
+  | { readonly kind: 'file'; readonly file: File; readonly previewUrl: string; readonly assetId: undefined }
+  | { readonly kind: 'asset'; readonly file: undefined; readonly previewUrl: undefined; readonly assetId: string }
+
+const EMPTY_REFERENCE_SLOT: ReferenceSlot = { kind: 'empty', file: undefined, previewUrl: undefined, assetId: undefined }
 
 export default function ImagegenPage() {
   const user = useAuthStore(state => state.user)
@@ -28,11 +36,12 @@ export default function ImagegenPage() {
   const [historyError, setHistoryError] = useState<string>()
   const [historyLoading, setHistoryLoading] = useState(false)
   const [referenceAssets, setReferenceAssets] = useState<ImagegenReferenceAssetResponse[]>([])
-  const [referenceImageIds, setReferenceImageIds] = useState<string[]>([])
+  const [storedReferenceSlots, setReferenceSlots] = useState<readonly ReferenceSlot[]>([])
+  const [referenceAssetTargetSlot, setReferenceAssetTargetSlot] = useState<number>()
   const [referenceAssetsError, setReferenceAssetsError] = useState<string>()
   const [referenceAssetsLoading, setReferenceAssetsLoading] = useState(false)
-  const [referenceUploading, setReferenceUploading] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const referenceSlotsRef = useRef<readonly ReferenceSlot[]>([])
 
   const permissionSources: FeaturePermissionSources = {
     novelImportConfig,
@@ -52,6 +61,9 @@ export default function ImagegenPage() {
   const visibleHistoryError = canUseImagegen ? historyError : undefined
   const visibleReferenceAssets = canUseImagegen ? referenceAssets : EMPTY_REFERENCE_ASSETS
   const visibleReferenceAssetsError = canUseImagegen ? referenceAssetsError : undefined
+  const referenceSlots = useMemo(() => Array.from({ length: maxReferenceImages }, (_, index) => storedReferenceSlots[index] || EMPTY_REFERENCE_SLOT), [maxReferenceImages, storedReferenceSlots])
+  const selectedReferenceCount = referenceSlots.filter(slot => slot.kind !== 'empty').length
+  const referenceAssetsById = useMemo(() => new Map(visibleReferenceAssets.map(asset => [asset.id, asset])), [visibleReferenceAssets])
   const galleryImages = useMemo<ImageAssetRecord[]>(() => visibleHistory.map(record => ({
     id: record.id,
     promptId: record.id,
@@ -114,37 +126,82 @@ export default function ImagegenPage() {
   }, [canUseImagegen, refreshReferenceAssets])
 
   useEffect(() => {
-    setReferenceImageIds(current => current.slice(0, maxReferenceImages))
+    setReferenceSlots(current => {
+      current.slice(maxReferenceImages).forEach(slot => {
+        if (slot.kind === 'file') URL.revokeObjectURL(slot.previewUrl)
+      })
+      return current.slice(0, maxReferenceImages)
+    })
+    setReferenceAssetTargetSlot(current => current !== undefined && current >= maxReferenceImages ? undefined : current)
   }, [maxReferenceImages])
 
-  const handleReferenceUpload = async (file: File | undefined) => {
-    if (!file || !canUseImagegen || !supportsReferenceImages || generating) return
+  useEffect(() => {
+    referenceSlotsRef.current = storedReferenceSlots
+  }, [storedReferenceSlots])
 
-    setReferenceUploading(true)
-    setReferenceAssetsError(undefined)
-    try {
-      const uploadedAsset = await imagegenClient.uploadReferenceAsset(file)
-      setReferenceAssets(current => [uploadedAsset, ...current.filter(asset => asset.id !== uploadedAsset.id)])
-      setReferenceImageIds(current => current.length < maxReferenceImages ? [...current, uploadedAsset.id] : current)
-      message.success('参考图片已上传')
-    } catch (error) {
-      setReferenceAssetsError(error instanceof ImagegenClientError ? error.message : '参考图片上传失败，请稍后重试。')
-    } finally {
-      setReferenceUploading(false)
-    }
+  useEffect(() => () => {
+    referenceSlotsRef.current.forEach(slot => {
+      if (slot.kind === 'file') URL.revokeObjectURL(slot.previewUrl)
+    })
+  }, [])
+
+  const replaceReferenceSlot = (slotIndex: number, nextSlot: ReferenceSlot) => {
+    setReferenceSlots(current => {
+      const currentSlot = current[slotIndex]
+      if (currentSlot?.kind === 'file') URL.revokeObjectURL(currentSlot.previewUrl)
+      const nextSlots = [...current]
+      nextSlots[slotIndex] = nextSlot
+      return nextSlots
+    })
   }
 
-  const handleReferenceSelection = (referenceImageId: string) => {
+  const handleReferenceFileSelection = (slotIndex: number, file: File | undefined) => {
+    if (!file || !canUseImagegen || !supportsReferenceImages || generating) return
+
+    const previewUrl = URL.createObjectURL(file)
+    setReferenceSlots(current => {
+      const currentSlot = current[slotIndex]
+      if (currentSlot?.kind === 'file') URL.revokeObjectURL(currentSlot.previewUrl)
+      const nextSlots = [...current]
+      nextSlots[slotIndex] = { kind: 'file', file, previewUrl, assetId: undefined }
+      return nextSlots
+    })
+    setReferenceAssetTargetSlot(undefined)
+  }
+
+  const handleReferenceFileRemoval = (slotIndex: number) => {
     if (!canUseImagegen || !supportsReferenceImages || generating) return
 
-    setReferenceImageIds(current => {
-      if (current.includes(referenceImageId)) return current.filter(id => id !== referenceImageId)
-      return current.length < maxReferenceImages ? [...current, referenceImageId] : current
-    })
+    replaceReferenceSlot(slotIndex, { kind: 'empty', file: undefined, previewUrl: undefined, assetId: undefined })
+  }
+
+  const handleReferenceAssetSelection = (slotIndex: number, assetId: string) => {
+    if (!canUseImagegen || !supportsReferenceImages || generating) return
+
+    replaceReferenceSlot(slotIndex, { kind: 'asset', file: undefined, previewUrl: undefined, assetId })
+    setReferenceAssetTargetSlot(undefined)
   }
 
   const handleGenerate = async () => {
     if (!selectedModel || !canGenerate) return
+
+    const selectedReferenceFiles: File[] = []
+    const referenceInputs: ImagegenReferenceInput[] = []
+    referenceSlots.forEach(slot => {
+      switch (slot.kind) {
+        case 'asset':
+          referenceInputs.push({ kind: 'asset', id: slot.assetId })
+          break
+        case 'file': {
+          const fileIndex = selectedReferenceFiles.length
+          selectedReferenceFiles.push(slot.file)
+          referenceInputs.push({ kind: 'file', index: fileIndex })
+          break
+        }
+        case 'empty':
+          break
+      }
+    })
 
     setGenerating(true)
     try {
@@ -155,7 +212,8 @@ export default function ImagegenPage() {
         ...(quality ? { quality } : {}),
         ...(format ? { format } : {}),
         ...(aspectRatio ? { aspectRatio } : {}),
-        ...(referenceImageIds.length ? { referenceImageIds } : {}),
+        referenceInputs,
+        referenceFiles: selectedReferenceFiles,
       })
       setHistory(current => [generated, ...current.filter(record => record.id !== generated.id)])
       message.success('测试图片已生成')
@@ -163,6 +221,8 @@ export default function ImagegenPage() {
       message.error(error instanceof ImagegenClientError ? error.message : '测试图片生成失败，请稍后重试。')
     } finally {
       setGenerating(false)
+      void refreshHistory()
+      void refreshReferenceAssets()
     }
   }
 
@@ -259,43 +319,81 @@ export default function ImagegenPage() {
                 <Text strong>参考图片</Text>
                 <Paragraph type="secondary" style={{ margin: '4px 0 8px' }}>
                   {supportsReferenceImages
-                    ? `可上传并选择最多 ${maxReferenceImages} 张参考图片（已选 ${referenceImageIds.length} 张）。`
+                    ? `最多 ${maxReferenceImages} 张，可选择本地图片或已保存图片（已选 ${selectedReferenceCount} 张）。`
                     : selectedModel ? '当前模型不支持参考图片。' : '请选择支持参考图片的模型。'}
                 </Paragraph>
                 <Space direction="vertical" size="small" style={{ width: '100%' }}>
-                  <input
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp"
-                    disabled={!canUseImagegen || !supportsReferenceImages || generating || referenceUploading}
-                    style={{ width: '100%' }}
-                    onChange={event => {
-                      const file = event.target.files?.[0]
-                      event.target.value = ''
-                      void handleReferenceUpload(file)
-                    }}
-                  />
+                  {supportsReferenceImages ? (
+                    <div className="image-reference-slots">
+                      {referenceSlots.map((slot, slotIndex) => {
+                        const asset = slot.kind === 'asset' ? referenceAssetsById.get(slot.assetId) : undefined
+                        const controlsDisabled = !canUseImagegen || generating
+                        const slotContent = (() => {
+                          switch (slot.kind) {
+                            case 'file':
+                              return <img className="image-reference-slot-preview" src={slot.previewUrl} alt={`本地参考图 ${slotIndex + 1}`} />
+                            case 'asset':
+                              return asset ? <img className="image-reference-slot-preview" src={getImagegenReferenceAssetUrl(asset)} alt={`已保存参考图 ${slotIndex + 1}`} /> : <div className="image-reference-slot-empty">已保存图片不可用</div>
+                            case 'empty':
+                              return <div className="image-reference-slot-empty">未选择图片</div>
+                          }
+                        })()
+                        return (
+                          <div key={slotIndex} className="image-reference-slot">
+                            <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                              <Space align="center" style={{ justifyContent: 'space-between', width: '100%' }}>
+                                <Text strong>参考图 {slotIndex + 1}</Text>
+                                <Tag>{slot.kind === 'file' ? '本地' : slot.kind === 'asset' ? '已保存' : '空槽'}</Tag>
+                              </Space>
+                              {slotContent}
+                              {slot.kind === 'file' ? <Text className="image-reference-slot-file" type="secondary" ellipsis>{slot.file.name}</Text> : null}
+                              <input
+                                type="file"
+                                accept="image/png,image/jpeg,image/webp"
+                                disabled={controlsDisabled}
+                                onChange={event => {
+                                  const file = event.target.files?.[0]
+                                  event.target.value = ''
+                                  handleReferenceFileSelection(slotIndex, file)
+                                }}
+                              />
+                              <Space wrap>
+                                <Button size="small" disabled={controlsDisabled} onClick={() => setReferenceAssetTargetSlot(slotIndex)}>选择已保存图片</Button>
+                                {slot.kind !== 'empty' ? <Button size="small" danger icon={<DeleteOutlined />} disabled={controlsDisabled} onClick={() => handleReferenceFileRemoval(slotIndex)}>移除</Button> : null}
+                              </Space>
+                            </Space>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ) : null}
                   {visibleReferenceAssetsError ? <Alert type="warning" showIcon message={visibleReferenceAssetsError} /> : null}
                   {referenceAssetsLoading ? <Spin size="small" /> : visibleReferenceAssets.length ? (
-                    <div className="image-reference-grid">
+                    <div className="image-reference-asset-picker">
+                      <Text type="secondary">{referenceAssetTargetSlot === undefined ? '选择一个参考图槽位后，可复用已保存图片。' : `正在选择参考图 ${referenceAssetTargetSlot + 1}。`}</Text>
+                      <div className="image-reference-grid">
                       {visibleReferenceAssets.map(asset => {
-                        const isSelected = referenceImageIds.includes(asset.id)
-                        const isDisabled = !canUseImagegen || !supportsReferenceImages || generating || (!isSelected && referenceImageIds.length >= maxReferenceImages)
+                        const isSelected = referenceSlots.some(slot => slot.kind === 'asset' && slot.assetId === asset.id)
+                        const isDisabled = !canUseImagegen || !supportsReferenceImages || generating || referenceAssetTargetSlot === undefined
                         return (
                           <button
                             key={asset.id}
                             type="button"
-                            className={`image-reference-option${isSelected ? ' is-selected' : ''}${isDisabled ? ' is-disabled' : ''}`}
+                            className={`image-reference-option image-reference-asset-option${isSelected ? ' is-selected' : ''}${isDisabled ? ' is-disabled' : ''}`}
                             disabled={isDisabled}
                             aria-pressed={isSelected}
-                            onClick={() => handleReferenceSelection(asset.id)}
+                            onClick={() => {
+                              if (referenceAssetTargetSlot !== undefined) handleReferenceAssetSelection(referenceAssetTargetSlot, asset.id)
+                            }}
                           >
                             <img src={getImagegenReferenceAssetUrl(asset)} alt="已上传参考图片" />
-                            <span className="image-reference-label">{isSelected ? '已选择' : '选择参考图'}</span>
+                            <span className="image-reference-label">{isSelected ? '已选用' : '选择图片'}</span>
                           </button>
                         )
                       })}
+                      </div>
                     </div>
-                  ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无已上传参考图片" />}
+                  ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无已保存参考图片" />}
                 </Space>
               </div>
               <Button type="primary" loading={generating} disabled={!canGenerate} onClick={handleGenerate}>

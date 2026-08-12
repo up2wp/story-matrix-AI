@@ -100,6 +100,7 @@ db.exec(`
     id TEXT PRIMARY KEY,
     ownerId TEXT NOT NULL,
     originalFilename TEXT,
+    contentHash TEXT,
     mimeType TEXT NOT NULL,
     byteSize INTEGER NOT NULL,
     storageMode TEXT NOT NULL CHECK (storageMode IN ('local', 'immich')),
@@ -115,6 +116,7 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_imagegenReferenceAssets_ownerCreatedAt ON imagegenReferenceAssets(ownerId, createdAt);
   CREATE INDEX IF NOT EXISTS idx_imagegenReferenceAssets_ownerStatus ON imagegenReferenceAssets(ownerId, storageStatus);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_imagegenReferenceAssets_ownerContentHash ON imagegenReferenceAssets(ownerId, contentHash) WHERE contentHash IS NOT NULL;
 
   CREATE TABLE IF NOT EXISTS imageGenerationFailures (
     id TEXT PRIMARY KEY,
@@ -177,6 +179,10 @@ export function migrateDatabase(database: DatabaseInstance = db) {
     database.prepare('ALTER TABLE imagegenHistory ADD COLUMN referenceImageIds TEXT').run()
   }
 
+  if (!columnExists(database, 'imagegenReferenceAssets', 'contentHash')) {
+    database.prepare('ALTER TABLE imagegenReferenceAssets ADD COLUMN contentHash TEXT').run()
+  }
+
   database.exec(`
     CREATE TABLE IF NOT EXISTS userVoices (
       id TEXT PRIMARY KEY,
@@ -237,6 +243,7 @@ export function migrateDatabase(database: DatabaseInstance = db) {
       id TEXT PRIMARY KEY,
       ownerId TEXT NOT NULL,
       originalFilename TEXT,
+      contentHash TEXT,
       mimeType TEXT NOT NULL,
       byteSize INTEGER NOT NULL,
       storageMode TEXT NOT NULL CHECK (storageMode IN ('local', 'immich')),
@@ -253,6 +260,7 @@ export function migrateDatabase(database: DatabaseInstance = db) {
 
   database.exec('CREATE INDEX IF NOT EXISTS idx_imagegenReferenceAssets_ownerCreatedAt ON imagegenReferenceAssets(ownerId, createdAt)')
   database.exec('CREATE INDEX IF NOT EXISTS idx_imagegenReferenceAssets_ownerStatus ON imagegenReferenceAssets(ownerId, storageStatus)')
+  database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_imagegenReferenceAssets_ownerContentHash ON imagegenReferenceAssets(ownerId, contentHash) WHERE contentHash IS NOT NULL')
 
   database.exec(`
     CREATE TABLE IF NOT EXISTS imageGenerationFailures (

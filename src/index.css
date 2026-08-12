@@ -217,6 +217,58 @@ body {
   gap: 12px;
 }
 
+.image-reference-slots {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.image-reference-slot {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--ant-color-border);
+  border-radius: var(--ant-border-radius);
+  background: var(--ant-color-fill-quaternary);
+}
+
+.image-reference-slot-preview,
+.image-reference-slot-empty {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: var(--ant-border-radius-sm);
+}
+
+.image-reference-slot-preview {
+  object-fit: cover;
+  background: var(--ant-color-fill-secondary);
+}
+
+.image-reference-slot-empty {
+  display: grid;
+  place-items: center;
+  padding: 8px;
+  border: 1px dashed var(--ant-color-border);
+  background: var(--ant-color-bg-container);
+  color: var(--ant-color-text-tertiary);
+  text-align: center;
+}
+
+.image-reference-slot-file {
+  display: block;
+}
+
+.image-reference-asset-picker {
+  display: grid;
+  gap: 8px;
+}
+
+.image-reference-asset-option:focus-visible,
+.image-reference-slot .ant-btn:focus-visible {
+  outline: 2px solid var(--ant-color-primary);
+  outline-offset: 2px;
+}
+
 .image-reference-option {
   min-height: 44px;
   border: 1px solid #d9d9d9;
@@ -270,5 +322,9 @@ body {
 
   .image-reference-grid {
     grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  }
+
+  .image-reference-slots {
+    grid-template-columns: 1fr;
   }
 }

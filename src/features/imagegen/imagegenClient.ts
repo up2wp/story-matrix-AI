@@ -8,8 +8,13 @@ export type ImagegenGenerateRequest = {
   readonly format?: string
   readonly aspectRatio?: string
   readonly n?: number
-  readonly referenceImageIds?: readonly string[]
+  readonly referenceInputs?: readonly ImagegenReferenceInput[]
+  readonly referenceFiles?: readonly File[]
 }
+
+export type ImagegenReferenceInput =
+  | { readonly kind: 'asset'; readonly id: string }
+  | { readonly kind: 'file'; readonly index: number }
 
 export type ImagegenHistoryResponse = Omit<ImagegenHistoryRecord, 'ownerId'>
 export type ImagegenReferenceAssetResponse = Omit<ImagegenReferenceAssetRecord, 'ownerId'>
@@ -58,18 +63,25 @@ async function request<T>(url: string, init?: RequestInit, json = true): Promise
   return response.json()
 }
 
+function generateRequestInit(payload: ImagegenGenerateRequest): { readonly init: RequestInit; readonly json: boolean } {
+  const { referenceFiles, ...body } = payload
+  if (!referenceFiles?.length) {
+    return { init: { method: 'POST', body: JSON.stringify(body) }, json: true }
+  }
+
+  const formData = new FormData()
+  formData.append('payload', JSON.stringify(body))
+  referenceFiles.forEach(file => formData.append('referenceImages', file))
+  return { init: { method: 'POST', body: formData }, json: false }
+}
+
 export const imagegenClient = {
-  generate: (payload: ImagegenGenerateRequest) => request<ImagegenHistoryResponse>('/generate', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  }),
+  generate: (payload: ImagegenGenerateRequest) => {
+    const { init, json } = generateRequestInit(payload)
+    return request<ImagegenHistoryResponse>('/generate', init, json)
+  },
   history: () => request<ImagegenHistoryResponse[]>('/history'),
   referenceAssets: () => request<ImagegenReferenceAssetResponse[]>('/reference-assets'),
-  uploadReferenceAsset: (file: File) => {
-    const formData = new FormData()
-    formData.append('file', file)
-    return request<ImagegenReferenceAssetResponse>('/reference-assets', { method: 'POST', body: formData }, false)
-  },
 }
 
 export function getImagegenReferenceAssetUrl(asset: Pick<ImagegenReferenceAssetResponse, 'thumbnailUrl' | 'originalUrl'>, variant: 'thumbnail' | 'original' = 'thumbnail') {

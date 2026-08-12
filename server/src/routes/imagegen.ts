@@ -6,12 +6,12 @@ import { createImagegenReferenceAssetRouter } from './imagegen-reference-assets.
 import { defaultImageGenerationConfig, normalizeImageGenerationConfig, type ImageGenerationConfig, type ImageGenerationModelConfig, type ImageGenerationProviderConfig } from '../services/image-generation-config.js'
 import { createImageGenerationFailureRecord } from '../services/image-generation-failures.js'
 import { extensionForMime, immichClientFromConfig, readLocalImageAsset, resolveRunnableImageGenerationModel, runImageGeneration, type ImageAssetVariant, type ImageGenerationRunnerOutput } from '../services/image-generation-runner.js'
-import { resolveImagegenReferenceSelection } from '../services/imagegen-reference-selection.js'
+import { parseGenerateRequest, persistGenerateReferenceImages, resolveGenerateReferenceInputs, type ParsedGenerateRequest } from '../services/imagegen-generate-references.js'
 import { createImagegenHistoryRecord, getImagegenHistoryRecord, listImagegenHistory, type ImagegenHistoryRecord, type ImagegenStorageMode } from '../services/imagegen-history.js'
 
 const router = Router()
 const MAX_TEST_PROMPT_LENGTH = 8000
-const ALLOWED_GENERATE_FIELDS = new Set(['prompt', 'modelId', 'size', 'quality', 'format', 'aspectRatio', 'n', 'referenceImageIds'])
+const ALLOWED_GENERATE_FIELDS = new Set(['prompt', 'modelId', 'size', 'quality', 'format', 'aspectRatio', 'n', 'referenceInputs'])
 
 type FeatureGrant = { readonly userId: string; readonly features?: readonly string[] }
 
@@ -27,6 +27,8 @@ type ResolvedImagegenRun = {
 type ImagegenFailureRecordInput = ResolvedImagegenRun & { readonly error: unknown }
 
 type ImagegenSuccessRecordInput = ResolvedImagegenRun & { readonly image: ImageGenerationRunnerOutput['image'] }
+
+type PersistedGenerateReferences = { readonly ids: readonly string[]; readonly error?: unknown }
 
 function loadImageGenerationConfig(): ImageGenerationConfig {
   const row = db.prepare('SELECT imageGenerationConfig FROM systemConfig WHERE id = ?').get('singleton') as { imageGenerationConfig?: string } | undefined
@@ -94,7 +96,20 @@ function testImmichFilename(ownerId: string, prompt: string, projectName: string
   ].join('-') + `.${extensionForMime(mimeType)}`
 }
 
+function referenceImmichFilename(ownerId: string, projectName: string | undefined, mimeType: string) {
+  const timestamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')
+  return [
+    slugPart(projectName || 'story-matrix', 'story-matrix'),
+    slugPart(ownerId, 'user'),
+    'imagegen-reference',
+    timestamp,
+    randomUUID().slice(0, 8),
+  ].join('-') + `.${extensionForMime(mimeType)}`
+}
+
 function imagegenAssetUrl(assetId: string, variant?: ImageAssetVariant) { const encoded = encodeURIComponent(assetId); return variant ? `/api/imagegen/assets/${encoded}/${variant}` : `/api/imagegen/assets/${encoded}` }
+
+function imagegenReferenceAssetUrl(assetId: string, variant?: ImageAssetVariant) { const encoded = encodeURIComponent(assetId); return variant ? `/api/imagegen/reference-assets/${encoded}/${variant}` : `/api/imagegen/reference-assets/${encoded}` }
 
 function storageMode(config: ImageGenerationConfig): ImagegenStorageMode { return config.storageMode === 'immich' ? 'immich' : 'local' }
 
@@ -187,7 +202,14 @@ router.get('/history', (req, res) => {
 
 router.post('/generate', async (req, res) => {
   const request = req as AuthenticatedRequest
-  const body = req.body as Record<string, unknown>
+  let parsedRequest: ParsedGenerateRequest
+  try {
+    parsedRequest = await parseGenerateRequest(request)
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : '生成请求解析失败' })
+  }
+
+  const body = parsedRequest.body
   const unsupportedFields = unsupportedGenerateFields(body)
   if (unsupportedFields.length > 0) return res.status(400).json({ error: '测试生图请求不支持作品上下文字段' })
   const parsedPrompt = testPrompt(body)
@@ -198,7 +220,7 @@ router.post('/generate', async (req, res) => {
   const modelId = typeof body.modelId === 'string' && body.modelId.trim() ? body.modelId.trim() : config.defaultModelId
   const resolved = resolveRunnableImageGenerationModel(config, modelId)
   if (!resolved.ok) return res.status(resolved.statusCode).json({ error: resolved.error })
-  const referenceSelection = await resolveImagegenReferenceSelection({ value: body.referenceImageIds, ownerId: request.currentUser.id, config, model: resolved.model })
+  const referenceSelection = await resolveGenerateReferenceInputs({ value: body.referenceInputs, files: parsedRequest.files, ownerId: request.currentUser.id, config, model: resolved.model })
   if (!referenceSelection.ok) return res.status(referenceSelection.statusCode).json({ error: referenceSelection.error })
   const runContext: ResolvedImagegenRun = { ownerId: request.currentUser.id, prompt: parsedPrompt.prompt, referenceImageIds: referenceSelection.ids, config, provider: resolved.provider, model: resolved.model }
 
@@ -218,24 +240,42 @@ router.post('/generate', async (req, res) => {
         immichFilename: mimeType => testImmichFilename(request.currentUser.id, parsedPrompt.prompt, config.immich?.projectName, mimeType),
       },
     })
-    const record = createSuccessHistoryRecord({ ...runContext, image: result.image })
+    const finalReferences: PersistedGenerateReferences = await persistGenerateReferenceImages(referenceSelection.slots, {
+      ownerId: request.currentUser.id,
+      config,
+      publicAssetUrl: imagegenReferenceAssetUrl,
+      immichFilename: mimeType => referenceImmichFilename(request.currentUser.id, config.immich?.projectName, mimeType),
+    }).catch(error => ({ ids: referenceSelection.ids, error } as const))
+    const image = finalReferences.error
+      ? { ...result.image, error: safeErrorMessage(finalReferences.error, '参考图持久化失败', config) }
+      : result.image
+    const record = createSuccessHistoryRecord({ ...runContext, referenceImageIds: finalReferences.ids, image })
     return res.status(result.httpStatus).json(serializeHistory(record))
   } catch (error) {
+    const finalReferences: PersistedGenerateReferences = await persistGenerateReferenceImages(referenceSelection.slots, {
+      ownerId: request.currentUser.id,
+      config,
+      publicAssetUrl: imagegenReferenceAssetUrl,
+      immichFilename: mimeType => referenceImmichFilename(request.currentUser.id, config.immich?.projectName, mimeType),
+    }).catch(referenceError => ({ ids: referenceSelection.ids, error: referenceError } as const))
+    const historyError = finalReferences.error
+      ? new Error(`${safeErrorMessage(error, '测试生图失败', config)}；参考图保存失败：${safeErrorMessage(finalReferences.error, '参考图持久化失败', config)}`)
+      : error
     createImageGenerationFailureRecord({
       surface: 'imagegen',
       ownerId: runContext.ownerId,
       prompt: runContext.prompt,
       generationPromptSnapshot: runContext.prompt,
-      referenceImageIds: runContext.referenceImageIds,
+      referenceImageIds: finalReferences.ids,
       provider: runContext.model.provider,
       providerLabel: runContext.provider.label,
       modelId: runContext.model.id,
       modelName: runContext.model.label,
       storageMode: storageMode(runContext.config),
-      error,
+      error: historyError,
       config: runContext.config,
     })
-    const record = createFailureHistoryRecord({ ...runContext, error })
+    const record = createFailureHistoryRecord({ ...runContext, referenceImageIds: finalReferences.ids, error: historyError })
     return res.status(502).json(serializeHistory(record))
   }
 })

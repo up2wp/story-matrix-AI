@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import type { Database as DatabaseInstance } from 'better-sqlite3'
 import db from '../db.js'
 import type { ImageGenerationConfig } from './image-generation-config.js'
@@ -9,6 +9,7 @@ export type ImagegenReferenceAssetRecord = {
   readonly id: string
   readonly ownerId: string
   readonly originalFilename?: string
+  readonly contentHash?: string
   readonly mimeType: string
   readonly byteSize: number
   readonly storageMode: 'local' | 'immich'
@@ -25,6 +26,7 @@ export type CreateImagegenReferenceAssetInput = {
   readonly ownerId: string
   readonly buffer: Buffer
   readonly originalFilename?: string
+  readonly contentHash?: string
   readonly config: ImageGenerationConfig
   readonly publicAssetUrl: (assetId: string, variant?: ImageAssetVariant) => string
   readonly immichFilename: (mimeType: string) => string
@@ -34,6 +36,7 @@ type ImagegenReferenceAssetRow = {
   readonly id: string
   readonly ownerId: string
   readonly originalFilename: string | null
+  readonly contentHash: string | null
   readonly mimeType: string
   readonly byteSize: number
   readonly storageMode: 'local' | 'immich'
@@ -50,6 +53,7 @@ type ImagegenReferenceAssetInsertParameters = [
   string,
   string,
   string | null,
+  string | null,
   string,
   number,
   'local' | 'immich',
@@ -64,7 +68,7 @@ type ImagegenReferenceAssetInsertParameters = [
 
 const IMAGEGEN_REFERENCE_SELECT = `
   SELECT id, ownerId, originalFilename, mimeType, byteSize, storageMode, storageStatus,
-    localAssetId, immichAssetId, immichFilename, thumbnailUrl, originalUrl, createdAt
+    localAssetId, immichAssetId, immichFilename, thumbnailUrl, originalUrl, createdAt, contentHash
   FROM imagegenReferenceAssets
 `
 
@@ -95,6 +99,7 @@ function rowToRecord(row: ImagegenReferenceAssetRow): ImagegenReferenceAssetReco
     id: row.id,
     ownerId: row.ownerId,
     originalFilename: row.originalFilename || undefined,
+    contentHash: row.contentHash || undefined,
     mimeType: row.mimeType,
     byteSize: row.byteSize,
     storageMode: row.storageMode,
@@ -111,14 +116,15 @@ function rowToRecord(row: ImagegenReferenceAssetRow): ImagegenReferenceAssetReco
 function insertReferenceAsset(record: ImagegenReferenceAssetRecord, database: DatabaseInstance): ImagegenReferenceAssetRecord {
   database.prepare<ImagegenReferenceAssetInsertParameters>(`
     INSERT INTO imagegenReferenceAssets (
-      id, ownerId, originalFilename, mimeType, byteSize, storageMode, storageStatus,
+      id, ownerId, originalFilename, contentHash, mimeType, byteSize, storageMode, storageStatus,
       localAssetId, immichAssetId, immichFilename, thumbnailUrl, originalUrl, createdAt
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     record.id,
     record.ownerId,
     nullable(record.originalFilename),
+    nullable(record.contentHash),
     record.mimeType,
     record.byteSize,
     record.storageMode,
@@ -133,6 +139,10 @@ function insertReferenceAsset(record: ImagegenReferenceAssetRecord, database: Da
   return record
 }
 
+export function imagegenReferenceContentHash(buffer: Buffer): string {
+  return createHash('sha256').update(buffer).digest('hex')
+}
+
 export function validateUploadedReferenceImage(buffer: Buffer, browserMimeType: string): string {
   if (buffer.length === 0) throw new Error('参考图不能为空')
   const detectedMimeType = detectImageMime(buffer)
@@ -141,8 +151,16 @@ export function validateUploadedReferenceImage(buffer: Buffer, browserMimeType: 
   return detectedMimeType
 }
 
+export function getImagegenReferenceAssetByContentHash(ownerId: string, contentHash: string, database: DatabaseInstance = db): ImagegenReferenceAssetRecord | null {
+  const row = database.prepare<[string, string], ImagegenReferenceAssetRow>(`${IMAGEGEN_REFERENCE_SELECT} WHERE ownerId = ? AND contentHash = ? AND storageStatus = 'succeeded'`).get(ownerId, contentHash)
+  return row ? rowToRecord(row) : null
+}
+
 export async function createImagegenReferenceAsset(input: CreateImagegenReferenceAssetInput, database: DatabaseInstance = db): Promise<ImagegenReferenceAssetRecord> {
   const mimeType = detectImageMime(input.buffer)
+  const contentHash = input.contentHash || imagegenReferenceContentHash(input.buffer)
+  const existing = getImagegenReferenceAssetByContentHash(input.ownerId, contentHash, database)
+  if (existing) return existing
   const originalFilename = safeOriginalFilename(input.originalFilename)
   const createdAt = Date.now()
   if (input.config.storageMode !== 'immich') {
@@ -151,6 +169,7 @@ export async function createImagegenReferenceAsset(input: CreateImagegenReferenc
       id: saved.id,
       ownerId: input.ownerId,
       originalFilename,
+      contentHash,
       mimeType,
       byteSize: input.buffer.length,
       storageMode: 'local',
@@ -173,6 +192,7 @@ export async function createImagegenReferenceAsset(input: CreateImagegenReferenc
     id,
     ownerId: input.ownerId,
     originalFilename,
+    contentHash,
     mimeType,
     byteSize: input.buffer.length,
     storageMode: 'immich',
