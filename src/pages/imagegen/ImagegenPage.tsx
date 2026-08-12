@@ -265,10 +265,11 @@ export default function ImagegenPage() {
                     : selectedModel ? '当前模型不支持参考图片。' : '请选择支持参考图片的模型。'}
                 </Paragraph>
                 <Space direction="vertical" size="small" style={{ width: '100%' }}>
-                  <Input
+                  <input
                     type="file"
-                    accept="image/*"
+                    accept="image/png,image/jpeg,image/webp"
                     disabled={!canUseImagegen || !supportsReferenceImages || generating || referenceUploading}
+                    style={{ width: '100%' }}
                     onChange={event => {
                       const file = event.target.files?.[0]
                       event.target.value = ''

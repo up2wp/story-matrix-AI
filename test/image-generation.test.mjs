@@ -276,6 +276,8 @@ assert.match(imagegenPageSource, /ImageModelSelector[\s\S]*ImageResultGallery[\s
 assert.match(imagegenPageSource, /failedHistory[\s\S]*record\.status === 'failed'[\s\S]*测试生成失败[\s\S]*record\.generationPromptSnapshot/, 'imagegen console should show failed test history records even when no image URL can be displayed')
 assert.match(imagegenPageSource, /displayableGalleryImages[\s\S]*image\.thumbnailUrl \|\| image\.originalUrl \|\| image\.assetUrl[\s\S]*<ImageResultGallery images=\{displayableGalleryImages\}/, 'imagegen console should pass only records with image URLs into the image gallery')
 assert.match(imagegenPageSource, /imagegenClient\.generate\(\{[\s\S]*prompt,[\s\S]*modelId/, 'imagegen console should submit the user prompt and selected model to the test API')
+assert.doesNotMatch(imagegenPageSource, /<Input(?=[\s>])[^>]*type="file"/, 'imagegen reference upload should use a native file input so selecting a file cannot crash Ant Design Input during rerender')
+assert.match(imagegenPageSource, /<input[\s\S]*type="file"[\s\S]*accept="image\/png,image\/jpeg,image\/webp"/, 'imagegen reference upload should keep the native file input constrained to supported image formats')
 assert.doesNotMatch(imagegenPageSource, /currentWork|visualAssets/, 'imagegen console should not read or mutate work visual assets')
 assert.doesNotMatch(imagegenGenerateBlock, /workId|chapterId|promptId|characterId|visualSubjectId|viewDirection|systemPrompt|instruction|context/, 'imagegen console generate requests should exclude work-context fields')
 assert.match(imagegenClientSource, /fetch\(`\/api\/imagegen\$\{url\}`[\s\S]*credentials: 'include'/, 'imagegen client should call the same-origin test API with credentials')
