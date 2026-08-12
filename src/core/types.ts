@@ -234,7 +234,21 @@ export interface ImagegenHistoryRecord {
   immichFilename?: string
   thumbnailUrl?: string
   originalUrl?: string
+  referenceImageIds: string[]
   error?: string
+  createdAt: number
+}
+
+export interface ImagegenReferenceAssetRecord {
+  id: string
+  ownerId: string
+  originalFilename?: string
+  mimeType: string
+  byteSize: number
+  storageMode: ImageStorageMode
+  storageStatus: ImageStorageStatus
+  thumbnailUrl: string
+  originalUrl: string
   createdAt: number
 }
 

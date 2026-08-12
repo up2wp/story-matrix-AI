@@ -25,6 +25,7 @@ export type ImagegenHistoryRecord = {
   readonly immichFilename?: string
   readonly thumbnailUrl?: string
   readonly originalUrl?: string
+  readonly referenceImageIds: readonly string[]
   readonly error?: string
   readonly createdAt: number
 }
@@ -52,6 +53,7 @@ type ImagegenHistoryRow = {
   readonly immichFilename: string | null
   readonly thumbnailUrl: string | null
   readonly originalUrl: string | null
+  readonly referenceImageIds: string | null
   readonly error: string | null
   readonly createdAt: number
 }
@@ -75,13 +77,14 @@ type ImagegenHistoryInsertParameters = [
   string | null,
   string | null,
   string | null,
+  string | null,
   number,
 ]
 
 const IMAGEGEN_HISTORY_SELECT = `
   SELECT id, ownerId, prompt, generationPromptSnapshot, provider, providerLabel, modelId, modelName,
     mimeType, storageMode, storageStatus, status, localAssetId, immichAssetId, immichFilename,
-    thumbnailUrl, originalUrl, error, createdAt
+    thumbnailUrl, originalUrl, referenceImageIds, error, createdAt
   FROM imagegenHistory
 `
 
@@ -100,6 +103,12 @@ function sameOriginLocator(value: string | undefined, field: 'thumbnailUrl' | 'o
   if (!value) return undefined
   if (value.startsWith('/api/')) return value
   throw new ImagegenHistoryLocatorError(field)
+}
+
+function referenceImageIdList(value: string | null): readonly string[] {
+  if (!value) return []
+  const parsed: unknown = JSON.parse(value)
+  return Array.isArray(parsed) ? parsed.map(item => String(item || '').trim()).filter(Boolean) : []
 }
 
 function rowToRecord(row: ImagegenHistoryRow): ImagegenHistoryRecord {
@@ -121,6 +130,7 @@ function rowToRecord(row: ImagegenHistoryRow): ImagegenHistoryRecord {
     immichFilename: row.immichFilename || undefined,
     thumbnailUrl: row.thumbnailUrl || undefined,
     originalUrl: row.originalUrl || undefined,
+    referenceImageIds: referenceImageIdList(row.referenceImageIds),
     error: row.error || undefined,
     createdAt: row.createdAt,
   }
@@ -130,6 +140,7 @@ export function createImagegenHistoryRecord(input: CreateImagegenHistoryRecordIn
   const record: ImagegenHistoryRecord = {
     ...input,
     id: input.id || randomUUID(),
+    referenceImageIds: input.referenceImageIds || [],
     thumbnailUrl: sameOriginLocator(input.thumbnailUrl, 'thumbnailUrl'),
     originalUrl: sameOriginLocator(input.originalUrl, 'originalUrl'),
     createdAt: input.createdAt ?? Date.now(),
@@ -138,9 +149,9 @@ export function createImagegenHistoryRecord(input: CreateImagegenHistoryRecordIn
     INSERT INTO imagegenHistory (
       id, ownerId, prompt, generationPromptSnapshot, provider, providerLabel, modelId, modelName,
       mimeType, storageMode, storageStatus, status, localAssetId, immichAssetId, immichFilename,
-      thumbnailUrl, originalUrl, error, createdAt
+      thumbnailUrl, originalUrl, referenceImageIds, error, createdAt
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     record.id,
     record.ownerId,
@@ -159,6 +170,7 @@ export function createImagegenHistoryRecord(input: CreateImagegenHistoryRecordIn
     nullable(record.immichFilename),
     nullable(record.thumbnailUrl),
     nullable(record.originalUrl),
+    record.referenceImageIds.length > 0 ? JSON.stringify(record.referenceImageIds) : null,
     nullable(record.error),
     record.createdAt,
   )

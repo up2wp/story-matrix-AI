@@ -1,4 +1,4 @@
-import type { ImagegenHistoryRecord } from '@/core/types'
+import type { ImagegenHistoryRecord, ImagegenReferenceAssetRecord } from '@/core/types'
 
 export type ImagegenGenerateRequest = {
   readonly prompt: string
@@ -8,9 +8,11 @@ export type ImagegenGenerateRequest = {
   readonly format?: string
   readonly aspectRatio?: string
   readonly n?: number
+  readonly referenceImageIds?: readonly string[]
 }
 
 export type ImagegenHistoryResponse = Omit<ImagegenHistoryRecord, 'ownerId'>
+export type ImagegenReferenceAssetResponse = Omit<ImagegenReferenceAssetRecord, 'ownerId'>
 
 export class ImagegenClientError extends Error {
   readonly name = 'ImagegenClientError'
@@ -40,11 +42,15 @@ async function responseErrorMessage(response: Response): Promise<string> {
   }
 }
 
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
+function requestHeaders(json = true): Record<string, string> {
+  return json ? { 'Content-Type': 'application/json' } : {}
+}
+
+async function request<T>(url: string, init?: RequestInit, json = true): Promise<T> {
   const response = await fetch(`/api/imagegen${url}`, {
     ...init,
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
+    headers: { ...requestHeaders(json), ...(init?.headers || {}) },
   })
   if (!response.ok) {
     throw new ImagegenClientError(response.status, await responseErrorMessage(response))
@@ -58,4 +64,14 @@ export const imagegenClient = {
     body: JSON.stringify(payload),
   }),
   history: () => request<ImagegenHistoryResponse[]>('/history'),
+  referenceAssets: () => request<ImagegenReferenceAssetResponse[]>('/reference-assets'),
+  uploadReferenceAsset: (file: File) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return request<ImagegenReferenceAssetResponse>('/reference-assets', { method: 'POST', body: formData }, false)
+  },
+}
+
+export function getImagegenReferenceAssetUrl(asset: Pick<ImagegenReferenceAssetResponse, 'thumbnailUrl' | 'originalUrl'>, variant: 'thumbnail' | 'original' = 'thumbnail') {
+  return variant === 'original' ? asset.originalUrl : asset.thumbnailUrl
 }

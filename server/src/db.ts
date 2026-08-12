@@ -88,12 +88,58 @@ db.exec(`
     immichFilename TEXT,
     thumbnailUrl TEXT,
     originalUrl TEXT,
+    referenceImageIds TEXT,
     error TEXT,
     createdAt INTEGER NOT NULL,
     FOREIGN KEY (ownerId) REFERENCES users(id)
   );
 
   CREATE INDEX IF NOT EXISTS idx_imagegenHistory_ownerCreatedAt ON imagegenHistory(ownerId, createdAt);
+
+  CREATE TABLE IF NOT EXISTS imagegenReferenceAssets (
+    id TEXT PRIMARY KEY,
+    ownerId TEXT NOT NULL,
+    originalFilename TEXT,
+    mimeType TEXT NOT NULL,
+    byteSize INTEGER NOT NULL,
+    storageMode TEXT NOT NULL CHECK (storageMode IN ('local', 'immich')),
+    storageStatus TEXT NOT NULL CHECK (storageStatus IN ('succeeded', 'pendingImmichUpload', 'storageUploadFailed', 'failed')),
+    localAssetId TEXT,
+    immichAssetId TEXT,
+    immichFilename TEXT,
+    thumbnailUrl TEXT NOT NULL,
+    originalUrl TEXT NOT NULL,
+    createdAt INTEGER NOT NULL,
+    FOREIGN KEY (ownerId) REFERENCES users(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_imagegenReferenceAssets_ownerCreatedAt ON imagegenReferenceAssets(ownerId, createdAt);
+  CREATE INDEX IF NOT EXISTS idx_imagegenReferenceAssets_ownerStatus ON imagegenReferenceAssets(ownerId, storageStatus);
+
+  CREATE TABLE IF NOT EXISTS imageGenerationFailures (
+    id TEXT PRIMARY KEY,
+    surface TEXT NOT NULL CHECK (surface IN ('work', 'imagegen')),
+    ownerId TEXT NOT NULL,
+    workId TEXT,
+    prompt TEXT NOT NULL,
+    generationPromptSnapshot TEXT NOT NULL,
+    referenceImageIds TEXT,
+    provider TEXT NOT NULL,
+    providerLabel TEXT NOT NULL,
+    modelId TEXT NOT NULL,
+    modelName TEXT NOT NULL,
+    storageMode TEXT NOT NULL CHECK (storageMode IN ('local', 'immich')),
+    storageStatus TEXT NOT NULL CHECK (storageStatus IN ('failed')),
+    status TEXT NOT NULL CHECK (status IN ('failed')),
+    error TEXT NOT NULL,
+    createdAt INTEGER NOT NULL,
+    FOREIGN KEY (ownerId) REFERENCES users(id),
+    FOREIGN KEY (workId) REFERENCES works(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_imageGenerationFailures_ownerCreatedAt ON imageGenerationFailures(ownerId, createdAt);
+  CREATE INDEX IF NOT EXISTS idx_imageGenerationFailures_surfaceCreatedAt ON imageGenerationFailures(surface, createdAt);
+  CREATE INDEX IF NOT EXISTS idx_imageGenerationFailures_workCreatedAt ON imageGenerationFailures(workId, createdAt);
 
   CREATE TABLE IF NOT EXISTS sessions (
     token TEXT PRIMARY KEY,
@@ -125,6 +171,10 @@ export function migrateDatabase(database: DatabaseInstance = db) {
 
   if (!columnExists(database, 'systemConfig', 'imageGenerationConfig')) {
     database.prepare('ALTER TABLE systemConfig ADD COLUMN imageGenerationConfig TEXT').run()
+  }
+
+  if (!columnExists(database, 'imagegenHistory', 'referenceImageIds')) {
+    database.prepare('ALTER TABLE imagegenHistory ADD COLUMN referenceImageIds TEXT').run()
   }
 
   database.exec(`
@@ -173,6 +223,7 @@ export function migrateDatabase(database: DatabaseInstance = db) {
       immichFilename TEXT,
       thumbnailUrl TEXT,
       originalUrl TEXT,
+      referenceImageIds TEXT,
       error TEXT,
       createdAt INTEGER NOT NULL,
       FOREIGN KEY (ownerId) REFERENCES users(id)
@@ -180,6 +231,55 @@ export function migrateDatabase(database: DatabaseInstance = db) {
   `)
 
   database.exec('CREATE INDEX IF NOT EXISTS idx_imagegenHistory_ownerCreatedAt ON imagegenHistory(ownerId, createdAt)')
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS imagegenReferenceAssets (
+      id TEXT PRIMARY KEY,
+      ownerId TEXT NOT NULL,
+      originalFilename TEXT,
+      mimeType TEXT NOT NULL,
+      byteSize INTEGER NOT NULL,
+      storageMode TEXT NOT NULL CHECK (storageMode IN ('local', 'immich')),
+      storageStatus TEXT NOT NULL CHECK (storageStatus IN ('succeeded', 'pendingImmichUpload', 'storageUploadFailed', 'failed')),
+      localAssetId TEXT,
+      immichAssetId TEXT,
+      immichFilename TEXT,
+      thumbnailUrl TEXT NOT NULL,
+      originalUrl TEXT NOT NULL,
+      createdAt INTEGER NOT NULL,
+      FOREIGN KEY (ownerId) REFERENCES users(id)
+    )
+  `)
+
+  database.exec('CREATE INDEX IF NOT EXISTS idx_imagegenReferenceAssets_ownerCreatedAt ON imagegenReferenceAssets(ownerId, createdAt)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_imagegenReferenceAssets_ownerStatus ON imagegenReferenceAssets(ownerId, storageStatus)')
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS imageGenerationFailures (
+      id TEXT PRIMARY KEY,
+      surface TEXT NOT NULL CHECK (surface IN ('work', 'imagegen')),
+      ownerId TEXT NOT NULL,
+      workId TEXT,
+      prompt TEXT NOT NULL,
+      generationPromptSnapshot TEXT NOT NULL,
+      referenceImageIds TEXT,
+      provider TEXT NOT NULL,
+      providerLabel TEXT NOT NULL,
+      modelId TEXT NOT NULL,
+      modelName TEXT NOT NULL,
+      storageMode TEXT NOT NULL CHECK (storageMode IN ('local', 'immich')),
+      storageStatus TEXT NOT NULL CHECK (storageStatus IN ('failed')),
+      status TEXT NOT NULL CHECK (status IN ('failed')),
+      error TEXT NOT NULL,
+      createdAt INTEGER NOT NULL,
+      FOREIGN KEY (ownerId) REFERENCES users(id),
+      FOREIGN KEY (workId) REFERENCES works(id)
+    )
+  `)
+
+  database.exec('CREATE INDEX IF NOT EXISTS idx_imageGenerationFailures_ownerCreatedAt ON imageGenerationFailures(ownerId, createdAt)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_imageGenerationFailures_surfaceCreatedAt ON imageGenerationFailures(surface, createdAt)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_imageGenerationFailures_workCreatedAt ON imageGenerationFailures(workId, createdAt)')
 
   database.prepare("UPDATE users SET role = 'owner' WHERE username = 'admin' AND role = 'admin'").run()
 }

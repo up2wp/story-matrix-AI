@@ -9,6 +9,7 @@ import {
   type ImageGenerationConfig,
   type ImageGenerationProviderConfig,
 } from '../services/image-generation-config.js'
+import { createImageGenerationFailureRecord } from '../services/image-generation-failures.js'
 import {
   extensionForMime,
   immichClientFromConfig,
@@ -811,6 +812,7 @@ router.post('/generate', async (req, res) => {
   const resolved = resolveRunnableImageGenerationModel(config, String(body.modelId || config.defaultModelId))
   if (!resolved.ok) return res.status(resolved.statusCode).json({ error: resolved.error })
   const { provider, model } = resolved
+  const generationPrompt = generationPromptForRequest(prompt, String(body.promptId || ''), viewDirection)
 
   try {
     const work = JSON.parse(access.row.data) as WorkData
@@ -819,7 +821,6 @@ router.post('/generate', async (req, res) => {
     if (referenceImageIds.length > maxReferenceImages) return res.status(400).json({ error: `参考图最多选择 ${maxReferenceImages} 张` })
     const referenceImages: ProviderReferenceImage[] = []
     for (const imageId of referenceImageIds) referenceImages.push(await resolveReferenceImageBytes(workId, work, imageId, config))
-    const generationPrompt = generationPromptForRequest(prompt, String(body.promptId || ''), viewDirection)
     const result = await runImageGeneration({
       config,
       provider,
@@ -838,6 +839,21 @@ router.post('/generate', async (req, res) => {
     })
     return res.status(result.httpStatus).json(result.image)
   } catch (error) {
+    createImageGenerationFailureRecord({
+      surface: 'work',
+      ownerId: request.currentUser.id,
+      workId,
+      prompt,
+      generationPromptSnapshot: generationPrompt,
+      referenceImageIds,
+      provider: model.provider,
+      providerLabel: provider.label,
+      modelId: model.id,
+      modelName: model.label,
+      storageMode: config.storageMode === 'immich' ? 'immich' : 'local',
+      error,
+      config,
+    })
     const message = error instanceof Error ? error.message : '生图请求失败'
     res.status(502).json({ error: message })
   }

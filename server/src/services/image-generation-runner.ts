@@ -9,7 +9,7 @@ import { generateProviderImages, type ProviderReferenceImage } from './image-pro
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const WORK_ASSET_DIR = path.join(__dirname, '..', '..', 'data', 'image-assets')
 const IMAGEGEN_ASSET_DIR = path.join(__dirname, '..', '..', 'data', 'imagegen-assets')
-const MAX_IMAGE_BYTES = 12 * 1024 * 1024
+export const MAX_IMAGE_BYTES = 12 * 1024 * 1024
 const IMMICH_UPLOAD_RETRY_LIMIT = 3
 const IMMICH_THUMBNAIL_READY_ATTEMPTS = 20
 const IMMICH_THUMBNAIL_READY_DELAY_MS = 1500
@@ -103,7 +103,7 @@ export function extensionForMime(mimeType: string) {
   return 'png'
 }
 
-function detectMime(buffer: Buffer) {
+export function detectImageMime(buffer: Buffer) {
   if (buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png'
   if (buffer.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))) return 'image/jpeg'
   if (buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP') return 'image/webp'
@@ -114,9 +114,9 @@ function assetDirectory(namespace: ImageAssetNamespace | undefined) {
   return namespace === 'imagegen' ? IMAGEGEN_ASSET_DIR : WORK_ASSET_DIR
 }
 
-function saveImageAsset(namespace: ImageAssetNamespace | undefined, scopeId: string, buffer: Buffer, publicAssetUrl: ImageGenerationStorageTarget['publicAssetUrl']) {
+export function saveImageAsset(namespace: ImageAssetNamespace | undefined, scopeId: string, buffer: Buffer, publicAssetUrl: ImageGenerationStorageTarget['publicAssetUrl']) {
   if (buffer.length === 0 || buffer.length > MAX_IMAGE_BYTES) throw new Error('图片为空或超过大小限制')
-  const mimeType = detectMime(buffer)
+  const mimeType = detectImageMime(buffer)
   const id = randomUUID()
   const scopeDir = path.join(assetDirectory(namespace), scopeId)
   fs.mkdirSync(scopeDir, { recursive: true })
@@ -134,7 +134,7 @@ export function readLocalImageAsset(scopeId: string, assetId: string, namespace?
   if (!fileName) throw new Error('图片不存在')
   const filePath = path.join(scopeDir, fileName)
   const buffer = fs.readFileSync(filePath)
-  return { buffer, mimeType: detectMime(buffer), filePath }
+  return { buffer, mimeType: detectImageMime(buffer), filePath }
 }
 
 function sleep(ms: number) {
@@ -197,7 +197,7 @@ export async function runImageGeneration(input: ImageGenerationRunnerInput): Pro
   const firstImage = generated[0]
   if (!firstImage) throw new Error('Provider 未返回图片')
   const buffer = firstImage.buffer
-  const mimeType = detectMime(buffer)
+  const mimeType = detectImageMime(buffer)
   const modelSnapshot = imageModelSnapshot(model)
   if (storageMode === 'local') {
     const saved = saveImageAsset(storage.localAssetNamespace, storage.localScopeId, buffer, storage.publicAssetUrl)

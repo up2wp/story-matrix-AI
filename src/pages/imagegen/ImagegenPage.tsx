@@ -7,11 +7,12 @@ import { canUseFeature } from '@/core/feature-permissions'
 import type { FeaturePermissionSources } from '@/core/feature-permissions'
 import ImageModelSelector from '@/features/image-generation/ImageModelSelector'
 import ImageResultGallery from '@/features/image-generation/ImageResultGallery'
-import { ImagegenClientError, imagegenClient } from '@/features/imagegen/imagegenClient'
-import type { ImagegenHistoryResponse } from '@/features/imagegen/imagegenClient'
+import { getImagegenReferenceAssetUrl, ImagegenClientError, imagegenClient } from '@/features/imagegen/imagegenClient'
+import type { ImagegenHistoryResponse, ImagegenReferenceAssetResponse } from '@/features/imagegen/imagegenClient'
 
 const { Paragraph, Text, Title } = Typography
 const EMPTY_HISTORY: ImagegenHistoryResponse[] = []
+const EMPTY_REFERENCE_ASSETS: ImagegenReferenceAssetResponse[] = []
 
 export default function ImagegenPage() {
   const user = useAuthStore(state => state.user)
@@ -26,6 +27,11 @@ export default function ImagegenPage() {
   const [history, setHistory] = useState<ImagegenHistoryResponse[]>([])
   const [historyError, setHistoryError] = useState<string>()
   const [historyLoading, setHistoryLoading] = useState(false)
+  const [referenceAssets, setReferenceAssets] = useState<ImagegenReferenceAssetResponse[]>([])
+  const [referenceImageIds, setReferenceImageIds] = useState<string[]>([])
+  const [referenceAssetsError, setReferenceAssetsError] = useState<string>()
+  const [referenceAssetsLoading, setReferenceAssetsLoading] = useState(false)
+  const [referenceUploading, setReferenceUploading] = useState(false)
   const [generating, setGenerating] = useState(false)
 
   const permissionSources: FeaturePermissionSources = {
@@ -37,9 +43,15 @@ export default function ImagegenPage() {
   const enabledModels = useMemo(() => imageGenerationConfig.models.filter(model => model.enabled), [imageGenerationConfig.models])
   const selectedModelId = modelId || imageGenerationConfig.defaultModelId
   const selectedModel = useMemo(() => enabledModels.find(model => model.id === selectedModelId), [enabledModels, selectedModelId])
+  const maxReferenceImages = selectedModel?.capabilities.referenceImages
+    ? Math.min(3, selectedModel.capabilities.maxReferenceImages || 0)
+    : 0
+  const supportsReferenceImages = maxReferenceImages > 0
   const canGenerate = canUseImagegen && Boolean(selectedModel) && Boolean(prompt.trim()) && !generating
   const visibleHistory = canUseImagegen ? history : EMPTY_HISTORY
   const visibleHistoryError = canUseImagegen ? historyError : undefined
+  const visibleReferenceAssets = canUseImagegen ? referenceAssets : EMPTY_REFERENCE_ASSETS
+  const visibleReferenceAssetsError = canUseImagegen ? referenceAssetsError : undefined
   const galleryImages = useMemo<ImageAssetRecord[]>(() => visibleHistory.map(record => ({
     id: record.id,
     promptId: record.id,
@@ -75,6 +87,18 @@ export default function ImagegenPage() {
     }
   }, [])
 
+  const refreshReferenceAssets = useCallback(async () => {
+    setReferenceAssetsLoading(true)
+    setReferenceAssetsError(undefined)
+    try {
+      setReferenceAssets(await imagegenClient.referenceAssets())
+    } catch (error) {
+      setReferenceAssetsError(error instanceof ImagegenClientError ? error.message : '参考图片加载失败，请稍后重试。')
+    } finally {
+      setReferenceAssetsLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     if (!canUseImagegen) return
     const timeoutId = window.setTimeout(() => {
@@ -82,6 +106,44 @@ export default function ImagegenPage() {
     }, 0)
     return () => window.clearTimeout(timeoutId)
   }, [canUseImagegen, refreshHistory])
+
+  useEffect(() => {
+    if (!canUseImagegen) return
+    const timeoutId = window.setTimeout(() => {
+      void refreshReferenceAssets()
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [canUseImagegen, refreshReferenceAssets])
+
+  useEffect(() => {
+    setReferenceImageIds(current => current.slice(0, maxReferenceImages))
+  }, [maxReferenceImages])
+
+  const handleReferenceUpload = async (file: File | undefined) => {
+    if (!file || !canUseImagegen || !supportsReferenceImages || generating) return
+
+    setReferenceUploading(true)
+    setReferenceAssetsError(undefined)
+    try {
+      const uploadedAsset = await imagegenClient.uploadReferenceAsset(file)
+      setReferenceAssets(current => [uploadedAsset, ...current.filter(asset => asset.id !== uploadedAsset.id)])
+      setReferenceImageIds(current => current.length < maxReferenceImages ? [...current, uploadedAsset.id] : current)
+      message.success('参考图片已上传')
+    } catch (error) {
+      setReferenceAssetsError(error instanceof ImagegenClientError ? error.message : '参考图片上传失败，请稍后重试。')
+    } finally {
+      setReferenceUploading(false)
+    }
+  }
+
+  const handleReferenceSelection = (referenceImageId: string) => {
+    if (!canUseImagegen || !supportsReferenceImages || generating) return
+
+    setReferenceImageIds(current => {
+      if (current.includes(referenceImageId)) return current.filter(id => id !== referenceImageId)
+      return current.length < maxReferenceImages ? [...current, referenceImageId] : current
+    })
+  }
 
   const handleGenerate = async () => {
     if (!selectedModel || !canGenerate) return
@@ -95,6 +157,7 @@ export default function ImagegenPage() {
         ...(quality ? { quality } : {}),
         ...(format ? { format } : {}),
         ...(aspectRatio ? { aspectRatio } : {}),
+        ...(referenceImageIds.length ? { referenceImageIds } : {}),
       })
       setHistory(current => [generated, ...current.filter(record => record.id !== generated.id)])
       message.success('测试图片已生成')
@@ -194,6 +257,48 @@ export default function ImagegenPage() {
                   options={selectedModel.capabilities.aspectRatios.map(value => ({ value, label: value }))}
                 />
               ) : null}
+              <div>
+                <Text strong>参考图片</Text>
+                <Paragraph type="secondary" style={{ margin: '4px 0 8px' }}>
+                  {supportsReferenceImages
+                    ? `可上传并选择最多 ${maxReferenceImages} 张参考图片（已选 ${referenceImageIds.length} 张）。`
+                    : selectedModel ? '当前模型不支持参考图片。' : '请选择支持参考图片的模型。'}
+                </Paragraph>
+                <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                  <Input
+                    type="file"
+                    accept="image/*"
+                    disabled={!canUseImagegen || !supportsReferenceImages || generating || referenceUploading}
+                    onChange={event => {
+                      const file = event.target.files?.[0]
+                      event.target.value = ''
+                      void handleReferenceUpload(file)
+                    }}
+                  />
+                  {visibleReferenceAssetsError ? <Alert type="warning" showIcon message={visibleReferenceAssetsError} /> : null}
+                  {referenceAssetsLoading ? <Spin size="small" /> : visibleReferenceAssets.length ? (
+                    <div className="image-reference-grid">
+                      {visibleReferenceAssets.map(asset => {
+                        const isSelected = referenceImageIds.includes(asset.id)
+                        const isDisabled = !canUseImagegen || !supportsReferenceImages || generating || (!isSelected && referenceImageIds.length >= maxReferenceImages)
+                        return (
+                          <button
+                            key={asset.id}
+                            type="button"
+                            className={`image-reference-option${isSelected ? ' is-selected' : ''}${isDisabled ? ' is-disabled' : ''}`}
+                            disabled={isDisabled}
+                            aria-pressed={isSelected}
+                            onClick={() => handleReferenceSelection(asset.id)}
+                          >
+                            <img src={getImagegenReferenceAssetUrl(asset)} alt="已上传参考图片" />
+                            <span className="image-reference-label">{isSelected ? '已选择' : '选择参考图'}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无已上传参考图片" />}
+                </Space>
+              </div>
               <Button type="primary" loading={generating} disabled={!canGenerate} onClick={handleGenerate}>
                 生成测试图片
               </Button>

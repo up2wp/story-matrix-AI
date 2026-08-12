@@ -2,19 +2,23 @@ import { randomUUID } from 'crypto'
 import { Router } from 'express'
 import db from '../db.js'
 import type { AuthenticatedRequest } from '../middleware/auth.js'
+import { createImagegenReferenceAssetRouter } from './imagegen-reference-assets.js'
 import { defaultImageGenerationConfig, normalizeImageGenerationConfig, type ImageGenerationConfig, type ImageGenerationModelConfig, type ImageGenerationProviderConfig } from '../services/image-generation-config.js'
+import { createImageGenerationFailureRecord } from '../services/image-generation-failures.js'
 import { extensionForMime, immichClientFromConfig, readLocalImageAsset, resolveRunnableImageGenerationModel, runImageGeneration, type ImageAssetVariant, type ImageGenerationRunnerOutput } from '../services/image-generation-runner.js'
+import { resolveImagegenReferenceSelection } from '../services/imagegen-reference-selection.js'
 import { createImagegenHistoryRecord, getImagegenHistoryRecord, listImagegenHistory, type ImagegenHistoryRecord, type ImagegenStorageMode } from '../services/imagegen-history.js'
 
 const router = Router()
 const MAX_TEST_PROMPT_LENGTH = 8000
-const ALLOWED_GENERATE_FIELDS = new Set(['prompt', 'modelId', 'size', 'quality', 'format', 'aspectRatio', 'n'])
+const ALLOWED_GENERATE_FIELDS = new Set(['prompt', 'modelId', 'size', 'quality', 'format', 'aspectRatio', 'n', 'referenceImageIds'])
 
 type FeatureGrant = { readonly userId: string; readonly features?: readonly string[] }
 
 type ResolvedImagegenRun = {
   readonly ownerId: string
   readonly prompt: string
+  readonly referenceImageIds: readonly string[]
   readonly config: ImageGenerationConfig
   readonly provider: ImageGenerationProviderConfig
   readonly model: ImageGenerationModelConfig
@@ -90,14 +94,9 @@ function testImmichFilename(ownerId: string, prompt: string, projectName: string
   ].join('-') + `.${extensionForMime(mimeType)}`
 }
 
-function imagegenAssetUrl(assetId: string, variant?: ImageAssetVariant) {
-  const encoded = encodeURIComponent(assetId)
-  return variant ? `/api/imagegen/assets/${encoded}/${variant}` : `/api/imagegen/assets/${encoded}`
-}
+function imagegenAssetUrl(assetId: string, variant?: ImageAssetVariant) { const encoded = encodeURIComponent(assetId); return variant ? `/api/imagegen/assets/${encoded}/${variant}` : `/api/imagegen/assets/${encoded}` }
 
-function storageMode(config: ImageGenerationConfig): ImagegenStorageMode {
-  return config.storageMode === 'immich' ? 'immich' : 'local'
-}
+function storageMode(config: ImageGenerationConfig): ImagegenStorageMode { return config.storageMode === 'immich' ? 'immich' : 'local' }
 
 function sensitiveValues(config: ImageGenerationConfig) {
   const providerValues = config.providers.flatMap(provider => [provider.apiKey, provider.baseUrl])
@@ -118,6 +117,7 @@ function createSuccessHistoryRecord(input: ImagegenSuccessRecordInput) {
     ownerId: input.ownerId,
     prompt: input.prompt,
     generationPromptSnapshot: input.prompt,
+    referenceImageIds: input.referenceImageIds,
     provider: image.provider,
     providerLabel: input.provider.label,
     modelId: image.modelId,
@@ -140,6 +140,7 @@ function createFailureHistoryRecord(input: ImagegenFailureRecordInput) {
     ownerId: input.ownerId,
     prompt: input.prompt,
     generationPromptSnapshot: input.prompt,
+    referenceImageIds: input.referenceImageIds,
     provider: input.model.provider,
     providerLabel: input.provider.label,
     modelId: input.model.id,
@@ -169,14 +170,15 @@ function serializeHistory(record: ImagegenHistoryRecord) {
     immichFilename: record.immichFilename,
     thumbnailUrl: record.thumbnailUrl,
     originalUrl: record.originalUrl,
+    referenceImageIds: record.referenceImageIds,
     error: record.error,
     createdAt: record.createdAt,
   }
 }
 
-function imageVariant(value: string | undefined): ImageAssetVariant {
-  return value === 'original' ? 'original' : 'thumbnail'
-}
+function imageVariant(value: string | undefined): ImageAssetVariant { return value === 'original' ? 'original' : 'thumbnail' }
+
+router.use('/reference-assets', createImagegenReferenceAssetRouter({ loadImageGenerationConfig, canUseImageGeneration, safeErrorMessage }))
 
 router.get('/history', (req, res) => {
   const request = req as AuthenticatedRequest
@@ -196,7 +198,9 @@ router.post('/generate', async (req, res) => {
   const modelId = typeof body.modelId === 'string' && body.modelId.trim() ? body.modelId.trim() : config.defaultModelId
   const resolved = resolveRunnableImageGenerationModel(config, modelId)
   if (!resolved.ok) return res.status(resolved.statusCode).json({ error: resolved.error })
-  const runContext: ResolvedImagegenRun = { ownerId: request.currentUser.id, prompt: parsedPrompt.prompt, config, provider: resolved.provider, model: resolved.model }
+  const referenceSelection = await resolveImagegenReferenceSelection({ value: body.referenceImageIds, ownerId: request.currentUser.id, config, model: resolved.model })
+  if (!referenceSelection.ok) return res.status(referenceSelection.statusCode).json({ error: referenceSelection.error })
+  const runContext: ResolvedImagegenRun = { ownerId: request.currentUser.id, prompt: parsedPrompt.prompt, referenceImageIds: referenceSelection.ids, config, provider: resolved.provider, model: resolved.model }
 
   try {
     const result = await runImageGeneration({
@@ -205,8 +209,8 @@ router.post('/generate', async (req, res) => {
       model: resolved.model,
       providerPrompt: parsedPrompt.prompt,
       requestBody: generationOptions(body),
-      referenceImages: [],
-      promptSnapshot: { basePromptSnapshot: parsedPrompt.prompt, generationPromptSnapshot: parsedPrompt.prompt, referenceImageIds: [] },
+      referenceImages: referenceSelection.images,
+      promptSnapshot: { basePromptSnapshot: parsedPrompt.prompt, generationPromptSnapshot: parsedPrompt.prompt, referenceImageIds: referenceSelection.ids },
       storage: {
         localScopeId: request.currentUser.id,
         localAssetNamespace: 'imagegen',
@@ -217,6 +221,20 @@ router.post('/generate', async (req, res) => {
     const record = createSuccessHistoryRecord({ ...runContext, image: result.image })
     return res.status(result.httpStatus).json(serializeHistory(record))
   } catch (error) {
+    createImageGenerationFailureRecord({
+      surface: 'imagegen',
+      ownerId: runContext.ownerId,
+      prompt: runContext.prompt,
+      generationPromptSnapshot: runContext.prompt,
+      referenceImageIds: runContext.referenceImageIds,
+      provider: runContext.model.provider,
+      providerLabel: runContext.provider.label,
+      modelId: runContext.model.id,
+      modelName: runContext.model.label,
+      storageMode: storageMode(runContext.config),
+      error,
+      config: runContext.config,
+    })
     const record = createFailureHistoryRecord({ ...runContext, error })
     return res.status(502).json(serializeHistory(record))
   }
