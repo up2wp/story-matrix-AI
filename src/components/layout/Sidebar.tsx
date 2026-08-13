@@ -98,8 +98,8 @@ export default function Sidebar() {
       width={240}
       collapsedWidth={0}
       style={{
-        background: '#fff',
-        borderRight: '1px solid #f0f0f0',
+        background: 'var(--app-sider-background)',
+        borderRight: '1px solid var(--app-border)',
         overflow: 'auto',
         display: 'flex',
         flexDirection: 'column',
@@ -117,7 +117,7 @@ export default function Sidebar() {
         onClick={handleMenuClick}
         style={{ border: 'none', flex: 1 }}
       />
-      <div style={{ padding: '8px 16px', color: '#bfbfbf', fontSize: 12, textAlign: 'center' }}>
+      <div style={{ padding: '8px 16px', color: 'var(--app-text-tertiary)', fontSize: 12, textAlign: 'center' }}>
         版本 {appVersion}
       </div>
     </Sider>

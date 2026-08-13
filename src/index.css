@@ -4,6 +4,27 @@
   box-sizing: border-box;
 }
 
+:root,
+[data-theme='light'] {
+  --app-background: #f5f5f5;
+  --app-surface: #ffffff;
+  --app-sider-background: #ffffff;
+  --app-border: #f0f0f0;
+  --app-text-tertiary: rgba(0, 0, 0, 0.45);
+  --app-code-background: #f5f5f5;
+  --app-code-inline-background: #f0f0f0;
+}
+
+[data-theme='dark'] {
+  --app-background: #000000;
+  --app-surface: #141414;
+  --app-sider-background: #141414;
+  --app-border: #303030;
+  --app-text-tertiary: rgba(255, 255, 255, 0.45);
+  --app-code-background: #1f1f1f;
+  --app-code-inline-background: #262626;
+}
+
 html,
 body,
 #root {
@@ -14,6 +35,7 @@ body,
 
 body {
   overflow: hidden;
+  background: var(--app-background);
 }
 
 /* 修复 Ant Design Sider 内部 margin hack 导致的亚像素溢出滚动条 */
@@ -118,14 +140,14 @@ body {
 
 /* Markdown 渲染样式 */
 .preview-content-card pre {
-  background: #f5f5f5;
+  background: var(--app-code-background);
   padding: 12px 16px;
   border-radius: 6px;
   overflow-x: auto;
   font-size: 14px;
 }
 .preview-content-card code {
-  background: #f0f0f0;
+  background: var(--app-code-inline-background);
   padding: 2px 6px;
   border-radius: 3px;
   font-size: 0.9em;
@@ -135,9 +157,9 @@ body {
   padding: 0;
 }
 .preview-content-card blockquote {
-  border-left: 3px solid #d9d9d9;
+  border-left: 3px solid var(--app-border);
   padding-left: 12px;
-  color: #666;
+  color: var(--app-text-tertiary);
   margin: 8px 0;
 }
 .preview-content-card h1,
@@ -149,7 +171,7 @@ body {
 }
 .preview-content-card hr {
   border: none;
-  border-top: 1px solid #e8e8e8;
+  border-top: 1px solid var(--app-border);
   margin: 16px 0;
 }
 .preview-content-card ul {
@@ -163,12 +185,12 @@ body {
 }
 .preview-content-card th,
 .preview-content-card td {
-  border: 1px solid #d9d9d9;
+  border: 1px solid var(--app-border);
   padding: 6px 12px;
   text-align: left;
 }
 .preview-content-card th {
-  background: #fafafa;
+  background: var(--app-code-inline-background);
   font-weight: 600;
 }
 .image-generation-page {
