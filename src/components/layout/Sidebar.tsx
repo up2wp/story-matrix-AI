@@ -43,12 +43,16 @@ export default function Sidebar() {
   const hasWork = !!currentWork
   const canBackfill = Boolean(currentWork?.chapters?.some(chapter => chapter.content.trim())) && !readOnly && canUseFeature(user, permissionSources, 'importBackfill')
   const canOpenImageGeneration = hasWork && (readOnly || canUseFeature(user, permissionSources, 'imageGeneration'))
+  const canOpenImagegen = imageGenerationEnabled && canUseFeature(user, permissionSources, 'imageGeneration')
   const voiceboxReady = voiceboxConfig.serviceUrl !== 'http://127.0.0.1:17493'
 
   const menuItems = [
     { key: '/works', icon: <AppstoreOutlined />, label: '作品列表' },
     ...(!readOnly
       ? [{ key: '/voices', icon: <CustomerServiceOutlined />, label: '声音管理' }]
+      : []),
+    ...(canOpenImagegen
+      ? [{ key: '/imagegen', icon: <PictureOutlined />, label: '生图测试' }]
       : []),
     ...(hasWork
       ? [

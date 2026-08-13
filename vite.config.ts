@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react'
 import path from 'path'
 import { execSync } from 'child_process'
 
+const IMAGE_GENERATION_PROXY_TIMEOUT_MS = 1200000
+
 function getAppVersion() {
   if (process.env.APP_VERSION) return process.env.APP_VERSION
 
@@ -37,6 +39,8 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:3001',
         changeOrigin: true,
+        proxyTimeout: IMAGE_GENERATION_PROXY_TIMEOUT_MS,
+        timeout: IMAGE_GENERATION_PROXY_TIMEOUT_MS,
       },
     },
   },

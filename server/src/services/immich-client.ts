@@ -12,6 +12,7 @@ export interface ImmichUploadInput {
   buffer: Buffer
   filename: string
   mimeType: string
+  deviceAssetId: string
   albumId?: string
 }
 
@@ -125,7 +126,7 @@ export class ImmichClient {
     const now = new Date().toISOString()
     const arrayBuffer = input.buffer.buffer.slice(input.buffer.byteOffset, input.buffer.byteOffset + input.buffer.byteLength) as ArrayBuffer
     form.append('assetData', new Blob([arrayBuffer], { type: input.mimeType }), input.filename)
-    form.append('deviceAssetId', input.filename)
+    form.append('deviceAssetId', input.deviceAssetId)
     form.append('deviceId', 'story-matrix-ai')
     form.append('fileCreatedAt', now)
     form.append('fileModifiedAt', now)
