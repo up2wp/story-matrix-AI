@@ -117,6 +117,8 @@ function createModelFromCandidate(provider: ImageGenerationProviderConfig, candi
       qualities: candidate.capabilities?.qualities || [],
       formats: candidate.capabilities?.formats || [],
       aspectRatios: candidate.capabilities?.aspectRatios || [],
+      referenceImages: candidate.capabilities?.referenceImages,
+      maxReferenceImages: candidate.capabilities?.maxReferenceImages,
     },
     requestTimeoutMs: DEFAULT_IMAGE_REQUEST_TIMEOUT_MS,
   }
@@ -185,6 +187,8 @@ function serializeCapabilitiesForForm(capabilities: ImageGenerationModelConfig['
     qualities: (capabilities?.qualities || []).join(', '),
     formats: (capabilities?.formats || []).join(', '),
     aspectRatios: (capabilities?.aspectRatios || []).join(', '),
+    referenceImages: capabilities?.referenceImages,
+    maxReferenceImages: capabilities?.maxReferenceImages,
   }
 }
 
@@ -232,6 +236,8 @@ function normalizeImageConfigFromForm(values: ImageGenerationConfig): ImageGener
         qualities: normalizeCapabilityInput(model.capabilities?.qualities),
         formats: normalizeCapabilityInput(model.capabilities?.formats),
         aspectRatios: normalizeCapabilityInput(model.capabilities?.aspectRatios),
+        referenceImages: model.capabilities?.referenceImages,
+        maxReferenceImages: model.capabilities?.maxReferenceImages,
       },
     })
   }
@@ -511,6 +517,8 @@ function ImageGenerationSettings() {
                         <Form.Item {...field} name={[field.name, 'requestTimeoutMs']} label="请求超时（毫秒）" rules={[{ required: true, message: '请输入请求超时' }]} style={{ minWidth: 180, flex: 1, marginBottom: 0 }}>
                           <InputNumber min={1} step={30000} precision={0} style={{ width: '100%' }} />
                         </Form.Item>
+                        <Form.Item {...field} name={[field.name, 'capabilities', 'referenceImages']} valuePropName="checked" hidden><Switch /></Form.Item>
+                        <Form.Item {...field} name={[field.name, 'capabilities', 'maxReferenceImages']} hidden><InputNumber /></Form.Item>
                         <Form.Item {...field} name={[field.name, 'id']} hidden><Input /></Form.Item>
                       </Space>
                     </Space>
