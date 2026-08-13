@@ -116,7 +116,6 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_imagegenReferenceAssets_ownerCreatedAt ON imagegenReferenceAssets(ownerId, createdAt);
   CREATE INDEX IF NOT EXISTS idx_imagegenReferenceAssets_ownerStatus ON imagegenReferenceAssets(ownerId, storageStatus);
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_imagegenReferenceAssets_ownerContentHash ON imagegenReferenceAssets(ownerId, contentHash) WHERE contentHash IS NOT NULL;
 
   CREATE TABLE IF NOT EXISTS imageGenerationFailures (
     id TEXT PRIMARY KEY,
