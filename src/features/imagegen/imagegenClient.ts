@@ -23,10 +23,12 @@ export type ImagegenDeleteHistoryResponse = { readonly deletedCount: number }
 export class ImagegenClientError extends Error {
   readonly name = 'ImagegenClientError'
   readonly status: number
+  readonly imageGenerationPermissionAutoDisabled: boolean
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, imageGenerationPermissionAutoDisabled = false) {
     super(message)
     this.status = status
+    this.imageGenerationPermissionAutoDisabled = imageGenerationPermissionAutoDisabled
   }
 }
 
@@ -35,15 +37,19 @@ function errorMessage(payload: unknown): string | undefined {
   return typeof payload.error === 'string' ? payload.error : undefined
 }
 
-async function responseErrorMessage(response: Response): Promise<string> {
+function autoDisabled(payload: unknown): boolean {
+  return typeof payload === 'object' && payload !== null && 'imageGenerationPermissionAutoDisabled' in payload && payload.imageGenerationPermissionAutoDisabled === true
+}
+
+async function responseError(response: Response): Promise<ImagegenClientError> {
   const responseText = await response.text()
-  if (!responseText) return response.statusText
+  if (!responseText) return new ImagegenClientError(response.status, response.statusText)
 
   try {
     const payload: unknown = JSON.parse(responseText)
-    return errorMessage(payload) || response.statusText
+    return new ImagegenClientError(response.status, errorMessage(payload) || response.statusText, autoDisabled(payload))
   } catch (error) {
-    if (error instanceof SyntaxError) return response.statusText
+    if (error instanceof SyntaxError) return new ImagegenClientError(response.status, response.statusText)
     throw error
   }
 }
@@ -59,7 +65,7 @@ async function request<T>(url: string, init?: RequestInit, json = true): Promise
     headers: { ...requestHeaders(json), ...(init?.headers || {}) },
   })
   if (!response.ok) {
-    throw new ImagegenClientError(response.status, await responseErrorMessage(response))
+    throw await responseError(response)
   }
   return response.json()
 }
@@ -71,7 +77,7 @@ async function requestEmpty(url: string, init?: RequestInit): Promise<void> {
     headers: { ...requestHeaders(), ...(init?.headers || {}) },
   })
   if (!response.ok) {
-    throw new ImagegenClientError(response.status, await responseErrorMessage(response))
+    throw await responseError(response)
   }
 }
 

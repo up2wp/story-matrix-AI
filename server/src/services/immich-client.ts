@@ -1,6 +1,16 @@
 const IMMICH_TIMEOUT_MS = 20000
 const IMMICH_MAX_RESPONSE_BYTES = 12 * 1024 * 1024
 
+export class ImmichRequestTimeoutError extends Error {
+  readonly name = 'ImmichRequestTimeoutError'
+  readonly timeoutMs: number
+
+  constructor(timeoutMs: number, options?: ErrorOptions) {
+    super('Immich 请求超时', options)
+    this.timeoutMs = timeoutMs
+  }
+}
+
 export interface ImmichClientConfig {
   serviceUrl: string
   apiKey: string
@@ -86,6 +96,9 @@ export class ImmichClient {
         signal: controller.signal,
       })
       return response
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') throw new ImmichRequestTimeoutError(IMMICH_TIMEOUT_MS, { cause: error })
+      throw error
     } finally {
       clearTimeout(timeoutId)
     }

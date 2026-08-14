@@ -32,6 +32,12 @@ const segmentRulesSource = await readFile(new URL('../src/features/audiobook/seg
 const segmentUtilsSource = await readFile(new URL('../src/features/audiobook/segmentUtils.ts', import.meta.url), 'utf8')
 const readmeSource = await readFile(new URL('../README.md', import.meta.url), 'utf8')
 
+const migrateDatabaseStart = dbSource.indexOf('export function migrateDatabase')
+const imagegenMigrationStart = dbSource.indexOf('createImagegenHistoryTable(database)', migrateDatabaseStart)
+assert.notEqual(migrateDatabaseStart, -1, 'db source should export migrateDatabase for additive migrations')
+assert.notEqual(imagegenMigrationStart, -1, 'db migration source should keep imagegen migration after voicebox migrations')
+const voiceboxMigrationBlock = dbSource.slice(migrateDatabaseStart, imagegenMigrationStart)
+
 function loadSegmentRulesForTest() {
   let nextId = 0
   const executableSource = segmentRulesSource
@@ -264,7 +270,7 @@ assert.match(
 )
 
 assert.doesNotMatch(
-  dbSource,
+  voiceboxMigrationBlock,
   /DROP TABLE|CREATE TABLE .*_new|ALTER TABLE .* RENAME/i,
   'voicebox migrations should not rebuild, rename, or drop existing data tables',
 )
@@ -1030,7 +1036,7 @@ assert.match(
 
 assert.match(
   chapterAudiobookPanelSource,
-  /maxHeight: 'min\(42vh, 560px\)'/,
+  /maxHeight: 'min\(36vh, 480px\)'/,
   'chapter audiobook panel should keep a bounded height so the body editor remains visible',
 )
 

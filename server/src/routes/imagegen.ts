@@ -1,10 +1,11 @@
 import { randomUUID } from 'crypto'
 import { Router } from 'express'
 import db from '../db.js'
-import type { AuthenticatedRequest } from '../middleware/auth.js'
+import type { AuthenticatedRequest, CurrentUser } from '../middleware/auth.js'
 import { createImagegenReferenceAssetRouter } from './imagegen-reference-assets.js'
-import { defaultImageGenerationConfig, normalizeImageGenerationConfig, type ImageGenerationConfig, type ImageGenerationModelConfig, type ImageGenerationProviderConfig } from '../services/image-generation-config.js'
-import { createImageGenerationFailureRecord } from '../services/image-generation-failures.js'
+import type { ImageGenerationConfig, ImageGenerationModelConfig, ImageGenerationProviderConfig } from '../services/image-generation-config.js'
+import { imagegenHistoryRecordTriggeredAutoDisable } from '../services/image-generation-failures.js'
+import { canUseImageGeneration as sharedCanUseImageGeneration, isImageGenerationAutoDisabled, loadImageGenerationConfig, recordImageGenerationFailureAndMaybeDisable } from '../services/image-generation-access.js'
 import { extensionForMime, immichClientFromConfig, readLocalImageAsset, resolveRunnableImageGenerationModel, runImageGeneration, type ImageAssetVariant, type ImageGenerationRunnerOutput } from '../services/image-generation-runner.js'
 import { parseGenerateRequest, persistGenerateReferenceImages, resolveGenerateReferenceInputs, type ParsedGenerateRequest, type ResolvedGenerateReferenceResult } from '../services/imagegen-generate-references.js'
 import { createImagegenHistoryRecord, deleteImagegenHistoryRecord, deleteImagegenHistoryRecords, getImagegenHistoryRecord, listImagegenHistory, updateImagegenHistoryRecord, type ImagegenHistoryRecord, type ImagegenStorageMode, type UpdateImagegenHistoryRecordInput } from '../services/imagegen-history.js'
@@ -15,10 +16,9 @@ const MAX_TEST_PROMPT_LENGTH = 8000
 const MAX_HISTORY_DELETE_BATCH = 100
 const ALLOWED_GENERATE_FIELDS = new Set(['prompt', 'modelId', 'size', 'quality', 'format', 'aspectRatio', 'n', 'referenceInputs'])
 
-type FeatureGrant = { readonly userId: string; readonly features?: readonly string[] }
-
 type ResolvedImagegenRun = {
   readonly ownerId: string
+  readonly user: CurrentUser
   readonly prompt: string
   readonly referenceImageIds: readonly string[]
   readonly config: ImageGenerationConfig
@@ -41,33 +41,8 @@ type QueuedImagegenRun = {
   readonly requestBody: Record<string, unknown>
 }
 
-function loadImageGenerationConfig(): ImageGenerationConfig {
-  const row = db.prepare('SELECT imageGenerationConfig FROM systemConfig WHERE id = ?').get('singleton') as { imageGenerationConfig?: string } | undefined
-  return normalizeImageGenerationConfig(row?.imageGenerationConfig ? JSON.parse(row.imageGenerationConfig) : defaultImageGenerationConfig())
-}
-
-function isFeatureGrant(value: unknown): value is FeatureGrant {
-  return typeof value === 'object'
-    && value !== null
-    && 'userId' in value
-    && typeof value.userId === 'string'
-    && (!('features' in value) || Array.isArray(value.features))
-}
-
-function loadFeaturePermissions(): readonly FeatureGrant[] {
-  const row = db.prepare('SELECT novelImportConfig FROM systemConfig WHERE id = ?').get('singleton') as { novelImportConfig?: string } | undefined
-  const parsed: unknown = row?.novelImportConfig ? JSON.parse(row.novelImportConfig) : undefined
-  if (typeof parsed !== 'object' || parsed === null || !('featurePermissions' in parsed)) return []
-  const featurePermissions = parsed.featurePermissions
-  if (typeof featurePermissions !== 'object' || featurePermissions === null || !('userGrants' in featurePermissions)) return []
-  return Array.isArray(featurePermissions.userGrants) ? featurePermissions.userGrants.filter(isFeatureGrant) : []
-}
-
 function canUseImageGeneration(request: AuthenticatedRequest, config: ImageGenerationConfig) {
-  const user = request.currentUser
-  if (!user || !config.enabled) return false
-  if (user.role === 'owner' || user.role === 'admin') return true
-  return loadFeaturePermissions().some(grant => grant.userId === user.id && grant.features?.includes('imageGeneration'))
+  return sharedCanUseImageGeneration(request.currentUser, config)
 }
 
 function unsupportedGenerateFields(body: Record<string, unknown>) {
@@ -192,7 +167,12 @@ function referenceImagesForHistory(ownerId: string, history: readonly ImagegenHi
   return new Map(listImagegenReferenceAssetsByIds(ownerId, ids).map(record => [record.id, serializeReferenceImage(record)]))
 }
 
+function imagegenHistoryAutoDisableSignal(record: ImagegenHistoryRecord) {
+  return isImageGenerationAutoDisabled(record.ownerId) && imagegenHistoryRecordTriggeredAutoDisable(record)
+}
+
 function serializeHistory(record: ImagegenHistoryRecord, referenceImagesById: Map<string, ReturnType<typeof serializeReferenceImage>> = new Map()) {
+  const imageGenerationPermissionAutoDisabled = imagegenHistoryAutoDisableSignal(record)
   return {
     id: record.id,
     prompt: record.prompt,
@@ -213,6 +193,7 @@ function serializeHistory(record: ImagegenHistoryRecord, referenceImagesById: Ma
     referenceImageIds: record.referenceImageIds,
     referenceImages: record.referenceImageIds.map(id => referenceImagesById.get(id)).filter((image): image is ReturnType<typeof serializeReferenceImage> => Boolean(image)),
     error: record.error,
+    ...(imageGenerationPermissionAutoDisabled ? { imageGenerationPermissionAutoDisabled: true } : {}),
     createdAt: record.createdAt,
   }
 }
@@ -243,7 +224,7 @@ async function queueImagegenRun(request: AuthenticatedRequest, parsedRequest: Pa
   if (!resolved.ok) return { ok: false, statusCode: resolved.statusCode, error: resolved.error } as const
   const referenceSelection = await resolveGenerateReferenceInputs({ value: body.referenceInputs, files: parsedRequest.files, ownerId: request.currentUser.id, config, model: resolved.model })
   if (!referenceSelection.ok) return { ok: false, statusCode: referenceSelection.statusCode, error: referenceSelection.error } as const
-  const runContext: ResolvedImagegenRun = { ownerId: request.currentUser.id, prompt: parsedPrompt.prompt, referenceImageIds: referenceSelection.ids, config, provider: resolved.provider, model: resolved.model }
+  const runContext: ResolvedImagegenRun = { ownerId: request.currentUser.id, user: request.currentUser, prompt: parsedPrompt.prompt, referenceImageIds: referenceSelection.ids, config, provider: resolved.provider, model: resolved.model }
   const record = createImagegenHistoryRecord({
     ownerId: runContext.ownerId,
     prompt: runContext.prompt,
@@ -295,6 +276,30 @@ async function completeImagegenRun(queued: QueuedImagegenRun) {
       ? { ...result.image, error: safeErrorMessage(finalReferences.error, '参考图持久化失败', runContext.config) }
       : result.image
     const terminalRecord = createSuccessHistoryRecord({ ...runContext, referenceImageIds: finalReferences.ids, image })
+    if (image.storageStatus === 'storageUploadFailed') {
+      db.transaction(() => {
+        recordImageGenerationFailureAndMaybeDisable({
+          id: recordId,
+          surface: 'imagegen',
+          ownerId: runContext.ownerId,
+          prompt: runContext.prompt,
+          generationPromptSnapshot: runContext.prompt,
+          referenceImageIds: finalReferences.ids,
+          provider: runContext.model.provider,
+          providerLabel: runContext.provider.label,
+          modelId: runContext.model.id,
+          modelName: runContext.model.label,
+          storageMode: 'immich',
+          error: new Error(image.error || '图片存储失败'),
+          config: runContext.config,
+          user: runContext.user,
+          countEligible: runContext.user.role === 'user',
+          failureType: 'storage',
+        }, db)
+        updateImagegenHistoryRecord(runContext.ownerId, recordId, { ...terminalRecord }, db)
+      })()
+      return
+    }
     updateImagegenHistoryRecord(runContext.ownerId, recordId, { ...terminalRecord })
   } catch (error) {
     const finalReferences: PersistedGenerateReferences = await persistGenerateReferenceImages(referenceSelection.slots, {
@@ -305,24 +310,30 @@ async function completeImagegenRun(queued: QueuedImagegenRun) {
       immichDeviceAssetId: mimeType => referenceImmichDeviceAssetId(runContext.ownerId, runContext.config.immich?.projectName, mimeType),
     }).catch(referenceError => ({ ids: referenceSelection.ids, error: referenceError } as const))
     const historyError = finalReferences.error
-      ? new Error(`${safeErrorMessage(error, '测试生图失败', runContext.config)}；参考图保存失败：${safeErrorMessage(finalReferences.error, '参考图持久化失败', runContext.config)}`)
+      ? new Error(`${safeErrorMessage(error, '测试生图失败', runContext.config)}；参考图保存失败：${safeErrorMessage(finalReferences.error, '参考图持久化失败', runContext.config)}`, { cause: error })
       : error
-    createImageGenerationFailureRecord({
-      surface: 'imagegen',
-      ownerId: runContext.ownerId,
-      prompt: runContext.prompt,
-      generationPromptSnapshot: runContext.prompt,
-      referenceImageIds: finalReferences.ids,
-      provider: runContext.model.provider,
-      providerLabel: runContext.provider.label,
-      modelId: runContext.model.id,
-      modelName: runContext.model.label,
-      storageMode: storageMode(runContext.config),
-      error: historyError,
-      config: runContext.config,
-    })
     const terminalRecord = createFailureHistoryRecord({ ...runContext, referenceImageIds: finalReferences.ids, error: historyError })
-    updateImagegenHistoryRecord(runContext.ownerId, recordId, { ...terminalRecord })
+    db.transaction(() => {
+      recordImageGenerationFailureAndMaybeDisable({
+        id: recordId,
+        surface: 'imagegen',
+        ownerId: runContext.ownerId,
+        prompt: runContext.prompt,
+        generationPromptSnapshot: runContext.prompt,
+        referenceImageIds: finalReferences.ids,
+        provider: runContext.model.provider,
+        providerLabel: runContext.provider.label,
+        modelId: runContext.model.id,
+        modelName: runContext.model.label,
+        storageMode: storageMode(runContext.config),
+        error: historyError,
+        config: runContext.config,
+        user: runContext.user,
+        countEligible: runContext.user.role === 'user',
+        fallbackFailureType: 'provider',
+      }, db)
+      updateImagegenHistoryRecord(runContext.ownerId, recordId, { ...terminalRecord }, db)
+    })()
   }
 }
 

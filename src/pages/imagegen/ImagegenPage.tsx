@@ -12,7 +12,6 @@ import { ImagegenClientError, imagegenClient } from '@/features/imagegen/imagege
 import type { ImagegenHistoryResponse, ImagegenReferenceInput } from '@/features/imagegen/imagegenClient'
 
 const { Paragraph, Text, Title } = Typography
-const EMPTY_HISTORY: ImagegenHistoryResponse[] = []
 const HISTORY_POLL_INTERVAL_MS = 3000
 
 type ReferenceSlot = { readonly file: File; readonly previewUrl: string }
@@ -21,6 +20,7 @@ export default function ImagegenPage() {
   const user = useAuthStore((state) => state.user)
   const novelImportConfig = useSystemConfigStore((state) => state.novelImportConfig)
   const imageGenerationConfig = useSystemConfigStore((state) => state.imageGenerationConfig)
+  const loadConfig = useSystemConfigStore((state) => state.loadConfig)
   const [prompt, setPrompt] = useState('')
   const [modelId, setModelId] = useState('')
   const [size, setSize] = useState<string>()
@@ -37,6 +37,7 @@ export default function ImagegenPage() {
   const [storedReferenceSlots, setReferenceSlots] = useState<readonly ReferenceSlot[]>([])
   const [submitting, setSubmitting] = useState(false)
   const referenceSlotsRef = useRef<readonly ReferenceSlot[]>([])
+  const autoDisabledNotifiedRef = useRef(false)
 
   const permissionSources: FeaturePermissionSources = {
     novelImportConfig,
@@ -50,8 +51,8 @@ export default function ImagegenPage() {
   const maxReferenceImages = selectedModel?.capabilities.referenceImages ? Math.min(3, selectedModel.capabilities.maxReferenceImages || 0) : 0
   const supportsReferenceImages = maxReferenceImages > 0
   const canGenerate = canUseImagegen && Boolean(selectedModel) && Boolean(prompt.trim()) && !submitting
-  const visibleHistory = canUseImagegen ? history : EMPTY_HISTORY
-  const visibleHistoryError = canUseImagegen ? historyError : undefined
+  const visibleHistory = history
+  const visibleHistoryError = historyError
   const hasGeneratingHistory = visibleHistory.some((record) => record.status === 'generating')
   const selectedReferenceSlots = useMemo(() => storedReferenceSlots.slice(0, maxReferenceImages), [maxReferenceImages, storedReferenceSlots])
   const selectedReferenceCount = selectedReferenceSlots.length
@@ -81,17 +82,30 @@ export default function ImagegenPage() {
     [visibleHistory],
   )
 
+  const handleImageGenerationAutoDisabled = useCallback(async () => {
+    await loadConfig()
+    if (autoDisabledNotifiedRef.current) return
+    autoDisabledNotifiedRef.current = true
+    message.warning('多次非超时生图失败后，当前账号的生图权限已自动关闭，请联系管理员恢复。')
+  }, [loadConfig])
+
   const refreshHistory = useCallback(async (options?: { readonly silent?: boolean }) => {
     if (!options?.silent) setHistoryLoading(true)
     setHistoryError(undefined)
     try {
-      setHistory(await imagegenClient.history())
+      const nextHistory = await imagegenClient.history()
+      setHistory(nextHistory)
+      if (nextHistory.some((record) => record.imageGenerationPermissionAutoDisabled)) await handleImageGenerationAutoDisabled()
     } catch (error) {
       setHistoryError(error instanceof ImagegenClientError ? error.message : '测试历史加载失败，请稍后重试。')
     } finally {
       if (!options?.silent) setHistoryLoading(false)
     }
-  }, [])
+  }, [handleImageGenerationAutoDisabled])
+
+  useEffect(() => {
+    if (canUseImagegen) autoDisabledNotifiedRef.current = false
+  }, [canUseImagegen])
 
   useEffect(() => {
     if (!canUseImagegen) return
@@ -179,7 +193,15 @@ export default function ImagegenPage() {
       setHistory((current) => [queued, ...current.filter((record) => record.id !== queued.id)])
       message.success('测试图片已开始生成')
     } catch (error) {
-      message.error(error instanceof ImagegenClientError ? error.message : '测试图片生成失败，请稍后重试。')
+      if (error instanceof ImagegenClientError) {
+        if (error.imageGenerationPermissionAutoDisabled) await handleImageGenerationAutoDisabled()
+        else {
+          if (error.status === 403) await loadConfig()
+          message.error(error.message)
+        }
+      } else {
+        message.error('测试图片生成失败，请稍后重试。')
+      }
     } finally {
       setSubmitting(false)
     }
@@ -227,7 +249,15 @@ export default function ImagegenPage() {
       setHistory((current) => [rerun, ...current.filter((record) => record.id !== rerun.id)])
       message.success('已按历史记录再次生成')
     } catch (error) {
-      message.error(error instanceof ImagegenClientError ? error.message : '再次生成失败，请稍后重试。')
+      if (error instanceof ImagegenClientError) {
+        if (error.imageGenerationPermissionAutoDisabled) await handleImageGenerationAutoDisabled()
+        else {
+          if (error.status === 403) await loadConfig()
+          message.error(error.message)
+        }
+      } else {
+        message.error('再次生成失败，请稍后重试。')
+      }
     } finally {
       setRerunningHistoryId(null)
     }
@@ -242,7 +272,7 @@ export default function ImagegenPage() {
   } else if (!canUseImagegen) {
     availabilityAlert = {
       message: '当前账号未授权生图',
-      description: '请联系管理员为你的账号开启生图权限。',
+      description: '请联系管理员为你的账号开启或恢复生图权限。',
     }
   } else if (enabledModels.length === 0) {
     availabilityAlert = {

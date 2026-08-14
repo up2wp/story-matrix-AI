@@ -34,6 +34,40 @@ export interface ImageGenerateResponse {
   viewDirection?: ImageViewDirection
   referenceImageIds?: string[]
   error?: string
+  imageGenerationPermissionAutoDisabled?: true
+}
+
+export class ImageGenerationClientError extends Error {
+  readonly name = 'ImageGenerationClientError'
+  readonly status: number
+  readonly imageGenerationPermissionAutoDisabled: boolean
+
+  constructor(status: number, message: string, imageGenerationPermissionAutoDisabled = false) {
+    super(message)
+    this.status = status
+    this.imageGenerationPermissionAutoDisabled = imageGenerationPermissionAutoDisabled
+  }
+}
+
+function errorMessage(payload: unknown): string | undefined {
+  if (typeof payload !== 'object' || payload === null || !('error' in payload)) return undefined
+  return typeof payload.error === 'string' ? payload.error : undefined
+}
+
+function autoDisabled(payload: unknown): boolean {
+  return typeof payload === 'object' && payload !== null && 'imageGenerationPermissionAutoDisabled' in payload && payload.imageGenerationPermissionAutoDisabled === true
+}
+
+async function responseError(response: Response): Promise<ImageGenerationClientError> {
+  const responseText = await response.text()
+  if (!responseText) return new ImageGenerationClientError(response.status, response.statusText)
+  try {
+    const payload: unknown = JSON.parse(responseText)
+    return new ImageGenerationClientError(response.status, errorMessage(payload) || response.statusText, autoDisabled(payload))
+  } catch (error) {
+    if (error instanceof SyntaxError) return new ImageGenerationClientError(response.status, response.statusText)
+    throw error
+  }
 }
 
 export interface ImageCandidateRequest {
@@ -81,8 +115,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
   })
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: response.statusText }))
-    throw new Error(error.error || response.statusText)
+    throw await responseError(response)
   }
   return response.json()
 }
