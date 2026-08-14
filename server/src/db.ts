@@ -16,6 +16,63 @@ const db = new Database(DB_PATH)
 db.pragma('journal_mode = WAL')
 db.pragma('foreign_keys = ON')
 
+const IMAGEGEN_HISTORY_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS imagegenHistory (
+    id TEXT PRIMARY KEY,
+    ownerId TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    generationPromptSnapshot TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    providerLabel TEXT NOT NULL,
+    modelId TEXT NOT NULL,
+    modelName TEXT NOT NULL,
+    mimeType TEXT,
+    storageMode TEXT NOT NULL CHECK (storageMode IN ('local', 'immich')),
+    storageStatus TEXT NOT NULL CHECK (storageStatus IN ('generating', 'succeeded', 'pendingImmichUpload', 'storageUploadFailed', 'failed')),
+    status TEXT NOT NULL CHECK (status IN ('generating', 'succeeded', 'pendingImmichUpload', 'storageUploadFailed', 'failed')),
+    localAssetId TEXT,
+    immichAssetId TEXT,
+    immichFilename TEXT,
+    thumbnailUrl TEXT,
+    originalUrl TEXT,
+    referenceImageIds TEXT,
+    error TEXT,
+    createdAt INTEGER NOT NULL,
+    FOREIGN KEY (ownerId) REFERENCES users(id)
+  )
+`
+
+const IMAGEGEN_HISTORY_COLUMNS = [
+  'id',
+  'ownerId',
+  'prompt',
+  'generationPromptSnapshot',
+  'provider',
+  'providerLabel',
+  'modelId',
+  'modelName',
+  'mimeType',
+  'storageMode',
+  'storageStatus',
+  'status',
+  'localAssetId',
+  'immichAssetId',
+  'immichFilename',
+  'thumbnailUrl',
+  'originalUrl',
+  'referenceImageIds',
+  'error',
+  'createdAt',
+] as const
+
+function createImagegenHistoryTable(database: DatabaseInstance, tableName = 'imagegenHistory') {
+  database.exec(IMAGEGEN_HISTORY_TABLE_SQL.replace('CREATE TABLE IF NOT EXISTS imagegenHistory', `CREATE TABLE IF NOT EXISTS ${tableName}`))
+}
+
+function createImagegenHistoryIndexes(database: DatabaseInstance) {
+  database.exec('CREATE INDEX IF NOT EXISTS idx_imagegenHistory_ownerCreatedAt ON imagegenHistory(ownerId, createdAt)')
+}
+
 // 创建表
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
@@ -25,7 +82,8 @@ db.exec(`
     displayName TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'user',
     createdAt INTEGER NOT NULL,
-    deletedAt INTEGER
+    deletedAt INTEGER,
+    themePreference TEXT NOT NULL DEFAULT 'system'
   );
 
   CREATE TABLE IF NOT EXISTS works (
@@ -70,32 +128,6 @@ db.exec(`
     FOREIGN KEY (ownerId) REFERENCES users(id)
   );
 
-  CREATE TABLE IF NOT EXISTS imagegenHistory (
-    id TEXT PRIMARY KEY,
-    ownerId TEXT NOT NULL,
-    prompt TEXT NOT NULL,
-    generationPromptSnapshot TEXT NOT NULL,
-    provider TEXT NOT NULL,
-    providerLabel TEXT NOT NULL,
-    modelId TEXT NOT NULL,
-    modelName TEXT NOT NULL,
-    mimeType TEXT,
-    storageMode TEXT NOT NULL CHECK (storageMode IN ('local', 'immich')),
-    storageStatus TEXT NOT NULL CHECK (storageStatus IN ('succeeded', 'pendingImmichUpload', 'storageUploadFailed', 'failed')),
-    status TEXT NOT NULL CHECK (status IN ('succeeded', 'pendingImmichUpload', 'storageUploadFailed', 'failed')),
-    localAssetId TEXT,
-    immichAssetId TEXT,
-    immichFilename TEXT,
-    thumbnailUrl TEXT,
-    originalUrl TEXT,
-    referenceImageIds TEXT,
-    error TEXT,
-    createdAt INTEGER NOT NULL,
-    FOREIGN KEY (ownerId) REFERENCES users(id)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_imagegenHistory_ownerCreatedAt ON imagegenHistory(ownerId, createdAt);
-
   CREATE TABLE IF NOT EXISTS imagegenReferenceAssets (
     id TEXT PRIMARY KEY,
     ownerId TEXT NOT NULL,
@@ -133,6 +165,10 @@ db.exec(`
     storageStatus TEXT NOT NULL CHECK (storageStatus IN ('failed')),
     status TEXT NOT NULL CHECK (status IN ('failed')),
     error TEXT NOT NULL,
+    failureType TEXT,
+    countsTowardAutoDisable INTEGER,
+    autoDisableTriggeredAt INTEGER,
+    riskControlAudit TEXT,
     createdAt INTEGER NOT NULL,
     FOREIGN KEY (ownerId) REFERENCES users(id),
     FOREIGN KEY (workId) REFERENCES works(id)
@@ -151,15 +187,52 @@ db.exec(`
   );
 `)
 
+createImagegenHistoryTable(db)
+createImagegenHistoryIndexes(db)
+
 function columnExists(database: DatabaseInstance, table: string, column: string): boolean {
   return database.prepare(`PRAGMA table_info(${table})`).all().some((row) => {
     return typeof row === 'object' && row !== null && 'name' in row && row.name === column
   })
 }
 
+function imagegenHistoryAllowsGenerating(database: DatabaseInstance): boolean {
+  const row = database.prepare("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'imagegenHistory'").get() as { sql?: string } | undefined
+  return Boolean(row?.sql?.includes('generating'))
+}
+
+function rebuildImagegenHistoryForGenerating(database: DatabaseInstance) {
+  const columns = IMAGEGEN_HISTORY_COLUMNS.join(', ')
+  const rebuild = database.transaction(() => {
+    database.exec('DROP TABLE IF EXISTS imagegenHistory_new')
+    createImagegenHistoryTable(database, 'imagegenHistory_new')
+    database.exec(`
+      INSERT INTO imagegenHistory_new (${columns})
+      SELECT ${columns}
+      FROM imagegenHistory
+    `)
+    database.exec('DROP TABLE imagegenHistory')
+    database.exec('ALTER TABLE imagegenHistory_new RENAME TO imagegenHistory')
+    createImagegenHistoryIndexes(database)
+  })
+
+  const foreignKeys = database.pragma('foreign_keys', { simple: true })
+  database.pragma('foreign_keys = OFF')
+  try {
+    rebuild()
+    database.pragma('foreign_key_check')
+  } finally {
+    database.pragma(`foreign_keys = ${foreignKeys ? 'ON' : 'OFF'}`)
+  }
+}
+
 export function migrateDatabase(database: DatabaseInstance = db) {
   if (!columnExists(database, 'users', 'deletedAt')) {
     database.prepare('ALTER TABLE users ADD COLUMN deletedAt INTEGER').run()
+  }
+
+  if (!columnExists(database, 'users', 'themePreference')) {
+    database.prepare("ALTER TABLE users ADD COLUMN themePreference TEXT NOT NULL DEFAULT 'system'").run()
   }
 
   if (!columnExists(database, 'systemConfig', 'voiceboxConfig')) {
@@ -209,33 +282,11 @@ export function migrateDatabase(database: DatabaseInstance = db) {
     )
   `)
 
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS imagegenHistory (
-      id TEXT PRIMARY KEY,
-      ownerId TEXT NOT NULL,
-      prompt TEXT NOT NULL,
-      generationPromptSnapshot TEXT NOT NULL,
-      provider TEXT NOT NULL,
-      providerLabel TEXT NOT NULL,
-      modelId TEXT NOT NULL,
-      modelName TEXT NOT NULL,
-      mimeType TEXT,
-      storageMode TEXT NOT NULL CHECK (storageMode IN ('local', 'immich')),
-      storageStatus TEXT NOT NULL CHECK (storageStatus IN ('succeeded', 'pendingImmichUpload', 'storageUploadFailed', 'failed')),
-      status TEXT NOT NULL CHECK (status IN ('succeeded', 'pendingImmichUpload', 'storageUploadFailed', 'failed')),
-      localAssetId TEXT,
-      immichAssetId TEXT,
-      immichFilename TEXT,
-      thumbnailUrl TEXT,
-      originalUrl TEXT,
-      referenceImageIds TEXT,
-      error TEXT,
-      createdAt INTEGER NOT NULL,
-      FOREIGN KEY (ownerId) REFERENCES users(id)
-    )
-  `)
-
-  database.exec('CREATE INDEX IF NOT EXISTS idx_imagegenHistory_ownerCreatedAt ON imagegenHistory(ownerId, createdAt)')
+  createImagegenHistoryTable(database)
+  if (!imagegenHistoryAllowsGenerating(database)) {
+    rebuildImagegenHistoryForGenerating(database)
+  }
+  createImagegenHistoryIndexes(database)
 
   database.exec(`
     CREATE TABLE IF NOT EXISTS imagegenReferenceAssets (
@@ -278,13 +329,34 @@ export function migrateDatabase(database: DatabaseInstance = db) {
       storageStatus TEXT NOT NULL CHECK (storageStatus IN ('failed')),
       status TEXT NOT NULL CHECK (status IN ('failed')),
       error TEXT NOT NULL,
+      failureType TEXT,
+      countsTowardAutoDisable INTEGER,
+      autoDisableTriggeredAt INTEGER,
+      riskControlAudit TEXT,
       createdAt INTEGER NOT NULL,
       FOREIGN KEY (ownerId) REFERENCES users(id),
       FOREIGN KEY (workId) REFERENCES works(id)
     )
   `)
 
+  if (!columnExists(database, 'imageGenerationFailures', 'failureType')) {
+    database.prepare('ALTER TABLE imageGenerationFailures ADD COLUMN failureType TEXT').run()
+  }
+
+  if (!columnExists(database, 'imageGenerationFailures', 'countsTowardAutoDisable')) {
+    database.prepare('ALTER TABLE imageGenerationFailures ADD COLUMN countsTowardAutoDisable INTEGER').run()
+  }
+
+  if (!columnExists(database, 'imageGenerationFailures', 'autoDisableTriggeredAt')) {
+    database.prepare('ALTER TABLE imageGenerationFailures ADD COLUMN autoDisableTriggeredAt INTEGER').run()
+  }
+
+  if (!columnExists(database, 'imageGenerationFailures', 'riskControlAudit')) {
+    database.prepare('ALTER TABLE imageGenerationFailures ADD COLUMN riskControlAudit TEXT').run()
+  }
+
   database.exec('CREATE INDEX IF NOT EXISTS idx_imageGenerationFailures_ownerCreatedAt ON imageGenerationFailures(ownerId, createdAt)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_imageGenerationFailures_ownerRiskWindow ON imageGenerationFailures(ownerId, countsTowardAutoDisable, createdAt)')
   database.exec('CREATE INDEX IF NOT EXISTS idx_imageGenerationFailures_surfaceCreatedAt ON imageGenerationFailures(surface, createdAt)')
   database.exec('CREATE INDEX IF NOT EXISTS idx_imageGenerationFailures_workCreatedAt ON imageGenerationFailures(workId, createdAt)')
 

@@ -169,6 +169,7 @@ export interface VoiceboxConfig {
 export interface NovelImportConfig {
   enabled: boolean
   featurePermissions?: FeaturePermissionConfig
+  riskControls?: ImageGenerationRiskControls
 }
 
 export type ImageProviderType = 'openai' | 'openai-compatible' | 'custom' | 'minimax'
@@ -214,7 +215,28 @@ export interface ImageGenerationModelConfig {
 
 export type ImageStorageMode = 'local' | 'immich'
 export type ImageStorageStatus = 'succeeded' | 'pendingImmichUpload' | 'storageUploadFailed' | 'failed'
-export type ImagegenHistoryStatus = ImageStorageStatus
+export type ImagegenHistoryStatus = ImageStorageStatus | 'generating'
+export type ImageGenerationFailureSurface = 'work' | 'imagegen'
+export type ImageGenerationFailureType = 'timeout' | 'provider' | 'storage' | 'contentPolicy' | 'configuration' | 'unknown'
+
+export interface ImageGenerationRiskUserState {
+  userId: string
+  baselineAt?: number
+  autoDisabledAt?: number
+  autoDisabledByFailureId?: string
+  autoDisabledSurface?: ImageGenerationFailureSurface
+  autoDisabledFailureType?: ImageGenerationFailureType
+  recoveredAt?: number
+  recoveredByUserId?: string
+}
+
+export interface ImageGenerationRiskControlConfig {
+  userStates: ImageGenerationRiskUserState[]
+}
+
+export interface ImageGenerationRiskControls {
+  imageGeneration?: ImageGenerationRiskControlConfig
+}
 
 export interface ImagegenReferenceImageSummary {
   id: string
@@ -233,7 +255,7 @@ export interface ImagegenHistoryRecord {
   modelName: string
   mimeType?: string
   storageMode: ImageStorageMode
-  storageStatus: ImageStorageStatus
+  storageStatus: ImagegenHistoryStatus
   status: ImagegenHistoryStatus
   localAssetId?: string
   immichAssetId?: string
@@ -243,6 +265,7 @@ export interface ImagegenHistoryRecord {
   referenceImageIds: string[]
   referenceImages?: ImagegenReferenceImageSummary[]
   error?: string
+  imageGenerationPermissionAutoDisabled?: true
   createdAt: number
 }
 
@@ -553,6 +576,8 @@ export interface AIModelConfig {
 
 // --- 用户 ---
 
+export type ThemePreference = 'system' | 'light' | 'dark'
+
 export interface User {
   id: string
   username: string
@@ -561,6 +586,10 @@ export interface User {
   role: 'owner' | 'admin' | 'user'
   createdAt: number
   deletedAt?: number | null
+}
+
+export interface AuthenticatedUser extends User {
+  themePreference: ThemePreference
 }
 
 // --- 系统配置 ---

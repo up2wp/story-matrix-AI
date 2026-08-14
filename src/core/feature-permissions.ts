@@ -1,4 +1,4 @@
-import type { FeatureKey, FeaturePermissionConfig, ImageGenerationConfig, NovelImportConfig, User } from './types'
+import type { FeatureKey, FeaturePermissionConfig, ImageGenerationConfig, ImageGenerationFailureType, ImageGenerationRiskControls, ImageGenerationRiskUserState, NovelImportConfig, User } from './types'
 
 export type FeaturePermissionSources = {
   readonly novelImportConfig: NovelImportConfig
@@ -13,6 +13,46 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
 
 export const ALL_FEATURE_KEYS: FeatureKey[] = ['novelImport', 'importBackfill', 'imageGeneration']
 
+function isFeatureKey(value: unknown): value is FeatureKey {
+  return ALL_FEATURE_KEYS.some(feature => feature === value)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function isImageGenerationFailureType(value: unknown): value is ImageGenerationFailureType {
+  return value === 'timeout' || value === 'provider' || value === 'storage' || value === 'contentPolicy' || value === 'configuration' || value === 'unknown'
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function normalizeRiskUserState(state: unknown): ImageGenerationRiskUserState | undefined {
+  if (!isRecord(state) || typeof state.userId !== 'string' || !state.userId.trim()) return undefined
+  const autoDisabledSurface = state.autoDisabledSurface === 'work' || state.autoDisabledSurface === 'imagegen' ? state.autoDisabledSurface : undefined
+  const autoDisabledFailureType = isImageGenerationFailureType(state.autoDisabledFailureType) ? state.autoDisabledFailureType : undefined
+  return {
+    userId: state.userId,
+    baselineAt: numberValue(state.baselineAt),
+    autoDisabledAt: numberValue(state.autoDisabledAt),
+    autoDisabledByFailureId: typeof state.autoDisabledByFailureId === 'string' ? state.autoDisabledByFailureId : undefined,
+    autoDisabledSurface,
+    autoDisabledFailureType,
+    recoveredAt: numberValue(state.recoveredAt),
+    recoveredByUserId: typeof state.recoveredByUserId === 'string' ? state.recoveredByUserId : undefined,
+  }
+}
+
+function normalizeRiskControls(riskControls?: unknown): ImageGenerationRiskControls | undefined {
+  if (!isRecord(riskControls)) return undefined
+  const imageGenerationConfig = isRecord(riskControls.imageGeneration) ? riskControls.imageGeneration : undefined
+  const userStates = Array.isArray(imageGenerationConfig?.userStates) ? imageGenerationConfig.userStates : []
+  const imageGeneration = userStates.map(normalizeRiskUserState).filter((state): state is ImageGenerationRiskUserState => Boolean(state))
+  return imageGeneration.length > 0 ? { imageGeneration: { userStates: imageGeneration } } : undefined
+}
+
 export function normalizeFeaturePermissionConfig(config?: FeaturePermissionConfig): FeaturePermissionConfig {
   const grants = config?.userGrants ?? []
   return {
@@ -20,7 +60,7 @@ export function normalizeFeaturePermissionConfig(config?: FeaturePermissionConfi
       .filter(grant => typeof grant.userId === 'string' && grant.userId.trim())
       .map(grant => ({
         userId: grant.userId,
-        features: Array.from(new Set((grant.features ?? []).filter((feature): feature is FeatureKey => ALL_FEATURE_KEYS.includes(feature as FeatureKey)))),
+        features: Array.from(new Set((grant.features ?? []).filter(isFeatureKey))),
       }))
       .filter(grant => grant.features.length > 0),
   }
@@ -30,6 +70,7 @@ export function normalizeNovelImportConfig(config?: Partial<NovelImportConfig>):
   return {
     enabled: Boolean(config?.enabled),
     featurePermissions: normalizeFeaturePermissionConfig(config?.featurePermissions),
+    riskControls: normalizeRiskControls(config?.riskControls),
   }
 }
 

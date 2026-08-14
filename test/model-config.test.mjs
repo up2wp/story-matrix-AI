@@ -9,6 +9,7 @@ const systemConfigRoute = await readFile(new URL('../server/src/routes/system-co
 const imageConfigService = await readFile(new URL('../server/src/services/image-generation-config.ts', import.meta.url), 'utf8')
 const systemConfigStore = await readFile(new URL('../src/core/system-config-store.ts', import.meta.url), 'utf8')
 const featurePermissionsSource = await readFile(new URL('../src/core/feature-permissions.ts', import.meta.url), 'utf8')
+const imageGenerationAccessSource = await readFile(new URL('../server/src/services/image-generation-access.ts', import.meta.url), 'utf8')
 
 function functionBody(source, name) {
   const start = source.indexOf(`function ${name}`)
@@ -107,9 +108,45 @@ assert.match(
 )
 
 assert.match(
+  imageGenerationAccessSource,
+  /function normalizeFeatureGrant[\s\S]*const features = featureList\(value\.features\)[\s\S]*function normalizeFeaturePermissionConfig[\s\S]*userGrants: grants\.map\(normalizeFeatureGrant\)[\s\S]*export function normalizeNovelImportConfig[\s\S]*featurePermissions: normalizeFeaturePermissionConfig/,
+  'shared novel import config service should normalize extensible user feature grants before storing them',
+)
+
+assert.match(
   systemConfigRoute,
-  /normalizeNovelImportConfig[\s\S]*featurePermissions[\s\S]*userGrants/,
-  'system config route should normalize extensible user feature grants before storing them',
+  /rowToConfig\(row: any, includeAI = false, userId\?: string\)[\s\S]*safeNovelImportConfig = includeAI \? novelImportConfig : maskNovelImportConfigForUser\(novelImportConfig, userId\)[\s\S]*novelImportConfig: safeNovelImportConfig/,
+  'system config route should mask novel import config by role and current user id',
+)
+
+assert.match(
+  imageGenerationAccessSource,
+  /export function maskNovelImportConfigForUser[\s\S]*const userGrants = userId \? normalized\.featurePermissions\.userGrants\.filter\(grant => grant\.userId === userId\) : \[\][\s\S]*return \{ enabled: normalized\.enabled, featurePermissions: \{ userGrants \} \}/,
+  'ordinary system config responses should keep only current-user grants and omit image generation risk-control metadata',
+)
+
+assert.match(
+  systemConfigRoute,
+  /prepareNovelImportConfigForAdminSave\(\{ incoming: novelImportConfig, actorUserId: currentUser\.id \}\)[\s\S]*prepareNovelImportConfigForAdminSave\(\{ incoming: fields\.novelImportConfig, actorUserId: currentUser\.id, database: db \}\)/,
+  'admin system config saves should route novel import permissions through recovery-baseline preparation',
+)
+
+assert.match(
+  systemConfigRoute,
+  /const updateConfig = db\.transaction\(\(\) => \{[\s\S]*prepareNovelImportConfigForAdminSave\(\{ incoming: fields\.novelImportConfig, actorUserId: currentUser\.id, database: db \}\)[\s\S]*UPDATE systemConfig SET[\s\S]*SELECT \* FROM systemConfig WHERE id = \?/,
+  'admin system config PATCH should prepare recovery baselines and write the config inside one database transaction',
+)
+
+assert.match(
+  systemConfigStore,
+  /type SystemConfigResponse = \{[\s\S]*readonly novelImportConfig\?: NovelImportConfig[\s\S]*function normalizeSavedNovelImportConfig[\s\S]*response\?\.novelImportConfig \|\| fallback/,
+  'browser config store should accept the backend novel import config returned after permission saves',
+)
+
+assert.match(
+  systemConfigStore,
+  /toggleNovelImport[\s\S]*const savedConfig = await db\.systemConfig\.update\('singleton', \{ novelImportConfig \}\)[\s\S]*normalizeSavedNovelImportConfig\(savedConfig, novelImportConfig\)[\s\S]*saveNovelImportConfig[\s\S]*const savedConfig = await db\.systemConfig\.update\('singleton', \{ novelImportConfig \}\)[\s\S]*normalizeSavedNovelImportConfig\(savedConfig, novelImportConfig\)/,
+  'browser config store should use the server-returned novel import config so risk-control baselines survive saves',
 )
 
 assert.match(

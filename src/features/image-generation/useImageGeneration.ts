@@ -6,7 +6,7 @@ import { useStore } from '@/core/store'
 import { useSystemConfigStore } from '@/core/system-config-store'
 import type { ImagePromptSubjectContext } from './promptContext'
 import { emptyVisualAssets, visualAssetDelta } from './visualAssetState'
-import { imageGenerationClient } from './imageGenerationClient'
+import { ImageGenerationClientError, imageGenerationClient } from './imageGenerationClient'
 
 function now() {
   return Date.now()
@@ -62,6 +62,7 @@ export function useImageGeneration() {
   const currentWork = useStore(state => state.currentWork)
   const setCurrentWork = useStore(state => state.setCurrentWork)
   const imageGenerationConfig = useSystemConfigStore(state => state.imageGenerationConfig)
+  const loadConfig = useSystemConfigStore(state => state.loadConfig)
   const [generatingPromptId, setGeneratingPromptId] = useState<string | null>(null)
   const [generatingImagePromptId, setGeneratingImagePromptId] = useState<string | null>(null)
 
@@ -165,7 +166,17 @@ export function useImageGeneration() {
       return image
     } catch (error) {
       await upsertPrompt({ ...record, status: 'imageFailed', error: error instanceof Error ? error.message : '图片生成失败', updatedAt: now() })
-      message.error(error instanceof Error ? error.message : '图片生成失败')
+      if (error instanceof ImageGenerationClientError) {
+        if (error.imageGenerationPermissionAutoDisabled) {
+          await loadConfig()
+          message.warning('多次非超时生图失败后，当前账号的生图权限已自动关闭，请联系管理员恢复。')
+        } else {
+          if (error.status === 403) await loadConfig()
+          message.error(error.message)
+        }
+      } else {
+        message.error(error instanceof Error ? error.message : '图片生成失败')
+      }
       return undefined
     } finally {
       setGeneratingImagePromptId(null)

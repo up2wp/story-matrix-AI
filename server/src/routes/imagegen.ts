@@ -1,13 +1,14 @@
 import { randomUUID } from 'crypto'
 import { Router } from 'express'
 import db from '../db.js'
-import type { AuthenticatedRequest } from '../middleware/auth.js'
+import type { AuthenticatedRequest, CurrentUser } from '../middleware/auth.js'
 import { createImagegenReferenceAssetRouter } from './imagegen-reference-assets.js'
-import { defaultImageGenerationConfig, normalizeImageGenerationConfig, type ImageGenerationConfig, type ImageGenerationModelConfig, type ImageGenerationProviderConfig } from '../services/image-generation-config.js'
-import { createImageGenerationFailureRecord } from '../services/image-generation-failures.js'
+import type { ImageGenerationConfig, ImageGenerationModelConfig, ImageGenerationProviderConfig } from '../services/image-generation-config.js'
+import { imagegenHistoryRecordTriggeredAutoDisable } from '../services/image-generation-failures.js'
+import { canUseImageGeneration as sharedCanUseImageGeneration, isImageGenerationAutoDisabled, loadImageGenerationConfig, recordImageGenerationFailureAndMaybeDisable } from '../services/image-generation-access.js'
 import { extensionForMime, immichClientFromConfig, readLocalImageAsset, resolveRunnableImageGenerationModel, runImageGeneration, type ImageAssetVariant, type ImageGenerationRunnerOutput } from '../services/image-generation-runner.js'
-import { parseGenerateRequest, persistGenerateReferenceImages, resolveGenerateReferenceInputs, type ParsedGenerateRequest } from '../services/imagegen-generate-references.js'
-import { createImagegenHistoryRecord, deleteImagegenHistoryRecord, deleteImagegenHistoryRecords, getImagegenHistoryRecord, listImagegenHistory, type ImagegenHistoryRecord, type ImagegenStorageMode } from '../services/imagegen-history.js'
+import { parseGenerateRequest, persistGenerateReferenceImages, resolveGenerateReferenceInputs, type ParsedGenerateRequest, type ResolvedGenerateReferenceResult } from '../services/imagegen-generate-references.js'
+import { createImagegenHistoryRecord, deleteImagegenHistoryRecord, deleteImagegenHistoryRecords, getImagegenHistoryRecord, listImagegenHistory, updateImagegenHistoryRecord, type ImagegenHistoryRecord, type ImagegenStorageMode, type UpdateImagegenHistoryRecordInput } from '../services/imagegen-history.js'
 import { listImagegenReferenceAssetsByIds, type ImagegenReferenceAssetRecord } from '../services/imagegen-reference-assets.js'
 
 const router = Router()
@@ -15,10 +16,9 @@ const MAX_TEST_PROMPT_LENGTH = 8000
 const MAX_HISTORY_DELETE_BATCH = 100
 const ALLOWED_GENERATE_FIELDS = new Set(['prompt', 'modelId', 'size', 'quality', 'format', 'aspectRatio', 'n', 'referenceInputs'])
 
-type FeatureGrant = { readonly userId: string; readonly features?: readonly string[] }
-
 type ResolvedImagegenRun = {
   readonly ownerId: string
+  readonly user: CurrentUser
   readonly prompt: string
   readonly referenceImageIds: readonly string[]
   readonly config: ImageGenerationConfig
@@ -32,33 +32,17 @@ type ImagegenSuccessRecordInput = ResolvedImagegenRun & { readonly image: ImageG
 
 type PersistedGenerateReferences = { readonly ids: readonly string[]; readonly error?: unknown }
 
-function loadImageGenerationConfig(): ImageGenerationConfig {
-  const row = db.prepare('SELECT imageGenerationConfig FROM systemConfig WHERE id = ?').get('singleton') as { imageGenerationConfig?: string } | undefined
-  return normalizeImageGenerationConfig(row?.imageGenerationConfig ? JSON.parse(row.imageGenerationConfig) : defaultImageGenerationConfig())
-}
+type ReadyImagegenReferenceSelection = Extract<ResolvedGenerateReferenceResult, { readonly ok: true }>
 
-function isFeatureGrant(value: unknown): value is FeatureGrant {
-  return typeof value === 'object'
-    && value !== null
-    && 'userId' in value
-    && typeof value.userId === 'string'
-    && (!('features' in value) || Array.isArray(value.features))
-}
-
-function loadFeaturePermissions(): readonly FeatureGrant[] {
-  const row = db.prepare('SELECT novelImportConfig FROM systemConfig WHERE id = ?').get('singleton') as { novelImportConfig?: string } | undefined
-  const parsed: unknown = row?.novelImportConfig ? JSON.parse(row.novelImportConfig) : undefined
-  if (typeof parsed !== 'object' || parsed === null || !('featurePermissions' in parsed)) return []
-  const featurePermissions = parsed.featurePermissions
-  if (typeof featurePermissions !== 'object' || featurePermissions === null || !('userGrants' in featurePermissions)) return []
-  return Array.isArray(featurePermissions.userGrants) ? featurePermissions.userGrants.filter(isFeatureGrant) : []
+type QueuedImagegenRun = {
+  readonly record: ImagegenHistoryRecord
+  readonly runContext: ResolvedImagegenRun
+  readonly referenceSelection: ReadyImagegenReferenceSelection
+  readonly requestBody: Record<string, unknown>
 }
 
 function canUseImageGeneration(request: AuthenticatedRequest, config: ImageGenerationConfig) {
-  const user = request.currentUser
-  if (!user || !config.enabled) return false
-  if (user.role === 'owner' || user.role === 'admin') return true
-  return loadFeaturePermissions().some(grant => grant.userId === user.id && grant.features?.includes('imageGeneration'))
+  return sharedCanUseImageGeneration(request.currentUser, config)
 }
 
 function unsupportedGenerateFields(body: Record<string, unknown>) {
@@ -145,21 +129,10 @@ function safeErrorMessage(error: unknown, fallback: string, config: ImageGenerat
   return (sanitized || fallback).slice(0, 500)
 }
 
-function createSuccessHistoryRecord(input: ImagegenSuccessRecordInput) {
+function createSuccessHistoryRecord(input: ImagegenSuccessRecordInput): UpdateImagegenHistoryRecordInput {
   const image = input.image
-  const recordId = image.localAssetId || image.id
-  return createImagegenHistoryRecord({
-    id: recordId,
-    ownerId: input.ownerId,
-    prompt: input.prompt,
-    generationPromptSnapshot: input.prompt,
-    referenceImageIds: input.referenceImageIds,
-    provider: image.provider,
-    providerLabel: input.provider.label,
-    modelId: image.modelId,
-    modelName: image.modelName,
+  return {
     mimeType: image.mimeType,
-    storageMode: image.storageMode,
     storageStatus: image.storageStatus,
     status: image.status,
     localAssetId: image.localAssetId,
@@ -167,25 +140,32 @@ function createSuccessHistoryRecord(input: ImagegenSuccessRecordInput) {
     immichFilename: image.immichFilename,
     thumbnailUrl: image.thumbnailUrl || image.assetUrl,
     originalUrl: image.originalUrl || image.assetUrl,
+    referenceImageIds: input.referenceImageIds,
     error: image.error ? safeErrorMessage(image.error, '图片存储失败', input.config) : undefined,
-  })
+  }
 }
 
-function createFailureHistoryRecord(input: ImagegenFailureRecordInput) {
-  return createImagegenHistoryRecord({
-    ownerId: input.ownerId,
-    prompt: input.prompt,
-    generationPromptSnapshot: input.prompt,
+function createFailureHistoryRecord(input: ImagegenFailureRecordInput): UpdateImagegenHistoryRecordInput {
+  return {
     referenceImageIds: input.referenceImageIds,
-    provider: input.model.provider,
-    providerLabel: input.provider.label,
-    modelId: input.model.id,
-    modelName: input.model.label,
-    storageMode: storageMode(input.config),
     storageStatus: 'failed',
     status: 'failed',
     error: safeErrorMessage(input.error, '测试生图失败', input.config),
-  })
+  }
+}
+
+function imagegenRunLogFields(recordId: string, input: ResolvedImagegenRun) {
+  return {
+    historyId: recordId,
+    ownerId: input.ownerId,
+    providerId: input.provider.id,
+    providerType: input.provider.type,
+    providerProtocol: input.provider.protocol,
+    modelId: input.model.id,
+    providerModel: input.model.providerModel || input.model.model,
+    storageMode: storageMode(input.config),
+    referenceImageCount: input.referenceImageIds.length,
+  }
 }
 
 function serializeReferenceImage(record: ImagegenReferenceAssetRecord) {
@@ -201,7 +181,12 @@ function referenceImagesForHistory(ownerId: string, history: readonly ImagegenHi
   return new Map(listImagegenReferenceAssetsByIds(ownerId, ids).map(record => [record.id, serializeReferenceImage(record)]))
 }
 
+function imagegenHistoryAutoDisableSignal(record: ImagegenHistoryRecord) {
+  return isImageGenerationAutoDisabled(record.ownerId) && imagegenHistoryRecordTriggeredAutoDisable(record)
+}
+
 function serializeHistory(record: ImagegenHistoryRecord, referenceImagesById: Map<string, ReturnType<typeof serializeReferenceImage>> = new Map()) {
+  const imageGenerationPermissionAutoDisabled = imagegenHistoryAutoDisableSignal(record)
   return {
     id: record.id,
     prompt: record.prompt,
@@ -222,6 +207,7 @@ function serializeHistory(record: ImagegenHistoryRecord, referenceImagesById: Ma
     referenceImageIds: record.referenceImageIds,
     referenceImages: record.referenceImageIds.map(id => referenceImagesById.get(id)).filter((image): image is ReturnType<typeof serializeReferenceImage> => Boolean(image)),
     error: record.error,
+    ...(imageGenerationPermissionAutoDisabled ? { imageGenerationPermissionAutoDisabled: true } : {}),
     createdAt: record.createdAt,
   }
 }
@@ -238,7 +224,7 @@ function parseHistoryDeleteIds(body: unknown) {
   return { ok: true, ids: uniqueIds } as const
 }
 
-async function executeImagegenRun(request: AuthenticatedRequest, parsedRequest: ParsedGenerateRequest) {
+async function queueImagegenRun(request: AuthenticatedRequest, parsedRequest: ParsedGenerateRequest) {
   const body = parsedRequest.body
   const unsupportedFields = unsupportedGenerateFields(body)
   if (unsupportedFields.length > 0) return { ok: false, statusCode: 400, error: '测试生图请求不支持作品上下文字段' } as const
@@ -252,64 +238,139 @@ async function executeImagegenRun(request: AuthenticatedRequest, parsedRequest: 
   if (!resolved.ok) return { ok: false, statusCode: resolved.statusCode, error: resolved.error } as const
   const referenceSelection = await resolveGenerateReferenceInputs({ value: body.referenceInputs, files: parsedRequest.files, ownerId: request.currentUser.id, config, model: resolved.model })
   if (!referenceSelection.ok) return { ok: false, statusCode: referenceSelection.statusCode, error: referenceSelection.error } as const
-  const runContext: ResolvedImagegenRun = { ownerId: request.currentUser.id, prompt: parsedPrompt.prompt, referenceImageIds: referenceSelection.ids, config, provider: resolved.provider, model: resolved.model }
+  const runContext: ResolvedImagegenRun = { ownerId: request.currentUser.id, user: request.currentUser, prompt: parsedPrompt.prompt, referenceImageIds: referenceSelection.ids, config, provider: resolved.provider, model: resolved.model }
+  const record = createImagegenHistoryRecord({
+    ownerId: runContext.ownerId,
+    prompt: runContext.prompt,
+    generationPromptSnapshot: runContext.prompt,
+    referenceImageIds: runContext.referenceImageIds,
+    provider: runContext.model.provider,
+    providerLabel: runContext.provider.label,
+    modelId: runContext.model.id,
+    modelName: runContext.model.label,
+    storageMode: storageMode(runContext.config),
+    storageStatus: 'generating',
+    status: 'generating',
+  })
+  const queued: QueuedImagegenRun = { record, runContext, referenceSelection, requestBody: generationOptions(body) }
+  setImmediate(() => {
+    void completeImagegenRun(queued)
+  })
+  return { ok: true, statusCode: 202, record } as const
+}
 
+async function completeImagegenRun(queued: QueuedImagegenRun) {
+  const { record, runContext, referenceSelection, requestBody } = queued
+  const recordId = record.id
+  console.info('[image-generation] imagegen run start', imagegenRunLogFields(recordId, runContext))
   try {
     const result = await runImageGeneration({
-      config,
-      provider: resolved.provider,
-      model: resolved.model,
-      providerPrompt: parsedPrompt.prompt,
-      requestBody: generationOptions(body),
+      config: runContext.config,
+      provider: runContext.provider,
+      model: runContext.model,
+      providerPrompt: runContext.prompt,
+      requestBody,
       referenceImages: referenceSelection.images,
-      promptSnapshot: { basePromptSnapshot: parsedPrompt.prompt, generationPromptSnapshot: parsedPrompt.prompt, referenceImageIds: referenceSelection.ids },
+      promptSnapshot: { basePromptSnapshot: runContext.prompt, generationPromptSnapshot: runContext.prompt, referenceImageIds: referenceSelection.ids },
+      traceId: recordId,
       storage: {
-        localScopeId: request.currentUser.id,
+        localScopeId: runContext.ownerId,
         localAssetNamespace: 'imagegen',
-        publicAssetUrl: imagegenAssetUrl,
-        immichFilename: mimeType => testImmichFilename(request.currentUser.id, parsedPrompt.prompt, config.immich?.projectName, mimeType),
-        immichDeviceAssetId: mimeType => testImmichDeviceAssetId(request.currentUser.id, parsedPrompt.prompt, config.immich?.projectName, mimeType),
+        publicAssetUrl: (_assetId, variant) => imagegenAssetUrl(recordId, variant),
+        immichFilename: mimeType => testImmichFilename(runContext.ownerId, runContext.prompt, runContext.config.immich?.projectName, mimeType),
+        immichDeviceAssetId: mimeType => testImmichDeviceAssetId(runContext.ownerId, runContext.prompt, runContext.config.immich?.projectName, mimeType),
       },
     })
     const finalReferences: PersistedGenerateReferences = await persistGenerateReferenceImages(referenceSelection.slots, {
-      ownerId: request.currentUser.id,
-      config,
+      ownerId: runContext.ownerId,
+      config: runContext.config,
       publicAssetUrl: imagegenReferenceAssetUrl,
-      immichFilename: mimeType => referenceImmichFilename(request.currentUser.id, config.immich?.projectName, mimeType),
-      immichDeviceAssetId: mimeType => referenceImmichDeviceAssetId(request.currentUser.id, config.immich?.projectName, mimeType),
+      immichFilename: mimeType => referenceImmichFilename(runContext.ownerId, runContext.config.immich?.projectName, mimeType),
+      immichDeviceAssetId: mimeType => referenceImmichDeviceAssetId(runContext.ownerId, runContext.config.immich?.projectName, mimeType),
     }).catch(error => ({ ids: referenceSelection.ids, error } as const))
     const image = finalReferences.error
-      ? { ...result.image, error: safeErrorMessage(finalReferences.error, '参考图持久化失败', config) }
+      ? { ...result.image, error: safeErrorMessage(finalReferences.error, '参考图持久化失败', runContext.config) }
       : result.image
-    const record = createSuccessHistoryRecord({ ...runContext, referenceImageIds: finalReferences.ids, image })
-    return { ok: true, statusCode: result.httpStatus, record } as const
+    const terminalRecord = createSuccessHistoryRecord({ ...runContext, referenceImageIds: finalReferences.ids, image })
+    console.info('[image-generation] imagegen run provider result persisted', {
+      ...imagegenRunLogFields(recordId, runContext),
+      storageStatus: image.storageStatus,
+      status: image.status,
+      referenceImageCount: finalReferences.ids.length,
+    })
+    if (image.storageStatus === 'storageUploadFailed') {
+      db.transaction(() => {
+        recordImageGenerationFailureAndMaybeDisable({
+          id: recordId,
+          surface: 'imagegen',
+          ownerId: runContext.ownerId,
+          prompt: runContext.prompt,
+          generationPromptSnapshot: runContext.prompt,
+          referenceImageIds: finalReferences.ids,
+          provider: runContext.model.provider,
+          providerLabel: runContext.provider.label,
+          modelId: runContext.model.id,
+          modelName: runContext.model.label,
+          storageMode: 'immich',
+          error: new Error(image.error || '图片存储失败'),
+          config: runContext.config,
+          user: runContext.user,
+          countEligible: runContext.user.role === 'user',
+          failureType: 'storage',
+        }, db)
+        updateImagegenHistoryRecord(runContext.ownerId, recordId, { ...terminalRecord }, db)
+      })()
+      console.warn('[image-generation] imagegen history finalized with storage failure', {
+        ...imagegenRunLogFields(recordId, runContext),
+        storageStatus: image.storageStatus,
+        status: image.status,
+      })
+      return
+    }
+    updateImagegenHistoryRecord(runContext.ownerId, recordId, { ...terminalRecord })
+    console.info('[image-generation] imagegen history finalized', {
+      ...imagegenRunLogFields(recordId, runContext),
+      storageStatus: image.storageStatus,
+      status: image.status,
+    })
   } catch (error) {
     const finalReferences: PersistedGenerateReferences = await persistGenerateReferenceImages(referenceSelection.slots, {
-      ownerId: request.currentUser.id,
-      config,
+      ownerId: runContext.ownerId,
+      config: runContext.config,
       publicAssetUrl: imagegenReferenceAssetUrl,
-      immichFilename: mimeType => referenceImmichFilename(request.currentUser.id, config.immich?.projectName, mimeType),
-      immichDeviceAssetId: mimeType => referenceImmichDeviceAssetId(request.currentUser.id, config.immich?.projectName, mimeType),
+      immichFilename: mimeType => referenceImmichFilename(runContext.ownerId, runContext.config.immich?.projectName, mimeType),
+      immichDeviceAssetId: mimeType => referenceImmichDeviceAssetId(runContext.ownerId, runContext.config.immich?.projectName, mimeType),
     }).catch(referenceError => ({ ids: referenceSelection.ids, error: referenceError } as const))
     const historyError = finalReferences.error
-      ? new Error(`${safeErrorMessage(error, '测试生图失败', config)}；参考图保存失败：${safeErrorMessage(finalReferences.error, '参考图持久化失败', config)}`)
+      ? new Error(`${safeErrorMessage(error, '测试生图失败', runContext.config)}；参考图保存失败：${safeErrorMessage(finalReferences.error, '参考图持久化失败', runContext.config)}`, { cause: error })
       : error
-    createImageGenerationFailureRecord({
-      surface: 'imagegen',
-      ownerId: runContext.ownerId,
-      prompt: runContext.prompt,
-      generationPromptSnapshot: runContext.prompt,
-      referenceImageIds: finalReferences.ids,
-      provider: runContext.model.provider,
-      providerLabel: runContext.provider.label,
-      modelId: runContext.model.id,
-      modelName: runContext.model.label,
-      storageMode: storageMode(runContext.config),
-      error: historyError,
-      config: runContext.config,
+    const terminalRecord = createFailureHistoryRecord({ ...runContext, referenceImageIds: finalReferences.ids, error: historyError })
+    console.error('[image-generation] imagegen run failed', {
+      ...imagegenRunLogFields(recordId, runContext),
+      error: safeErrorMessage(historyError, '测试生图失败', runContext.config),
+      referenceImageCount: finalReferences.ids.length,
     })
-    const record = createFailureHistoryRecord({ ...runContext, referenceImageIds: finalReferences.ids, error: historyError })
-    return { ok: true, statusCode: 502, record } as const
+    db.transaction(() => {
+      recordImageGenerationFailureAndMaybeDisable({
+        id: recordId,
+        surface: 'imagegen',
+        ownerId: runContext.ownerId,
+        prompt: runContext.prompt,
+        generationPromptSnapshot: runContext.prompt,
+        referenceImageIds: finalReferences.ids,
+        provider: runContext.model.provider,
+        providerLabel: runContext.provider.label,
+        modelId: runContext.model.id,
+        modelName: runContext.model.label,
+        storageMode: storageMode(runContext.config),
+        error: historyError,
+        config: runContext.config,
+        user: runContext.user,
+        countEligible: runContext.user.role === 'user',
+        fallbackFailureType: 'provider',
+      }, db)
+      updateImagegenHistoryRecord(runContext.ownerId, recordId, { ...terminalRecord }, db)
+    })()
   }
 }
 
@@ -350,7 +411,7 @@ router.post('/history/:recordId/rerun', async (req, res) => {
     modelId: sourceRecord.modelId,
     referenceInputs: sourceRecord.referenceImageIds.map(id => ({ kind: 'asset', id })),
   }
-  const result = await executeImagegenRun(request, { body, files: [] })
+  const result = await queueImagegenRun(request, { body, files: [] })
   if (!result.ok) return res.status(result.statusCode).json({ error: result.error })
   const referenceImagesById = referenceImagesForHistory(request.currentUser.id, [result.record])
   return res.status(result.statusCode).json(serializeHistory(result.record, referenceImagesById))
@@ -365,7 +426,7 @@ router.post('/generate', async (req, res) => {
     return res.status(400).json({ error: error instanceof Error ? error.message : '生成请求解析失败' })
   }
 
-  const result = await executeImagegenRun(request, parsedRequest)
+  const result = await queueImagegenRun(request, parsedRequest)
   if (!result.ok) return res.status(result.statusCode).json({ error: result.error })
   const referenceImagesById = referenceImagesForHistory(request.currentUser.id, [result.record])
   return res.status(result.statusCode).json(serializeHistory(result.record, referenceImagesById))

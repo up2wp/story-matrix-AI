@@ -4,7 +4,7 @@ import db from '../db.js'
 import type { ImageProviderType } from './image-generation-config.js'
 
 export type ImagegenStorageMode = 'local' | 'immich'
-export type ImagegenStorageStatus = 'succeeded' | 'pendingImmichUpload' | 'storageUploadFailed' | 'failed'
+export type ImagegenStorageStatus = 'generating' | 'succeeded' | 'pendingImmichUpload' | 'storageUploadFailed' | 'failed'
 export type ImagegenHistoryStatus = ImagegenStorageStatus
 
 export type ImagegenHistoryRecord = {
@@ -40,6 +40,8 @@ export type CreateImagegenHistoryRecordInput = Omit<ImagegenHistoryRecord, 'id' 
   readonly id?: string
   readonly createdAt?: number
 }
+
+export type UpdateImagegenHistoryRecordInput = Omit<ImagegenHistoryRecord, 'id' | 'ownerId' | 'prompt' | 'generationPromptSnapshot' | 'provider' | 'providerLabel' | 'modelId' | 'modelName' | 'storageMode' | 'createdAt'>
 
 type ImagegenHistoryRow = {
   readonly id: string
@@ -85,6 +87,21 @@ type ImagegenHistoryInsertParameters = [
   string | null,
   string | null,
   number,
+]
+
+type ImagegenHistoryUpdateParameters = [
+  string | null,
+  ImagegenStorageStatus,
+  ImagegenHistoryStatus,
+  string | null,
+  string | null,
+  string | null,
+  string | null,
+  string | null,
+  string | null,
+  string | null,
+  string,
+  string,
 ]
 
 const IMAGEGEN_HISTORY_SELECT = `
@@ -181,6 +198,31 @@ export function createImagegenHistoryRecord(input: CreateImagegenHistoryRecordIn
     record.createdAt,
   )
   return record
+}
+
+export function updateImagegenHistoryRecord(ownerId: string, id: string, input: UpdateImagegenHistoryRecordInput, database: DatabaseInstance = db): ImagegenHistoryRecord | null {
+  const thumbnailUrl = sameOriginLocator(input.thumbnailUrl, 'thumbnailUrl')
+  const originalUrl = sameOriginLocator(input.originalUrl, 'originalUrl')
+  database.prepare<ImagegenHistoryUpdateParameters>(`
+    UPDATE imagegenHistory
+    SET mimeType = ?, storageStatus = ?, status = ?, localAssetId = ?, immichAssetId = ?,
+      immichFilename = ?, thumbnailUrl = ?, originalUrl = ?, referenceImageIds = ?, error = ?
+    WHERE id = ? AND ownerId = ?
+  `).run(
+    nullable(input.mimeType),
+    input.storageStatus,
+    input.status,
+    nullable(input.localAssetId),
+    nullable(input.immichAssetId),
+    nullable(input.immichFilename),
+    nullable(thumbnailUrl),
+    nullable(originalUrl),
+    input.referenceImageIds.length > 0 ? JSON.stringify(input.referenceImageIds) : null,
+    nullable(input.error),
+    id,
+    ownerId,
+  )
+  return getImagegenHistoryRecord(ownerId, id, database)
 }
 
 export function listImagegenHistory(ownerId: string, database: DatabaseInstance = db): ImagegenHistoryRecord[] {

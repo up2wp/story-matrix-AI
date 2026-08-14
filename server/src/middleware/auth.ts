@@ -20,6 +20,11 @@ export interface CurrentUser {
   role: 'owner' | 'admin' | 'user'
   createdAt: number
   deletedAt: number | null
+  themePreference: 'system' | 'light' | 'dark'
+}
+
+interface CurrentUserRow extends Omit<CurrentUser, 'themePreference'> {
+  themePreference: string | null
 }
 
 export interface AuthenticatedRequest extends Request {
@@ -30,6 +35,11 @@ export interface AuthenticatedRequest extends Request {
 const SESSION_TTL = 2 * 365 * 24 * 60 * 60 * 1000 // 2 年
 const COOKIE_NAME = 'sm_session'
 const isDev = process.env.NODE_ENV !== 'production'
+
+function normalizeThemePreference(value: unknown): CurrentUser['themePreference'] {
+  if (value === 'light' || value === 'dark') return value
+  return 'system'
+}
 
 /** 创建会话，设置 httpOnly cookie */
 export function createSession(userId: string, username: string, role: string, res: Response): string {
@@ -91,16 +101,17 @@ export function getCurrentUser(req: Request): CurrentUser | null {
   if (!session) return null
 
   const user = db.prepare(
-    'SELECT id, username, displayName, role, createdAt, deletedAt FROM users WHERE id = ?'
-  ).get(session.userId) as CurrentUser | undefined
+    'SELECT id, username, displayName, role, createdAt, deletedAt, themePreference FROM users WHERE id = ?'
+  ).get(session.userId) as CurrentUserRow | undefined
 
   if (!user || user.deletedAt) return null
+  const currentUser = { ...user, themePreference: normalizeThemePreference(user.themePreference) }
   // 同步最新用户名和角色
-  if (session.username !== user.username || session.role !== user.role) {
+  if (session.username !== currentUser.username || session.role !== currentUser.role) {
     db.prepare('UPDATE sessions SET username = ?, role = ? WHERE token = ?')
-      .run(user.username, user.role, req.cookies?.[COOKIE_NAME])
+      .run(currentUser.username, currentUser.role, req.cookies?.[COOKIE_NAME])
   }
-  return user
+  return currentUser
 }
 
 /** 认证中间件 — 要求登录 */

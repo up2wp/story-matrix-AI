@@ -944,13 +944,26 @@ function SystemSettings() {
                   width: 160,
                   render: (_: unknown, user: User) => {
                     const checked = grantedFeaturesForUser(novelImportConfig, user.id).includes(feature)
-                    return (
+                    const switchControl = (
                       <Switch
                         checked={checked}
                         loading={savingPermission === `${user.id}:${feature}`}
                         disabled={!novelImportConfig.enabled}
                         onChange={(value) => toggleUserFeature(user.id, feature, value)}
                       />
+                    )
+                    if (feature !== 'imageGeneration') return switchControl
+                    const riskState = novelImportConfig.riskControls?.imageGeneration?.userStates.find(state => state.userId === user.id)
+                    const autoDisabled = Boolean(riskState?.autoDisabledAt && (!riskState.recoveredAt || riskState.recoveredAt < riskState.autoDisabledAt))
+                    const recovered = Boolean(checked && riskState?.recoveredAt && (!riskState.autoDisabledAt || riskState.recoveredAt >= riskState.autoDisabledAt))
+                    const status = checked
+                      ? (recovered ? { color: 'green', label: '已恢复' } : { color: 'blue', label: '已授权' })
+                      : (autoDisabled ? { color: 'red', label: '自动关闭' } : { color: 'default', label: '未授权' })
+                    return (
+                      <Space orientation="vertical" size={4}>
+                        {switchControl}
+                        <Tag color={status.color}>{status.label}</Tag>
+                      </Space>
                     )
                   },
                 })),

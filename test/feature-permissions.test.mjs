@@ -6,6 +6,7 @@ const source = await readFile(new URL('../src/core/feature-permissions.ts', impo
 const serverIndexSource = await readFile(new URL('../server/src/index.ts', import.meta.url), 'utf8')
 const imagegenRouteSource = await readFile(new URL('../server/src/routes/imagegen.ts', import.meta.url), 'utf8')
 const imagegenReferenceRouteSource = await readFile(new URL('../server/src/routes/imagegen-reference-assets.ts', import.meta.url), 'utf8')
+const imageGenerationAccessSource = await readFile(new URL('../server/src/services/image-generation-access.ts', import.meta.url), 'utf8')
 const sidebarSource = await readFile(new URL('../src/components/layout/Sidebar.tsx', import.meta.url), 'utf8')
 
 function loadFeaturePermissionsForTest() {
@@ -23,6 +24,9 @@ function loadFeaturePermissionsForTest() {
 const { ALL_FEATURE_KEYS, normalizeNovelImportConfig, canUseFeature, setUserFeatureGrant, grantedFeaturesForUser } = loadFeaturePermissionsForTest()
 
 assert.deepEqual(ALL_FEATURE_KEYS, ['novelImport', 'importBackfill', 'imageGeneration'], 'feature registry should include import and image generation features')
+assert.match(source, /function normalizeRiskControls[\s\S]*userStates\.map\(normalizeRiskUserState\)[\s\S]*filter\(\(state\): state is ImageGenerationRiskUserState => Boolean\(state\)\)/, 'feature permission normalization should keep valid image generation risk-control user states')
+assert.match(source, /riskControls: normalizeRiskControls\(config\?\.riskControls\)/, 'novel import config normalization should preserve risk-control metadata for admin saves')
+assert.match(source, /return \{[\s\S]*\.\.\.normalized,[\s\S]*featurePermissions: \{ userGrants: nextGrants \}/, 'user feature grant edits should update only grants and preserve risk-control metadata')
 
 const owner = { id: 'owner-1', username: 'owner', displayName: 'Owner', role: 'owner', createdAt: 1 }
 const admin = { id: 'admin-1', username: 'admin', displayName: 'Admin', role: 'admin', createdAt: 1 }
@@ -77,9 +81,41 @@ assert.deepEqual(grantedFeaturesForUser(grantedBoth, user.id), ['novelImport', '
 
 const grantedImage = setUserFeatureGrant(grantedBoth, user.id, 'imageGeneration', true)
 assert.equal(canUseFeature(user, featureSources(grantedImage, true), 'imageGeneration'), true, 'image generation should use the same explicit grant model as other gated features')
+
+const riskControlledConfig = normalizeNovelImportConfig({
+  enabled: true,
+  featurePermissions: { userGrants: [{ userId: user.id, features: ['imageGeneration', 'unknownFeature'] }] },
+  riskControls: {
+    imageGeneration: {
+      userStates: [
+        {
+          userId: user.id,
+          baselineAt: 10,
+          autoDisabledAt: 20,
+          autoDisabledByFailureId: 'failure-1',
+          autoDisabledSurface: 'work',
+          autoDisabledFailureType: 'provider',
+          recoveredAt: 30,
+          recoveredByUserId: admin.id,
+        },
+        { userId: '', baselineAt: 999 },
+        { userId: otherUser.id, autoDisabledSurface: 'not-a-surface', autoDisabledFailureType: 'not-a-type' },
+      ],
+    },
+  },
+})
+assert.equal(riskControlledConfig.riskControls?.imageGeneration.userStates.length, 2, 'risk control normalization should drop empty user ids while keeping valid users')
+assert.equal(riskControlledConfig.riskControls?.imageGeneration.userStates[0].autoDisabledFailureType, 'provider', 'risk control normalization should preserve machine-readable failure types')
+assert.equal(riskControlledConfig.riskControls?.imageGeneration.userStates[1].autoDisabledSurface, undefined, 'risk control normalization should reject invalid surfaces')
+assert.equal(riskControlledConfig.riskControls?.imageGeneration.userStates[1].autoDisabledFailureType, undefined, 'risk control normalization should reject invalid failure types')
+assert.equal(normalizeNovelImportConfig({ enabled: true, riskControls: { imageGeneration: { userStates: 'broken-shape' } } }).riskControls, undefined, 'risk control normalization should ignore malformed persisted userStates instead of throwing')
+const riskGrantChange = setUserFeatureGrant(riskControlledConfig, user.id, 'novelImport', true)
+assert.deepEqual(riskGrantChange.riskControls, riskControlledConfig.riskControls, 'editing a user grant should not wipe risk-control recovery baselines')
+assert.deepEqual(grantedFeaturesForUser(riskGrantChange, user.id), ['novelImport', 'imageGeneration'], 'editing a risk-controlled grant should preserve existing image generation access')
+
 assert.match(serverIndexSource, /app\.use\('\/api\/imagegen', requireAuth, imagegenRouter\)/, 'imagegen test API should be mounted behind the same authentication middleware as work image generation')
-assert.match(imagegenRouteSource, /canUseImageGeneration[\s\S]*config\.enabled[\s\S]*features\?\.includes\('imageGeneration'\)/, 'imagegen test API should gate ordinary users through the imageGeneration feature key')
-assert.match(imagegenRouteSource, /owner|admin/, 'imagegen test API should preserve owner and admin default access when image generation is enabled')
+assert.match(imagegenRouteSource, /sharedCanUseImageGeneration\(request\.currentUser, config\)/, 'imagegen test API should gate through the shared image generation access service')
+assert.match(imageGenerationAccessSource, /export function canUseImageGeneration\(user: CurrentUser \| undefined, config: ImageGenerationConfig, database: DatabaseInstance = db\): boolean \{[\s\S]*if \(!user \|\| !config\.enabled\) return false[\s\S]*if \(user\.role === 'owner' \|\| user\.role === 'admin'\) return true[\s\S]*hasImageGenerationGrant\(loadNovelImportConfig\(database\), user\.id\)/, 'shared image generation access should preserve owner/admin default access and ordinary user grants')
 assert.match(imagegenRouteSource, /router\.use\('\/reference-assets', createImagegenReferenceAssetRouter/, 'imagegen test API should mount reference uploads under the independent owner-scoped namespace')
 assert.match(imagegenReferenceRouteSource, /router\.post\('\/'[\s\S]*canUseImageGeneration[\s\S]*createImagegenReferenceAsset/, 'imagegen reference uploads should use the same imageGeneration feature gate as test generation')
 assert.match(imagegenReferenceRouteSource, /router\.get\('\/'[\s\S]*canUseImageGeneration[\s\S]*listImagegenReferenceAssets/, 'imagegen reference listing should be blocked by the imageGeneration feature gate, not just authentication')

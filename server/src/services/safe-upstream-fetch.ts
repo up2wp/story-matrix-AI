@@ -1,6 +1,16 @@
 const DEFAULT_TIMEOUT_MS = 360000
 const DEFAULT_MAX_BYTES = 12 * 1024 * 1024
 
+export class SafeUpstreamTimeoutError extends Error {
+  readonly name = 'SafeUpstreamTimeoutError'
+  readonly timeoutMs: number
+
+  constructor(timeoutMs: number, options?: ErrorOptions) {
+    super('上游请求超时', options)
+    this.timeoutMs = timeoutMs
+  }
+}
+
 export interface SafeUpstreamFetchOptions {
   method?: string
   headers?: Record<string, string>
@@ -52,7 +62,8 @@ export async function safeUpstreamFetch(url: string, options: SafeUpstreamFetchO
     if (lower === 'content-type' || lower === 'authorization' || lower === 'accept') headers[key] = value
   }
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || DEFAULT_TIMEOUT_MS)
+  const timeoutMs = options.timeoutMs || DEFAULT_TIMEOUT_MS
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const response = await fetch(parsed, {
       method: options.method || 'GET',
@@ -65,7 +76,7 @@ export async function safeUpstreamFetch(url: string, options: SafeUpstreamFetchO
     if (contentLength > (options.maxBytes || DEFAULT_MAX_BYTES)) throw new Error('上游响应超过大小限制')
     return response
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') throw new Error('上游请求超时', { cause: error })
+    if (error instanceof Error && error.name === 'AbortError') throw new SafeUpstreamTimeoutError(timeoutMs, { cause: error })
     throw error
   } finally {
     clearTimeout(timeoutId)
