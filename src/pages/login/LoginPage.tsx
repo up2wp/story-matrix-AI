@@ -48,7 +48,7 @@ export default function LoginPage() {
         alignItems: 'center',
          minHeight: '100dvh',
          padding: 16,
-         background: '#f5f5f5',
+        background: 'var(--app-background)',
       }}
     >
       <Card style={{ width: 'min(400px, 100%)', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>

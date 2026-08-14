@@ -4,7 +4,9 @@ import db from '../db.js'
 import { createSession, destroySession, destroyUserSessions, requireAuth, type AuthenticatedRequest } from '../middleware/auth.js'
 
 const router = Router()
-const SAFE_FIELDS = 'id, username, displayName, role, createdAt, deletedAt'
+const SAFE_FIELDS = 'id, username, displayName, role, createdAt, deletedAt, themePreference'
+const THEME_PREFERENCES = ['system', 'light', 'dark'] as const
+type ThemePreference = (typeof THEME_PREFERENCES)[number]
 
 interface UserRow {
   id: string
@@ -14,6 +16,7 @@ interface UserRow {
   role: 'owner' | 'admin' | 'user'
   createdAt: number
   deletedAt: number | null
+  themePreference: string | null
 }
 
 interface SystemConfigRow {
@@ -32,6 +35,15 @@ function createId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
 
+function isThemePreference(value: unknown): value is ThemePreference {
+  return value === 'system' || value === 'light' || value === 'dark'
+}
+
+function normalizeThemePreference(value: unknown): ThemePreference {
+  if (isThemePreference(value)) return value
+  return 'system'
+}
+
 function serializeUser(user: UserRow) {
   return {
     id: user.id,
@@ -39,6 +51,8 @@ function serializeUser(user: UserRow) {
     displayName: user.displayName,
     role: user.role,
     createdAt: user.createdAt,
+    deletedAt: user.deletedAt,
+    themePreference: normalizeThemePreference(user.themePreference),
   }
 }
 
@@ -89,7 +103,7 @@ router.post('/register', (req, res) => {
 
   const user = db.prepare(`SELECT ${SAFE_FIELDS} FROM users WHERE id = ?`).get(id) as UserRow
   createSession(id, username, 'user', res)
-  res.status(201).json({ user })
+  res.status(201).json({ user: serializeUser(user) })
 })
 
 // POST /api/auth/logout — 登出
@@ -117,8 +131,21 @@ router.patch('/profile', requireAuth, (req, res) => {
   if (!displayName) return res.status(400).json({ error: '显示名称不能为空' })
 
   db.prepare('UPDATE users SET displayName = ? WHERE id = ?').run(displayName, currentUser.id)
-  const user = db.prepare(`SELECT ${SAFE_FIELDS} FROM users WHERE id = ?`).get(currentUser.id)
-  res.json(user)
+  const user = db.prepare(`SELECT ${SAFE_FIELDS} FROM users WHERE id = ?`).get(currentUser.id) as UserRow
+  res.json(serializeUser(user))
+})
+
+// PATCH /api/auth/theme-preference — 修改当前用户主题偏好
+router.patch('/theme-preference', requireAuth, (req, res) => {
+  const currentUser = (req as AuthenticatedRequest).currentUser
+  const { themePreference } = req.body
+  if (!isThemePreference(themePreference)) {
+    return res.status(400).json({ error: '主题偏好必须是 system、light 或 dark' })
+  }
+
+  db.prepare('UPDATE users SET themePreference = ? WHERE id = ?').run(themePreference, currentUser.id)
+  const user = db.prepare(`SELECT ${SAFE_FIELDS} FROM users WHERE id = ?`).get(currentUser.id) as UserRow
+  res.json(serializeUser(user))
 })
 
 // POST /api/auth/change-password — 修改当前用户密码
