@@ -1,6 +1,6 @@
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Button, Card, Empty, Input, Select, Space, Spin, Tag, Typography, message } from 'antd'
+import { Alert, Button, Card, Empty, Input, Popconfirm, Select, Space, Spin, Tag, Typography, message } from 'antd'
 import type { ImageAssetRecord } from '@/core/types'
 import { useAuthStore } from '@/core/auth-store'
 import { useSystemConfigStore } from '@/core/system-config-store'
@@ -29,6 +29,10 @@ export default function ImagegenPage() {
   const [history, setHistory] = useState<ImagegenHistoryResponse[]>([])
   const [historyError, setHistoryError] = useState<string>()
   const [historyLoading, setHistoryLoading] = useState(false)
+  const [selectedHistoryIds, setSelectedHistoryIds] = useState<readonly string[]>([])
+  const [deletingHistoryId, setDeletingHistoryId] = useState<string | null>(null)
+  const [deletingSelectedHistory, setDeletingSelectedHistory] = useState(false)
+  const [rerunningHistoryId, setRerunningHistoryId] = useState<string | null>(null)
   const [storedReferenceSlots, setReferenceSlots] = useState<readonly ReferenceSlot[]>([])
   const [generating, setGenerating] = useState(false)
   const referenceSlotsRef = useRef<readonly ReferenceSlot[]>([])
@@ -166,6 +170,54 @@ export default function ImagegenPage() {
     } finally {
       setGenerating(false)
       void refreshHistory()
+    }
+  }
+
+  const handleHistorySelection = (id: string, selected: boolean) => {
+    setSelectedHistoryIds((current) => selected ? [...current, id] : current.filter((historyId) => historyId !== id))
+  }
+
+  const handleDeleteHistoryRecord = async (record: ImageAssetRecord) => {
+    setDeletingHistoryId(record.id)
+    try {
+      await imagegenClient.deleteHistory(record.id)
+      setHistory((current) => current.filter((historyRecord) => historyRecord.id !== record.id))
+      setSelectedHistoryIds((current) => current.filter((historyId) => historyId !== record.id))
+      message.success('测试历史已删除')
+    } catch (error) {
+      message.error(error instanceof ImagegenClientError ? error.message : '测试历史删除失败，请稍后重试。')
+    } finally {
+      setDeletingHistoryId(null)
+    }
+  }
+
+  const handleDeleteSelectedHistory = async () => {
+    if (!selectedHistoryIds.length) return
+
+    setDeletingSelectedHistory(true)
+    try {
+      await imagegenClient.deleteHistoryBatch(selectedHistoryIds)
+      const selectedIds = new Set(selectedHistoryIds)
+      setHistory((current) => current.filter((record) => !selectedIds.has(record.id)))
+      setSelectedHistoryIds([])
+      message.success('已删除选中的测试历史')
+    } catch (error) {
+      message.error(error instanceof ImagegenClientError ? error.message : '批量删除测试历史失败，请稍后重试。')
+    } finally {
+      setDeletingSelectedHistory(false)
+    }
+  }
+
+  const handleRerunHistoryRecord = async (record: ImageAssetRecord) => {
+    setRerunningHistoryId(record.id)
+    try {
+      const rerun = await imagegenClient.rerunHistory(record.id)
+      setHistory((current) => [rerun, ...current.filter((record) => record.id !== rerun.id)])
+      message.success('已按历史记录再次生成')
+    } catch (error) {
+      message.error(error instanceof ImagegenClientError ? error.message : '再次生成失败，请稍后重试。')
+    } finally {
+      setRerunningHistoryId(null)
     }
   }
 
@@ -330,9 +382,18 @@ export default function ImagegenPage() {
             size="small"
             title="测试历史"
             extra={
-              <Button size="small" loading={historyLoading} disabled={!canUseImagegen} onClick={() => void refreshHistory()}>
-                刷新
-              </Button>
+              <Space size="small">
+                {selectedHistoryIds.length ? (
+                  <Popconfirm title={`删除已选 ${selectedHistoryIds.length} 条测试历史?`} okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={handleDeleteSelectedHistory}>
+                    <Button size="small" danger loading={deletingSelectedHistory}>
+                      删除已选
+                    </Button>
+                  </Popconfirm>
+                ) : null}
+                <Button size="small" loading={historyLoading} disabled={!canUseImagegen} onClick={() => void refreshHistory()}>
+                  刷新
+                </Button>
+              </Space>
             }
           >
             {visibleHistoryError ? (
@@ -340,7 +401,10 @@ export default function ImagegenPage() {
             ) : historyLoading && visibleHistory.length === 0 ? (
               <Spin />
             ) : visibleHistory.length ? (
-              <ImageResultGallery images={galleryImages} showFailedPlaceholders />
+              <ImageResultGallery images={galleryImages} showFailedPlaceholders
+                historySelection={{ selectedIds: selectedHistoryIds, onChange: handleHistorySelection }}
+                historyActions={{ onDelete: handleDeleteHistoryRecord, onRerun: handleRerunHistoryRecord, deletingId: deletingHistoryId, rerunningId: rerunningHistoryId }}
+              />
             ) : (
               <Empty description="暂无测试历史" />
             )}

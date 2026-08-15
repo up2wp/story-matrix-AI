@@ -18,6 +18,7 @@ export type ImagegenReferenceInput =
 
 export type ImagegenHistoryResponse = Omit<ImagegenHistoryRecord, 'ownerId'>
 export type ImagegenReferenceAssetResponse = Omit<ImagegenReferenceAssetRecord, 'ownerId'>
+export type ImagegenDeleteHistoryResponse = { readonly deletedCount: number }
 
 export class ImagegenClientError extends Error {
   readonly name = 'ImagegenClientError'
@@ -63,6 +64,17 @@ async function request<T>(url: string, init?: RequestInit, json = true): Promise
   return response.json()
 }
 
+async function requestEmpty(url: string, init?: RequestInit): Promise<void> {
+  const response = await fetch(`/api/imagegen${url}`, {
+    ...init,
+    credentials: 'include',
+    headers: { ...requestHeaders(), ...(init?.headers || {}) },
+  })
+  if (!response.ok) {
+    throw new ImagegenClientError(response.status, await responseErrorMessage(response))
+  }
+}
+
 function generateRequestInit(payload: ImagegenGenerateRequest): { readonly init: RequestInit; readonly json: boolean } {
   const { referenceFiles, ...body } = payload
   if (!referenceFiles?.length) {
@@ -81,6 +93,16 @@ export const imagegenClient = {
     return request<ImagegenHistoryResponse>('/generate', init, json)
   },
   history: () => request<ImagegenHistoryResponse[]>('/history'),
+  deleteHistory: (id: string) => requestEmpty(`/history/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  }),
+  deleteHistoryBatch: (ids: readonly string[]) => request<ImagegenDeleteHistoryResponse>('/history/delete', {
+    method: 'POST',
+    body: JSON.stringify({ ids }),
+  }),
+  rerunHistory: (id: string) => request<ImagegenHistoryResponse>(`/history/${encodeURIComponent(id)}/rerun`, {
+    method: 'POST',
+  }),
 }
 
 export function getImagegenReferenceAssetUrl(asset: Pick<ImagegenReferenceAssetResponse, 'thumbnailUrl' | 'originalUrl'>, variant: 'thumbnail' | 'original' = 'thumbnail') {

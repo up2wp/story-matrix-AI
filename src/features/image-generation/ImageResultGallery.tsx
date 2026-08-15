@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { CopyOutlined, DeleteOutlined, PictureOutlined } from '@ant-design/icons'
-import { Button, Card, Empty, Image, Modal, message, Popconfirm, Space, Tag, Typography } from 'antd'
+import { CopyOutlined, DeleteOutlined, PictureOutlined, ReloadOutlined } from '@ant-design/icons'
+import { Button, Card, Checkbox, Empty, Image, Modal, message, Popconfirm, Space, Tag, Typography } from 'antd'
 import type { ImageAssetRecord, ImagegenReferenceImageSummary } from '@/core/types'
 import { getImageAssetDisplayUrl } from './imageGenerationClient'
 
@@ -17,6 +17,16 @@ interface Props {
   onDelete?: (image: ImageAssetRecord) => void
   deletingImageId?: string | null
   showFailedPlaceholders?: boolean
+  historySelection?: {
+    readonly selectedIds: readonly string[]
+    readonly onChange: (id: string, selected: boolean) => void
+  }
+  historyActions?: {
+    readonly onDelete: (image: GalleryImage) => void
+    readonly onRerun: (image: GalleryImage) => void
+    readonly deletingId?: string | null
+    readonly rerunningId?: string | null
+  }
 }
 
 async function copyProviderPrompt(generationPromptSnapshot: string) {
@@ -28,7 +38,7 @@ async function copyProviderPrompt(generationPromptSnapshot: string) {
   }
 }
 
-export default function ImageResultGallery({ images, editable, onRetryUpload, onDelete, deletingImageId, showFailedPlaceholders = false }: Props) {
+export default function ImageResultGallery({ images, editable, onRetryUpload, onDelete, deletingImageId, showFailedPlaceholders = false, historySelection, historyActions }: Props) {
   const [loadFailures, setLoadFailures] = useState<Record<string, boolean>>({})
   const [selectedImage, setSelectedImage] = useState<GalleryImage>()
   const visibleImages = images.filter((image) => (showFailedPlaceholders && image.status === 'failed' && !getImageAssetDisplayUrl(image)) || (getImageAssetDisplayUrl(image) && !loadFailures[image.id]))
@@ -52,6 +62,11 @@ export default function ImageResultGallery({ images, editable, onRetryUpload, on
             <Card key={image.id} size="small" cover={cover} className={isFailedWithoutImage ? 'image-result-failed-card' : undefined}>
               <Space direction="vertical" size={4} style={{ width: '100%' }}>
                 <Space wrap>
+                  {historySelection && (
+                    <Checkbox checked={historySelection.selectedIds.includes(image.id)} onChange={(event) => historySelection.onChange(image.id, event.target.checked)}>
+                      选择
+                    </Checkbox>
+                  )}
                   <Tag>{image.modelName}</Tag>
                   {isFailedWithoutImage ? (
                     <Tag color="error">生成失败</Tag>
@@ -91,6 +106,18 @@ export default function ImageResultGallery({ images, editable, onRetryUpload, on
                         删除
                       </Button>
                     </Popconfirm>
+                  </Space>
+                )}
+                {historyActions && (
+                  <Space wrap>
+                    <Popconfirm title="删除这条测试历史？" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => historyActions.onDelete(image)}>
+                      <Button size="small" danger icon={<DeleteOutlined />} loading={historyActions.deletingId === image.id} disabled={historyActions.rerunningId === image.id}>
+                        删除
+                      </Button>
+                    </Popconfirm>
+                    <Button size="small" icon={<ReloadOutlined />} loading={historyActions.rerunningId === image.id} disabled={historyActions.deletingId === image.id} onClick={() => historyActions.onRerun(image)}>
+                      再次生成
+                    </Button>
                   </Space>
                 )}
                 <Text type="secondary">{new Date(image.createdAt).toLocaleString('zh-CN')}</Text>

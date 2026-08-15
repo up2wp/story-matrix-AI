@@ -193,6 +193,22 @@ export function getImagegenHistoryRecord(ownerId: string, id: string, database: 
   return row ? rowToRecord(row) : null
 }
 
+export function deleteImagegenHistoryRecord(ownerId: string, id: string, database: DatabaseInstance = db): boolean {
+  const result = database.prepare<[string, string]>('DELETE FROM imagegenHistory WHERE id = ? AND ownerId = ?').run(id, ownerId)
+  return result.changes === 1
+}
+
+export function deleteImagegenHistoryRecords(ownerId: string, ids: readonly string[], database: DatabaseInstance = db): number {
+  const uniqueIds = Array.from(new Set(ids.map(id => id.trim()).filter(Boolean)))
+  if (uniqueIds.length === 0) return 0
+  const placeholders = uniqueIds.map(() => '?').join(', ')
+  const result = database.prepare(`
+    DELETE FROM imagegenHistory
+    WHERE ownerId = ? AND id IN (${placeholders})
+  `).run(ownerId, ...uniqueIds)
+  return result.changes
+}
+
 export function listImagegenHistoryStorageLocators(database: DatabaseInstance = db): ImagegenHistoryStorageLocator[] {
   const rows = database.prepare<[], Pick<ImagegenHistoryRow, 'ownerId' | 'localAssetId' | 'immichAssetId'>>(`
     SELECT ownerId, localAssetId, immichAssetId

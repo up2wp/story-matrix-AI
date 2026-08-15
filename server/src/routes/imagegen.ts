@@ -7,11 +7,12 @@ import { defaultImageGenerationConfig, normalizeImageGenerationConfig, type Imag
 import { createImageGenerationFailureRecord } from '../services/image-generation-failures.js'
 import { extensionForMime, immichClientFromConfig, readLocalImageAsset, resolveRunnableImageGenerationModel, runImageGeneration, type ImageAssetVariant, type ImageGenerationRunnerOutput } from '../services/image-generation-runner.js'
 import { parseGenerateRequest, persistGenerateReferenceImages, resolveGenerateReferenceInputs, type ParsedGenerateRequest } from '../services/imagegen-generate-references.js'
-import { createImagegenHistoryRecord, getImagegenHistoryRecord, listImagegenHistory, type ImagegenHistoryRecord, type ImagegenStorageMode } from '../services/imagegen-history.js'
+import { createImagegenHistoryRecord, deleteImagegenHistoryRecord, deleteImagegenHistoryRecords, getImagegenHistoryRecord, listImagegenHistory, type ImagegenHistoryRecord, type ImagegenStorageMode } from '../services/imagegen-history.js'
 import { listImagegenReferenceAssetsByIds, type ImagegenReferenceAssetRecord } from '../services/imagegen-reference-assets.js'
 
 const router = Router()
 const MAX_TEST_PROMPT_LENGTH = 8000
+const MAX_HISTORY_DELETE_BATCH = 100
 const ALLOWED_GENERATE_FIELDS = new Set(['prompt', 'modelId', 'size', 'quality', 'format', 'aspectRatio', 'n', 'referenceInputs'])
 
 type FeatureGrant = { readonly userId: string; readonly features?: readonly string[] }
@@ -227,37 +228,30 @@ function serializeHistory(record: ImagegenHistoryRecord, referenceImagesById: Ma
 
 function imageVariant(value: string | undefined): ImageAssetVariant { return value === 'original' ? 'original' : 'thumbnail' }
 
-router.use('/reference-assets', createImagegenReferenceAssetRouter({ loadImageGenerationConfig, canUseImageGeneration, safeErrorMessage }))
+function parseHistoryDeleteIds(body: unknown) {
+  if (typeof body !== 'object' || body === null || Array.isArray(body) || !('ids' in body)) return { ok: false, statusCode: 400, error: '缺少要删除的测试历史 ID' } as const
+  const ids = body.ids
+  if (!Array.isArray(ids)) return { ok: false, statusCode: 400, error: '测试历史 ID 必须是数组' } as const
+  const uniqueIds = Array.from(new Set(ids.map(id => typeof id === 'string' ? id.trim() : '').filter(Boolean)))
+  if (uniqueIds.length === 0) return { ok: false, statusCode: 400, error: '缺少要删除的测试历史 ID' } as const
+  if (uniqueIds.length > MAX_HISTORY_DELETE_BATCH) return { ok: false, statusCode: 400, error: `单次最多删除 ${MAX_HISTORY_DELETE_BATCH} 条测试历史` } as const
+  return { ok: true, ids: uniqueIds } as const
+}
 
-router.get('/history', (req, res) => {
-  const request = req as AuthenticatedRequest
-  const history = listImagegenHistory(request.currentUser.id)
-  const referenceImagesById = referenceImagesForHistory(request.currentUser.id, history)
-  res.json(history.map(record => serializeHistory(record, referenceImagesById)))
-})
-
-router.post('/generate', async (req, res) => {
-  const request = req as AuthenticatedRequest
-  let parsedRequest: ParsedGenerateRequest
-  try {
-    parsedRequest = await parseGenerateRequest(request)
-  } catch (error) {
-    return res.status(400).json({ error: error instanceof Error ? error.message : '生成请求解析失败' })
-  }
-
+async function executeImagegenRun(request: AuthenticatedRequest, parsedRequest: ParsedGenerateRequest) {
   const body = parsedRequest.body
   const unsupportedFields = unsupportedGenerateFields(body)
-  if (unsupportedFields.length > 0) return res.status(400).json({ error: '测试生图请求不支持作品上下文字段' })
+  if (unsupportedFields.length > 0) return { ok: false, statusCode: 400, error: '测试生图请求不支持作品上下文字段' } as const
   const parsedPrompt = testPrompt(body)
-  if (!parsedPrompt.ok) return res.status(parsedPrompt.statusCode).json({ error: parsedPrompt.error })
+  if (!parsedPrompt.ok) return { ok: false, statusCode: parsedPrompt.statusCode, error: parsedPrompt.error } as const
 
   const config = loadImageGenerationConfig()
-  if (!canUseImageGeneration(request, config)) return res.status(403).json({ error: '未授权使用生图功能' })
+  if (!canUseImageGeneration(request, config)) return { ok: false, statusCode: 403, error: '未授权使用生图功能' } as const
   const modelId = typeof body.modelId === 'string' && body.modelId.trim() ? body.modelId.trim() : config.defaultModelId
   const resolved = resolveRunnableImageGenerationModel(config, modelId)
-  if (!resolved.ok) return res.status(resolved.statusCode).json({ error: resolved.error })
+  if (!resolved.ok) return { ok: false, statusCode: resolved.statusCode, error: resolved.error } as const
   const referenceSelection = await resolveGenerateReferenceInputs({ value: body.referenceInputs, files: parsedRequest.files, ownerId: request.currentUser.id, config, model: resolved.model })
-  if (!referenceSelection.ok) return res.status(referenceSelection.statusCode).json({ error: referenceSelection.error })
+  if (!referenceSelection.ok) return { ok: false, statusCode: referenceSelection.statusCode, error: referenceSelection.error } as const
   const runContext: ResolvedImagegenRun = { ownerId: request.currentUser.id, prompt: parsedPrompt.prompt, referenceImageIds: referenceSelection.ids, config, provider: resolved.provider, model: resolved.model }
 
   try {
@@ -288,7 +282,7 @@ router.post('/generate', async (req, res) => {
       ? { ...result.image, error: safeErrorMessage(finalReferences.error, '参考图持久化失败', config) }
       : result.image
     const record = createSuccessHistoryRecord({ ...runContext, referenceImageIds: finalReferences.ids, image })
-    return res.status(result.httpStatus).json(serializeHistory(record))
+    return { ok: true, statusCode: result.httpStatus, record } as const
   } catch (error) {
     const finalReferences: PersistedGenerateReferences = await persistGenerateReferenceImages(referenceSelection.slots, {
       ownerId: request.currentUser.id,
@@ -315,8 +309,66 @@ router.post('/generate', async (req, res) => {
       config: runContext.config,
     })
     const record = createFailureHistoryRecord({ ...runContext, referenceImageIds: finalReferences.ids, error: historyError })
-    return res.status(502).json(serializeHistory(record))
+    return { ok: true, statusCode: 502, record } as const
   }
+}
+
+router.use('/reference-assets', createImagegenReferenceAssetRouter({ loadImageGenerationConfig, canUseImageGeneration, safeErrorMessage }))
+
+router.get('/history', (req, res) => {
+  const request = req as AuthenticatedRequest
+  const history = listImagegenHistory(request.currentUser.id)
+  const referenceImagesById = referenceImagesForHistory(request.currentUser.id, history)
+  res.json(history.map(record => serializeHistory(record, referenceImagesById)))
+})
+
+router.delete('/history/:recordId', (req, res) => {
+  const request = req as unknown as AuthenticatedRequest
+  const config = loadImageGenerationConfig()
+  if (!canUseImageGeneration(request, config)) return res.status(403).json({ error: '未授权使用生图功能' })
+  const deleted = deleteImagegenHistoryRecord(request.currentUser.id, req.params.recordId)
+  if (!deleted) return res.status(404).json({ error: '测试历史不存在' })
+  return res.status(204).end()
+})
+
+router.post('/history/delete', (req, res) => {
+  const request = req as AuthenticatedRequest
+  const parsed = parseHistoryDeleteIds(request.body)
+  if (!parsed.ok) return res.status(parsed.statusCode).json({ error: parsed.error })
+  const config = loadImageGenerationConfig()
+  if (!canUseImageGeneration(request, config)) return res.status(403).json({ error: '未授权使用生图功能' })
+  const deletedCount = deleteImagegenHistoryRecords(request.currentUser.id, parsed.ids)
+  return res.json({ deletedCount })
+})
+
+router.post('/history/:recordId/rerun', async (req, res) => {
+  const request = req as unknown as AuthenticatedRequest
+  const sourceRecord = getImagegenHistoryRecord(request.currentUser.id, req.params.recordId)
+  if (!sourceRecord) return res.status(404).json({ error: '测试历史不存在' })
+  const body = {
+    prompt: sourceRecord.prompt,
+    modelId: sourceRecord.modelId,
+    referenceInputs: sourceRecord.referenceImageIds.map(id => ({ kind: 'asset', id })),
+  }
+  const result = await executeImagegenRun(request, { body, files: [] })
+  if (!result.ok) return res.status(result.statusCode).json({ error: result.error })
+  const referenceImagesById = referenceImagesForHistory(request.currentUser.id, [result.record])
+  return res.status(result.statusCode).json(serializeHistory(result.record, referenceImagesById))
+})
+
+router.post('/generate', async (req, res) => {
+  const request = req as AuthenticatedRequest
+  let parsedRequest: ParsedGenerateRequest
+  try {
+    parsedRequest = await parseGenerateRequest(request)
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : '生成请求解析失败' })
+  }
+
+  const result = await executeImagegenRun(request, parsedRequest)
+  if (!result.ok) return res.status(result.statusCode).json({ error: result.error })
+  const referenceImagesById = referenceImagesForHistory(request.currentUser.id, [result.record])
+  return res.status(result.statusCode).json(serializeHistory(result.record, referenceImagesById))
 })
 
 router.get('/assets/:recordId', (req, res) => {
