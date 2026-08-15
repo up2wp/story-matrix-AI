@@ -200,6 +200,24 @@ body {
   border-color: var(--ant-color-error-border);
 }
 
+.image-result-generating-card {
+  border-color: var(--ant-color-primary-border);
+}
+
+.image-result-generating-cover {
+  display: flex;
+  aspect-ratio: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--ant-color-primary-bg);
+  color: var(--ant-color-primary-text);
+}
+
+.image-result-generating-cover .anticon {
+  font-size: 24px;
+}
+
 .image-result-failed-cover {
   display: flex;
   aspect-ratio: 1;

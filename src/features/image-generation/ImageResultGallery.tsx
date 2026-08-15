@@ -1,13 +1,19 @@
 import { useState } from 'react'
-import { CopyOutlined, DeleteOutlined, PictureOutlined, ReloadOutlined } from '@ant-design/icons'
+import { CopyOutlined, DeleteOutlined, LoadingOutlined, PictureOutlined, ReloadOutlined } from '@ant-design/icons'
 import { Button, Card, Checkbox, Empty, Image, Modal, message, Popconfirm, Space, Tag, Typography } from 'antd'
-import type { ImageAssetRecord, ImagegenReferenceImageSummary } from '@/core/types'
+import type { ImageAssetRecord, ImagegenHistoryStatus, ImagegenReferenceImageSummary } from '@/core/types'
 import { getImageAssetDisplayUrl } from './imageGenerationClient'
 
 const { Paragraph, Text } = Typography
 
-type GalleryImage = ImageAssetRecord & {
+export type GalleryImage = Omit<ImageAssetRecord, 'status' | 'storageStatus'> & {
+  readonly status: ImagegenHistoryStatus
+  readonly storageStatus: ImagegenHistoryStatus
   readonly referenceImages?: readonly ImagegenReferenceImageSummary[]
+}
+
+function isImageAssetRecord(image: GalleryImage): image is ImageAssetRecord & GalleryImage {
+  return image.status !== 'generating' && image.storageStatus !== 'generating'
 }
 
 interface Props {
@@ -16,6 +22,7 @@ interface Props {
   onRetryUpload?: (image: ImageAssetRecord) => void
   onDelete?: (image: ImageAssetRecord) => void
   deletingImageId?: string | null
+  showGeneratingPlaceholders?: boolean
   showFailedPlaceholders?: boolean
   historySelection?: {
     readonly selectedIds: readonly string[]
@@ -38,10 +45,10 @@ async function copyProviderPrompt(generationPromptSnapshot: string) {
   }
 }
 
-export default function ImageResultGallery({ images, editable, onRetryUpload, onDelete, deletingImageId, showFailedPlaceholders = false, historySelection, historyActions }: Props) {
+export default function ImageResultGallery({ images, editable, onRetryUpload, onDelete, deletingImageId, showGeneratingPlaceholders = false, showFailedPlaceholders = false, historySelection, historyActions }: Props) {
   const [loadFailures, setLoadFailures] = useState<Record<string, boolean>>({})
   const [selectedImage, setSelectedImage] = useState<GalleryImage>()
-  const visibleImages = images.filter((image) => (showFailedPlaceholders && image.status === 'failed' && !getImageAssetDisplayUrl(image)) || (getImageAssetDisplayUrl(image) && !loadFailures[image.id]))
+  const visibleImages = images.filter((image) => (showGeneratingPlaceholders && image.status === 'generating' && !getImageAssetDisplayUrl(image)) || (showFailedPlaceholders && image.status === 'failed' && !getImageAssetDisplayUrl(image)) || (getImageAssetDisplayUrl(image) && !loadFailures[image.id]))
   if (!visibleImages.length) return <Empty description="暂无可展示的图片结果" />
   return (
     <>
@@ -49,8 +56,14 @@ export default function ImageResultGallery({ images, editable, onRetryUpload, on
         {visibleImages.map((image) => {
           const displayUrl = getImageAssetDisplayUrl(image)
           const originalUrl = getImageAssetDisplayUrl(image, 'original')
+          const isGeneratingWithoutImage = image.status === 'generating' && !displayUrl
           const isFailedWithoutImage = image.status === 'failed' && !displayUrl
-          const cover = isFailedWithoutImage ? (
+          const cover = isGeneratingWithoutImage ? (
+            <div className="image-result-generating-cover">
+              <LoadingOutlined />
+              <Text type="secondary">正在生成</Text>
+            </div>
+          ) : isFailedWithoutImage ? (
             <div className="image-result-failed-cover">
               <PictureOutlined />
               <Text type="secondary">未生成图片</Text>
@@ -59,7 +72,7 @@ export default function ImageResultGallery({ images, editable, onRetryUpload, on
             <Image src={displayUrl} preview={originalUrl ? { src: originalUrl } : false} alt="生成图片" style={{ objectFit: 'cover', maxHeight: 260 }} onError={() => setLoadFailures((current) => ({ ...current, [image.id]: true }))} />
           )
           return (
-            <Card key={image.id} size="small" cover={cover} className={isFailedWithoutImage ? 'image-result-failed-card' : undefined}>
+            <Card key={image.id} size="small" cover={cover} className={isGeneratingWithoutImage ? 'image-result-generating-card' : isFailedWithoutImage ? 'image-result-failed-card' : undefined}>
               <Space direction="vertical" size={4} style={{ width: '100%' }}>
                 <Space wrap>
                   {historySelection && (
@@ -68,7 +81,9 @@ export default function ImageResultGallery({ images, editable, onRetryUpload, on
                     </Checkbox>
                   )}
                   <Tag>{image.modelName}</Tag>
-                  {isFailedWithoutImage ? (
+                  {isGeneratingWithoutImage ? (
+                    <Tag color="processing">生成中</Tag>
+                  ) : isFailedWithoutImage ? (
                     <Tag color="error">生成失败</Tag>
                   ) : (
                     <>
@@ -77,11 +92,11 @@ export default function ImageResultGallery({ images, editable, onRetryUpload, on
                     </>
                   )}
                 </Space>
-                <Button size="small" onClick={() => setSelectedImage(image)}>
+                <Button size="small" disabled={isGeneratingWithoutImage} onClick={() => setSelectedImage(image)}>
                   查看详情
                 </Button>
-                {!isFailedWithoutImage && image.status !== 'succeeded' && <Text type="danger">{image.error || '图片存储未完成，可稍后重试'}</Text>}
-                {!isFailedWithoutImage && image.generationPromptSnapshot && (
+                {!isGeneratingWithoutImage && !isFailedWithoutImage && image.status !== 'succeeded' && <Text type="danger">{image.error || '图片存储未完成，可稍后重试'}</Text>}
+                {!isGeneratingWithoutImage && !isFailedWithoutImage && image.generationPromptSnapshot && (
                   <div>
                     <Space align="center" style={{ marginBottom: 4 }}>
                       <Text type="secondary">实际调用提示词</Text>
@@ -96,12 +111,12 @@ export default function ImageResultGallery({ images, editable, onRetryUpload, on
                 )}
                 {editable && (
                   <Space wrap>
-                    {image.storageMode === 'immich' && image.status !== 'succeeded' && (
+                    {image.storageMode === 'immich' && isImageAssetRecord(image) && image.status !== 'succeeded' && (
                       <Button size="small" onClick={() => onRetryUpload?.(image)}>
                         重传到 Immich
                       </Button>
                     )}
-                    <Popconfirm title="删除这张图片资产？" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => onDelete?.(image)}>
+                    <Popconfirm title="删除这张图片资产？" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => isImageAssetRecord(image) && onDelete?.(image)}>
                       <Button size="small" danger icon={<DeleteOutlined />} loading={deletingImageId === image.id}>
                         删除
                       </Button>
@@ -115,7 +130,7 @@ export default function ImageResultGallery({ images, editable, onRetryUpload, on
                         删除
                       </Button>
                     </Popconfirm>
-                    <Button size="small" icon={<ReloadOutlined />} loading={historyActions.rerunningId === image.id} disabled={historyActions.deletingId === image.id} onClick={() => historyActions.onRerun(image)}>
+                    <Button size="small" icon={<ReloadOutlined />} loading={historyActions.rerunningId === image.id} disabled={historyActions.deletingId === image.id || isGeneratingWithoutImage} onClick={() => historyActions.onRerun(image)}>
                       再次生成
                     </Button>
                   </Space>

@@ -1,18 +1,19 @@
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Card, Empty, Input, Popconfirm, Select, Space, Spin, Tag, Typography, message } from 'antd'
-import type { ImageAssetRecord } from '@/core/types'
 import { useAuthStore } from '@/core/auth-store'
 import { useSystemConfigStore } from '@/core/system-config-store'
 import { canUseFeature } from '@/core/feature-permissions'
 import type { FeaturePermissionSources } from '@/core/feature-permissions'
 import ImageModelSelector from '@/features/image-generation/ImageModelSelector'
 import ImageResultGallery from '@/features/image-generation/ImageResultGallery'
+import type { GalleryImage } from '@/features/image-generation/ImageResultGallery'
 import { ImagegenClientError, imagegenClient } from '@/features/imagegen/imagegenClient'
 import type { ImagegenHistoryResponse, ImagegenReferenceInput } from '@/features/imagegen/imagegenClient'
 
 const { Paragraph, Text, Title } = Typography
 const EMPTY_HISTORY: ImagegenHistoryResponse[] = []
+const HISTORY_POLL_INTERVAL_MS = 3000
 
 type ReferenceSlot = { readonly file: File; readonly previewUrl: string }
 
@@ -34,7 +35,7 @@ export default function ImagegenPage() {
   const [deletingSelectedHistory, setDeletingSelectedHistory] = useState(false)
   const [rerunningHistoryId, setRerunningHistoryId] = useState<string | null>(null)
   const [storedReferenceSlots, setReferenceSlots] = useState<readonly ReferenceSlot[]>([])
-  const [generating, setGenerating] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
   const referenceSlotsRef = useRef<readonly ReferenceSlot[]>([])
 
   const permissionSources: FeaturePermissionSources = {
@@ -48,12 +49,13 @@ export default function ImagegenPage() {
   const selectedModel = useMemo(() => enabledModels.find((model) => model.id === selectedModelId), [enabledModels, selectedModelId])
   const maxReferenceImages = selectedModel?.capabilities.referenceImages ? Math.min(3, selectedModel.capabilities.maxReferenceImages || 0) : 0
   const supportsReferenceImages = maxReferenceImages > 0
-  const canGenerate = canUseImagegen && Boolean(selectedModel) && Boolean(prompt.trim()) && !generating
+  const canGenerate = canUseImagegen && Boolean(selectedModel) && Boolean(prompt.trim()) && !submitting
   const visibleHistory = canUseImagegen ? history : EMPTY_HISTORY
   const visibleHistoryError = canUseImagegen ? historyError : undefined
+  const hasGeneratingHistory = visibleHistory.some((record) => record.status === 'generating')
   const selectedReferenceSlots = useMemo(() => storedReferenceSlots.slice(0, maxReferenceImages), [maxReferenceImages, storedReferenceSlots])
   const selectedReferenceCount = selectedReferenceSlots.length
-  const galleryImages = useMemo<ImageAssetRecord[]>(
+  const galleryImages = useMemo<GalleryImage[]>(
     () =>
       visibleHistory.map((record) => ({
         id: record.id,
@@ -79,15 +81,15 @@ export default function ImagegenPage() {
     [visibleHistory],
   )
 
-  const refreshHistory = useCallback(async () => {
-    setHistoryLoading(true)
+  const refreshHistory = useCallback(async (options?: { readonly silent?: boolean }) => {
+    if (!options?.silent) setHistoryLoading(true)
     setHistoryError(undefined)
     try {
       setHistory(await imagegenClient.history())
     } catch (error) {
       setHistoryError(error instanceof ImagegenClientError ? error.message : '测试历史加载失败，请稍后重试。')
     } finally {
-      setHistoryLoading(false)
+      if (!options?.silent) setHistoryLoading(false)
     }
   }, [])
 
@@ -100,12 +102,23 @@ export default function ImagegenPage() {
   }, [canUseImagegen, refreshHistory])
 
   useEffect(() => {
-    setReferenceSlots((current) => {
-      current.slice(maxReferenceImages).forEach((slot) => {
-        URL.revokeObjectURL(slot.previewUrl)
+    if (!canUseImagegen || !hasGeneratingHistory) return
+    const timeoutId = window.setTimeout(() => {
+      void refreshHistory({ silent: true })
+    }, HISTORY_POLL_INTERVAL_MS)
+    return () => window.clearTimeout(timeoutId)
+  }, [canUseImagegen, hasGeneratingHistory, refreshHistory])
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setReferenceSlots((current) => {
+        current.slice(maxReferenceImages).forEach((slot) => {
+          URL.revokeObjectURL(slot.previewUrl)
+        })
+        return current.slice(0, maxReferenceImages)
       })
-      return current.slice(0, maxReferenceImages)
-    })
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
   }, [maxReferenceImages])
 
   useEffect(() => {
@@ -122,7 +135,7 @@ export default function ImagegenPage() {
   )
 
   const handleReferenceFileSelection = (file: File | undefined) => {
-    if (!file || !canUseImagegen || !supportsReferenceImages || generating) return
+    if (!file || !canUseImagegen || !supportsReferenceImages) return
 
     const previewUrl = URL.createObjectURL(file)
     setReferenceSlots((current) => {
@@ -135,7 +148,7 @@ export default function ImagegenPage() {
   }
 
   const handleReferenceFileRemoval = (slotIndex: number) => {
-    if (!canUseImagegen || !supportsReferenceImages || generating) return
+    if (!canUseImagegen || !supportsReferenceImages) return
 
     setReferenceSlots((current) => {
       const removedSlot = current[slotIndex]
@@ -151,9 +164,9 @@ export default function ImagegenPage() {
     const selectedReferenceFiles = selectedReferenceSlots.map((slot) => slot.file)
     const referenceInputs: ImagegenReferenceInput[] = selectedReferenceFiles.map((_, index) => ({ kind: 'file', index }))
 
-    setGenerating(true)
+    setSubmitting(true)
     try {
-      const generated = await imagegenClient.generate({
+      const queued = await imagegenClient.generate({
         prompt,
         modelId: selectedModel.id,
         ...(size ? { size } : {}),
@@ -163,13 +176,12 @@ export default function ImagegenPage() {
         referenceInputs,
         referenceFiles: selectedReferenceFiles,
       })
-      setHistory((current) => [generated, ...current.filter((record) => record.id !== generated.id)])
-      message.success('测试图片已生成')
+      setHistory((current) => [queued, ...current.filter((record) => record.id !== queued.id)])
+      message.success('测试图片已开始生成')
     } catch (error) {
       message.error(error instanceof ImagegenClientError ? error.message : '测试图片生成失败，请稍后重试。')
     } finally {
-      setGenerating(false)
-      void refreshHistory()
+      setSubmitting(false)
     }
   }
 
@@ -177,7 +189,7 @@ export default function ImagegenPage() {
     setSelectedHistoryIds((current) => selected ? [...current, id] : current.filter((historyId) => historyId !== id))
   }
 
-  const handleDeleteHistoryRecord = async (record: ImageAssetRecord) => {
+  const handleDeleteHistoryRecord = async (record: GalleryImage) => {
     setDeletingHistoryId(record.id)
     try {
       await imagegenClient.deleteHistory(record.id)
@@ -208,7 +220,7 @@ export default function ImagegenPage() {
     }
   }
 
-  const handleRerunHistoryRecord = async (record: ImageAssetRecord) => {
+  const handleRerunHistoryRecord = async (record: GalleryImage) => {
     setRerunningHistoryId(record.id)
     try {
       const rerun = await imagegenClient.rerunHistory(record.id)
@@ -272,7 +284,7 @@ export default function ImagegenPage() {
                 <Input.TextArea
                   value={prompt}
                   onChange={(event) => setPrompt(event.target.value)}
-                  disabled={!canUseImagegen || generating}
+                  disabled={!canUseImagegen}
                   autoSize={{ minRows: 6, maxRows: 14 }}
                   placeholder="输入要测试的图片提示词"
                   style={{ marginTop: 8 }}
@@ -281,7 +293,7 @@ export default function ImagegenPage() {
               <div>
                 <Text strong>模型</Text>
                 <div style={{ marginTop: 8 }}>
-                  <ImageModelSelector models={imageGenerationConfig.models} value={selectedModelId || undefined} onChange={setModelId} disabled={!canUseImagegen || generating} />
+                  <ImageModelSelector models={imageGenerationConfig.models} value={selectedModelId || undefined} onChange={setModelId} disabled={!canUseImagegen} />
                 </div>
               </div>
               {selectedModel?.capabilities.sizes.length ? (
@@ -289,7 +301,7 @@ export default function ImagegenPage() {
                   value={size}
                   onChange={(value) => setSize(value)}
                   allowClear
-                  disabled={!canUseImagegen || generating}
+                  disabled={!canUseImagegen}
                   placeholder="尺寸（可选）"
                   options={selectedModel.capabilities.sizes.map((value) => ({
                     value,
@@ -302,7 +314,7 @@ export default function ImagegenPage() {
                   value={quality}
                   onChange={(value) => setQuality(value)}
                   allowClear
-                  disabled={!canUseImagegen || generating}
+                  disabled={!canUseImagegen}
                   placeholder="质量（可选）"
                   options={selectedModel.capabilities.qualities.map((value) => ({ value, label: value }))}
                 />
@@ -312,7 +324,7 @@ export default function ImagegenPage() {
                   value={format}
                   onChange={(value) => setFormat(value)}
                   allowClear
-                  disabled={!canUseImagegen || generating}
+                  disabled={!canUseImagegen}
                   placeholder="格式（可选）"
                   options={selectedModel.capabilities.formats.map((value) => ({
                     value,
@@ -325,7 +337,7 @@ export default function ImagegenPage() {
                   value={aspectRatio}
                   onChange={(value) => setAspectRatio(value)}
                   allowClear
-                  disabled={!canUseImagegen || generating}
+                  disabled={!canUseImagegen}
                   placeholder="比例（可选）"
                   options={selectedModel.capabilities.aspectRatios.map((value) => ({ value, label: value }))}
                 />
@@ -344,7 +356,7 @@ export default function ImagegenPage() {
                           aria-label={`移除参考图 ${slotIndex + 1}`}
                           className="image-reference-remove-button"
                           danger
-                          disabled={!canUseImagegen || generating}
+                          disabled={!canUseImagegen}
                           icon={<DeleteOutlined />}
                           onClick={() => handleReferenceFileRemoval(slotIndex)}
                           shape="circle"
@@ -358,7 +370,7 @@ export default function ImagegenPage() {
                         <input
                           type="file"
                           accept="image/png,image/jpeg,image/webp"
-                          disabled={!canUseImagegen || generating}
+                          disabled={!canUseImagegen}
                           onChange={(event) => {
                             const file = event.target.files?.[0]
                             event.target.value = ''
@@ -371,7 +383,7 @@ export default function ImagegenPage() {
                   </div>
                 ) : null}
               </div>
-              <Button type="primary" loading={generating} disabled={!canGenerate} onClick={handleGenerate}>
+              <Button type="primary" loading={submitting} disabled={!canGenerate} onClick={handleGenerate}>
                 生成测试图片
               </Button>
             </Space>
@@ -401,7 +413,7 @@ export default function ImagegenPage() {
             ) : historyLoading && visibleHistory.length === 0 ? (
               <Spin />
             ) : visibleHistory.length ? (
-              <ImageResultGallery images={galleryImages} showFailedPlaceholders
+              <ImageResultGallery images={galleryImages} showFailedPlaceholders showGeneratingPlaceholders
                 historySelection={{ selectedIds: selectedHistoryIds, onChange: handleHistorySelection }}
                 historyActions={{ onDelete: handleDeleteHistoryRecord, onRerun: handleRerunHistoryRecord, deletingId: deletingHistoryId, rerunningId: rerunningHistoryId }}
               />
