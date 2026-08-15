@@ -22,6 +22,12 @@ export type ImagegenReferenceAssetRecord = {
   readonly createdAt: number
 }
 
+export type ImagegenReferenceAssetStorageLocator = {
+  readonly ownerId: string
+  readonly localAssetId?: string
+  readonly immichAssetId?: string
+}
+
 export type CreateImagegenReferenceAssetInput = {
   readonly ownerId: string
   readonly buffer: Buffer
@@ -30,6 +36,7 @@ export type CreateImagegenReferenceAssetInput = {
   readonly config: ImageGenerationConfig
   readonly publicAssetUrl: (assetId: string, variant?: ImageAssetVariant) => string
   readonly immichFilename: (mimeType: string) => string
+  readonly immichDeviceAssetId: (mimeType: string) => string
 }
 
 type ImagegenReferenceAssetRow = {
@@ -156,6 +163,14 @@ export function getImagegenReferenceAssetByContentHash(ownerId: string, contentH
   return row ? rowToRecord(row) : null
 }
 
+export function listImagegenReferenceAssetsByIds(ownerId: string, ids: readonly string[], database: DatabaseInstance = db): ImagegenReferenceAssetRecord[] {
+  const uniqueIds = Array.from(new Set(ids.map(id => id.trim()).filter(Boolean)))
+  if (uniqueIds.length === 0) return []
+  const placeholders = uniqueIds.map(() => '?').join(', ')
+  const rows = database.prepare<[string, ...string[]], ImagegenReferenceAssetRow>(`${IMAGEGEN_REFERENCE_SELECT} WHERE ownerId = ? AND id IN (${placeholders}) AND storageStatus = 'succeeded'`).all(ownerId, ...uniqueIds)
+  return rows.map(rowToRecord)
+}
+
 export async function createImagegenReferenceAsset(input: CreateImagegenReferenceAssetInput, database: DatabaseInstance = db): Promise<ImagegenReferenceAssetRecord> {
   const mimeType = detectImageMime(input.buffer)
   const contentHash = input.contentHash || imagegenReferenceContentHash(input.buffer)
@@ -185,7 +200,7 @@ export async function createImagegenReferenceAsset(input: CreateImagegenReferenc
   await client.assertReadyForUpload()
   const albumId = await client.ensureProjectAlbum()
   const filename = input.immichFilename(mimeType)
-  const uploaded = await uploadToImmichWithRetry({ client, buffer: input.buffer, filename, mimeType, albumId })
+  const uploaded = await uploadToImmichWithRetry({ client, buffer: input.buffer, filename, mimeType, albumId, deviceAssetId: input.immichDeviceAssetId(mimeType) })
   await waitForImmichThumbnail(client, uploaded.assetId)
   const id = randomUUID()
   return insertReferenceAsset({
@@ -208,6 +223,19 @@ export async function createImagegenReferenceAsset(input: CreateImagegenReferenc
 export function listImagegenReferenceAssets(ownerId: string, database: DatabaseInstance = db): ImagegenReferenceAssetRecord[] {
   const rows = database.prepare<[string], ImagegenReferenceAssetRow>(`${IMAGEGEN_REFERENCE_SELECT} WHERE ownerId = ? ORDER BY createdAt DESC`).all(ownerId)
   return rows.map(rowToRecord)
+}
+
+export function listImagegenReferenceAssetStorageLocators(database: DatabaseInstance = db): ImagegenReferenceAssetStorageLocator[] {
+  const rows = database.prepare<[], Pick<ImagegenReferenceAssetRow, 'ownerId' | 'localAssetId' | 'immichAssetId'>>(`
+    SELECT ownerId, localAssetId, immichAssetId
+    FROM imagegenReferenceAssets
+    WHERE storageStatus = 'succeeded' AND (localAssetId IS NOT NULL OR immichAssetId IS NOT NULL)
+  `).all()
+  return rows.map(row => ({
+    ownerId: row.ownerId,
+    localAssetId: row.localAssetId || undefined,
+    immichAssetId: row.immichAssetId || undefined,
+  }))
 }
 
 export function getImagegenReferenceAsset(ownerId: string, id: string, database: DatabaseInstance = db): ImagegenReferenceAssetRecord | null {

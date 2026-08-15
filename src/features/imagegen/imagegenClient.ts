@@ -81,7 +81,6 @@ export const imagegenClient = {
     return request<ImagegenHistoryResponse>('/generate', init, json)
   },
   history: () => request<ImagegenHistoryResponse[]>('/history'),
-  referenceAssets: () => request<ImagegenReferenceAssetResponse[]>('/reference-assets'),
 }
 
 export function getImagegenReferenceAssetUrl(asset: Pick<ImagegenReferenceAssetResponse, 'thumbnailUrl' | 'originalUrl'>, variant: 'thumbnail' | 'original' = 'thumbnail') {

@@ -33,6 +33,15 @@ function referenceImmichFilename(ownerId: string, projectName: string | undefine
   ].join('-') + `.${extensionForMime(mimeType)}`
 }
 
+function referenceImmichDeviceAssetId(ownerId: string, projectName: string | undefined, mimeType: string) {
+  return [
+    slugPart(projectName || 'story-matrix', 'story-matrix'),
+    slugPart(ownerId, 'user'),
+    'imagegen-reference',
+    randomUUID(),
+  ].join(':') + `.${extensionForMime(mimeType)}`
+}
+
 function imagegenReferenceAssetUrl(assetId: string, variant?: ImageAssetVariant) {
   const encoded = encodeURIComponent(assetId)
   return variant ? `/api/imagegen/reference-assets/${encoded}/${variant}` : `/api/imagegen/reference-assets/${encoded}`
@@ -145,6 +154,7 @@ export function createImagegenReferenceAssetRouter(input: ImagegenReferenceAsset
         config,
         publicAssetUrl: imagegenReferenceAssetUrl,
         immichFilename: mimeType => referenceImmichFilename(request.currentUser.id, config.immich?.projectName, mimeType),
+        immichDeviceAssetId: mimeType => referenceImmichDeviceAssetId(request.currentUser.id, config.immich?.projectName, mimeType),
       })
       return res.status(201).json(serializeReferenceAsset(record))
     } catch (error) {

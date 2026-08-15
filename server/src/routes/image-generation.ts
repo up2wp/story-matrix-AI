@@ -10,6 +10,8 @@ import {
   type ImageGenerationProviderConfig,
 } from '../services/image-generation-config.js'
 import { createImageGenerationFailureRecord } from '../services/image-generation-failures.js'
+import { listImagegenHistoryStorageLocators } from '../services/imagegen-history.js'
+import { listImagegenReferenceAssetStorageLocators } from '../services/imagegen-reference-assets.js'
 import {
   extensionForMime,
   immichClientFromConfig,
@@ -545,13 +547,50 @@ function findImageAssetRecord(images: Record<string, ImageAssetRecord>, assetId:
 }
 
 function removeMatchingImageAssetRecords(images: Record<string, ImageAssetRecord>, deleted: ImageAssetRecord) {
-  return Object.fromEntries(Object.entries(images).filter(([key, image]) => {
-    if (key === deleted.id || image.id === deleted.id) return false
-    if (deleted.immichAssetId && image.immichAssetId === deleted.immichAssetId) return false
-    if (deleted.immichFilename && image.immichFilename === deleted.immichFilename) return false
-    if (deleted.localAssetId && image.localAssetId === deleted.localAssetId) return false
-    return true
-  }))
+  return Object.fromEntries(Object.entries(images).filter(([key, image]) => !imageAssetRecordMatchesDeleted(key, image, deleted)))
+}
+
+function localStorageAssetId(image: ImageAssetRecord) {
+  return image.localAssetId || (image.storageMode === 'local' ? image.id : undefined)
+}
+
+function imageAssetRecordMatchesDeleted(key: string, image: ImageAssetRecord, deleted: ImageAssetRecord) {
+  if (key === deleted.id || image.id === deleted.id) return true
+  if (deleted.immichAssetId && image.immichAssetId === deleted.immichAssetId) return true
+  if (deleted.immichFilename && image.immichFilename === deleted.immichFilename) return true
+  if (deleted.localAssetId && image.localAssetId === deleted.localAssetId) return true
+  const deletedLocalAssetId = localStorageAssetId(deleted)
+  if (deletedLocalAssetId && image.localAssetId === deletedLocalAssetId) return true
+  return false
+}
+
+function imageReferencesStorageAsset(image: ImageAssetRecord, deleted: ImageAssetRecord) {
+  const deletedLocalAssetId = localStorageAssetId(deleted)
+  if (deleted.immichAssetId && image.immichAssetId === deleted.immichAssetId) return true
+  if (deletedLocalAssetId && localStorageAssetId(image) === deletedLocalAssetId) return true
+  return false
+}
+
+function imagegenStorageLocatorReferencesAsset(locator: { readonly ownerId: string; readonly localAssetId?: string; readonly immichAssetId?: string }, workId: string, deleted: ImageAssetRecord) {
+  const deletedLocalAssetId = localStorageAssetId(deleted)
+  if (deleted.immichAssetId && locator.immichAssetId === deleted.immichAssetId) return true
+  if (deletedLocalAssetId && locator.ownerId === workId && locator.localAssetId === deletedLocalAssetId) return true
+  return false
+}
+
+function storageAssetStillReferenced(workId: string, deleted: ImageAssetRecord) {
+  const rows = db.prepare<[], Pick<WorkRow, 'id' | 'data'>>('SELECT id, data FROM works').all()
+  const workReferenced = rows.some(row => {
+    const data = JSON.parse(row.data) as WorkData
+    const images = data.visualAssets?.images || {}
+    return Object.entries(images).some(([key, image]) => {
+      if (row.id === workId && imageAssetRecordMatchesDeleted(key, image, deleted)) return false
+      return imageReferencesStorageAsset(image, deleted)
+    })
+  })
+  if (workReferenced) return true
+  if (listImagegenReferenceAssetStorageLocators().some(locator => imagegenStorageLocatorReferencesAsset(locator, workId, deleted))) return true
+  return listImagegenHistoryStorageLocators().some(locator => imagegenStorageLocatorReferencesAsset(locator, workId, deleted))
 }
 
 function slugPart(value: string | undefined, fallback: string) {
@@ -712,6 +751,16 @@ function buildImmichFilename(work: WorkRow, body: Record<string, unknown>, mimeT
   ].join('-') + `.${extensionForMime(mimeType)}`
 }
 
+function buildImmichDeviceAssetId(work: WorkRow, body: Record<string, unknown>, mimeType: string) {
+  return [
+    slugPart(String(body.immichProjectName || 'story-matrix'), 'story-matrix'),
+    slugPart(work.ownerId, 'user'),
+    slugPart(work.id, 'work'),
+    promptTypeLabel(String(body.promptId || '')),
+    randomUUID(),
+  ].join(':') + `.${extensionForMime(mimeType)}`
+}
+
 function providerFromDiscoveryDraft(body: Record<string, unknown>, existing: ImageGenerationConfig): ImageGenerationProviderConfig | null {
   const providerId = String(body.providerId || '').trim()
   const savedProvider = providerId ? existing.providers.find(provider => provider.id === providerId) : undefined
@@ -835,6 +884,7 @@ router.post('/generate', async (req, res) => {
           ? `/api/image-generation/assets/${encodeURIComponent(workId)}/${encodeURIComponent(assetId)}/${variant}`
           : `/api/image-generation/assets/${encodeURIComponent(workId)}/${encodeURIComponent(assetId)}`,
         immichFilename: mimeType => buildImmichFilename(access.row, { ...body, immichProjectName: config.immich?.projectName }, mimeType),
+        immichDeviceAssetId: mimeType => buildImmichDeviceAssetId(access.row, { ...body, immichProjectName: config.immich?.projectName }, mimeType),
       },
     })
     return res.status(result.httpStatus).json(result.image)
@@ -912,7 +962,14 @@ router.post('/assets/:workId/:assetId/retry-immich', async (req, res) => {
     await client.assertReadyForUpload()
     const albumId = await client.ensureProjectAlbum()
     const local = readLocalImageAsset(req.params.workId, image.localAssetId)
-    const uploaded = await uploadToImmichWithRetry({ client, buffer: local.buffer, filename: image.immichFilename, mimeType: local.mimeType, albumId })
+    const uploaded = await uploadToImmichWithRetry({
+      client,
+      buffer: local.buffer,
+      filename: image.immichFilename,
+      mimeType: local.mimeType,
+      albumId,
+      deviceAssetId: buildImmichDeviceAssetId(access.row, { promptId: image.promptId, immichProjectName: config.immich?.projectName }, local.mimeType),
+    })
     try {
       await waitForImmichThumbnail(client, uploaded.assetId)
     } catch (thumbnailError) {
@@ -946,10 +1003,10 @@ router.delete('/assets/:workId/:assetId', async (req, res) => {
   const image = visualAssets?.images ? findImageAssetRecord(visualAssets.images, req.params.assetId) : undefined
   if (!visualAssets || !image) return res.status(404).json({ error: '图片记录不存在' })
   try {
-    if (image.storageMode === 'immich' && image.immichAssetId) {
+    if (image.storageMode === 'immich' && image.immichAssetId && !storageAssetStillReferenced(req.params.workId, image)) {
       await immichClientFromConfig(loadImageGenerationConfig()).deleteAsset(image.immichAssetId)
     }
-    deleteLocalImageAssetIfPresent(req.params.workId, image.localAssetId || (image.storageMode === 'local' ? image.id : undefined))
+    if (!storageAssetStillReferenced(req.params.workId, image)) deleteLocalImageAssetIfPresent(req.params.workId, localStorageAssetId(image))
     const images = removeMatchingImageAssetRecords(visualAssets.images || {}, image)
     const nextVisualAssets = { ...visualAssets, images, updatedAt: Date.now() }
     const updatedAt = Date.now()

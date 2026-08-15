@@ -30,6 +30,12 @@ export type ImagegenHistoryRecord = {
   readonly createdAt: number
 }
 
+export type ImagegenHistoryStorageLocator = {
+  readonly ownerId: string
+  readonly localAssetId?: string
+  readonly immichAssetId?: string
+}
+
 export type CreateImagegenHistoryRecordInput = Omit<ImagegenHistoryRecord, 'id' | 'createdAt'> & {
   readonly id?: string
   readonly createdAt?: number
@@ -185,4 +191,17 @@ export function listImagegenHistory(ownerId: string, database: DatabaseInstance 
 export function getImagegenHistoryRecord(ownerId: string, id: string, database: DatabaseInstance = db): ImagegenHistoryRecord | null {
   const row = database.prepare<[string, string], ImagegenHistoryRow>(`${IMAGEGEN_HISTORY_SELECT} WHERE id = ? AND ownerId = ?`).get(id, ownerId)
   return row ? rowToRecord(row) : null
+}
+
+export function listImagegenHistoryStorageLocators(database: DatabaseInstance = db): ImagegenHistoryStorageLocator[] {
+  const rows = database.prepare<[], Pick<ImagegenHistoryRow, 'ownerId' | 'localAssetId' | 'immichAssetId'>>(`
+    SELECT ownerId, localAssetId, immichAssetId
+    FROM imagegenHistory
+    WHERE localAssetId IS NOT NULL OR immichAssetId IS NOT NULL
+  `).all()
+  return rows.map(row => ({
+    ownerId: row.ownerId,
+    localAssetId: row.localAssetId || undefined,
+    immichAssetId: row.immichAssetId || undefined,
+  }))
 }

@@ -8,6 +8,7 @@ import { createImageGenerationFailureRecord } from '../services/image-generation
 import { extensionForMime, immichClientFromConfig, readLocalImageAsset, resolveRunnableImageGenerationModel, runImageGeneration, type ImageAssetVariant, type ImageGenerationRunnerOutput } from '../services/image-generation-runner.js'
 import { parseGenerateRequest, persistGenerateReferenceImages, resolveGenerateReferenceInputs, type ParsedGenerateRequest } from '../services/imagegen-generate-references.js'
 import { createImagegenHistoryRecord, getImagegenHistoryRecord, listImagegenHistory, type ImagegenHistoryRecord, type ImagegenStorageMode } from '../services/imagegen-history.js'
+import { listImagegenReferenceAssetsByIds, type ImagegenReferenceAssetRecord } from '../services/imagegen-reference-assets.js'
 
 const router = Router()
 const MAX_TEST_PROMPT_LENGTH = 8000
@@ -96,6 +97,16 @@ function testImmichFilename(ownerId: string, prompt: string, projectName: string
   ].join('-') + `.${extensionForMime(mimeType)}`
 }
 
+function testImmichDeviceAssetId(ownerId: string, prompt: string, projectName: string | undefined, mimeType: string) {
+  return [
+    slugPart(projectName || 'story-matrix', 'story-matrix'),
+    slugPart(ownerId, 'user'),
+    'imagegen-test',
+    slugPart(prompt, 'prompt'),
+    randomUUID(),
+  ].join(':') + `.${extensionForMime(mimeType)}`
+}
+
 function referenceImmichFilename(ownerId: string, projectName: string | undefined, mimeType: string) {
   const timestamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')
   return [
@@ -105,6 +116,15 @@ function referenceImmichFilename(ownerId: string, projectName: string | undefine
     timestamp,
     randomUUID().slice(0, 8),
   ].join('-') + `.${extensionForMime(mimeType)}`
+}
+
+function referenceImmichDeviceAssetId(ownerId: string, projectName: string | undefined, mimeType: string) {
+  return [
+    slugPart(projectName || 'story-matrix', 'story-matrix'),
+    slugPart(ownerId, 'user'),
+    'imagegen-reference',
+    randomUUID(),
+  ].join(':') + `.${extensionForMime(mimeType)}`
 }
 
 function imagegenAssetUrl(assetId: string, variant?: ImageAssetVariant) { const encoded = encodeURIComponent(assetId); return variant ? `/api/imagegen/assets/${encoded}/${variant}` : `/api/imagegen/assets/${encoded}` }
@@ -167,7 +187,20 @@ function createFailureHistoryRecord(input: ImagegenFailureRecordInput) {
   })
 }
 
-function serializeHistory(record: ImagegenHistoryRecord) {
+function serializeReferenceImage(record: ImagegenReferenceAssetRecord) {
+  return {
+    id: record.id,
+    thumbnailUrl: record.thumbnailUrl,
+    originalUrl: record.originalUrl,
+  }
+}
+
+function referenceImagesForHistory(ownerId: string, history: readonly ImagegenHistoryRecord[]) {
+  const ids = history.flatMap(record => record.referenceImageIds)
+  return new Map(listImagegenReferenceAssetsByIds(ownerId, ids).map(record => [record.id, serializeReferenceImage(record)]))
+}
+
+function serializeHistory(record: ImagegenHistoryRecord, referenceImagesById: Map<string, ReturnType<typeof serializeReferenceImage>> = new Map()) {
   return {
     id: record.id,
     prompt: record.prompt,
@@ -186,6 +219,7 @@ function serializeHistory(record: ImagegenHistoryRecord) {
     thumbnailUrl: record.thumbnailUrl,
     originalUrl: record.originalUrl,
     referenceImageIds: record.referenceImageIds,
+    referenceImages: record.referenceImageIds.map(id => referenceImagesById.get(id)).filter((image): image is ReturnType<typeof serializeReferenceImage> => Boolean(image)),
     error: record.error,
     createdAt: record.createdAt,
   }
@@ -197,7 +231,9 @@ router.use('/reference-assets', createImagegenReferenceAssetRouter({ loadImageGe
 
 router.get('/history', (req, res) => {
   const request = req as AuthenticatedRequest
-  res.json(listImagegenHistory(request.currentUser.id).map(serializeHistory))
+  const history = listImagegenHistory(request.currentUser.id)
+  const referenceImagesById = referenceImagesForHistory(request.currentUser.id, history)
+  res.json(history.map(record => serializeHistory(record, referenceImagesById)))
 })
 
 router.post('/generate', async (req, res) => {
@@ -238,6 +274,7 @@ router.post('/generate', async (req, res) => {
         localAssetNamespace: 'imagegen',
         publicAssetUrl: imagegenAssetUrl,
         immichFilename: mimeType => testImmichFilename(request.currentUser.id, parsedPrompt.prompt, config.immich?.projectName, mimeType),
+        immichDeviceAssetId: mimeType => testImmichDeviceAssetId(request.currentUser.id, parsedPrompt.prompt, config.immich?.projectName, mimeType),
       },
     })
     const finalReferences: PersistedGenerateReferences = await persistGenerateReferenceImages(referenceSelection.slots, {
@@ -245,6 +282,7 @@ router.post('/generate', async (req, res) => {
       config,
       publicAssetUrl: imagegenReferenceAssetUrl,
       immichFilename: mimeType => referenceImmichFilename(request.currentUser.id, config.immich?.projectName, mimeType),
+      immichDeviceAssetId: mimeType => referenceImmichDeviceAssetId(request.currentUser.id, config.immich?.projectName, mimeType),
     }).catch(error => ({ ids: referenceSelection.ids, error } as const))
     const image = finalReferences.error
       ? { ...result.image, error: safeErrorMessage(finalReferences.error, '参考图持久化失败', config) }
@@ -257,6 +295,7 @@ router.post('/generate', async (req, res) => {
       config,
       publicAssetUrl: imagegenReferenceAssetUrl,
       immichFilename: mimeType => referenceImmichFilename(request.currentUser.id, config.immich?.projectName, mimeType),
+      immichDeviceAssetId: mimeType => referenceImmichDeviceAssetId(request.currentUser.id, config.immich?.projectName, mimeType),
     }).catch(referenceError => ({ ids: referenceSelection.ids, error: referenceError } as const))
     const historyError = finalReferences.error
       ? new Error(`${safeErrorMessage(error, '测试生图失败', config)}；参考图保存失败：${safeErrorMessage(finalReferences.error, '参考图持久化失败', config)}`)

@@ -98,8 +98,9 @@ function normalizeMaxReferenceImages(value: unknown, referenceImages: boolean) {
 }
 
 function normalizeRequestTimeoutMs(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0
-    ? Math.floor(value)
+  const numericValue = typeof value === 'number' ? value : typeof value === 'string' ? Number(value.trim()) : NaN
+  return Number.isFinite(numericValue) && numericValue > 0
+    ? Math.floor(numericValue)
     : DEFAULT_IMAGE_REQUEST_TIMEOUT_MS
 }
 

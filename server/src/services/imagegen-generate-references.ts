@@ -43,6 +43,7 @@ export type PersistGenerateReferenceInput = {
   readonly config: ImageGenerationConfig
   readonly publicAssetUrl: (assetId: string, variant?: ImageAssetVariant) => string
   readonly immichFilename: (mimeType: string) => string
+  readonly immichDeviceAssetId: (mimeType: string) => string
 }
 
 function objectRecord(value: unknown): Record<string, unknown> | undefined {
@@ -200,6 +201,7 @@ export async function persistGenerateReferenceImages(slots: readonly ResolvedGen
         config: input.config,
         publicAssetUrl: input.publicAssetUrl,
         immichFilename: input.immichFilename,
+        immichDeviceAssetId: input.immichDeviceAssetId,
       })
       ids.push(record.id)
     }

@@ -83,10 +83,10 @@ function minimaxErrorMessage(code?: number, message?: string) {
   return message ? `MiniMax 生图失败：${message}` : 'MiniMax 生图失败'
 }
 
-async function normalizeProviderImage(item: { b64_json?: string; url?: string }) {
+async function normalizeProviderImage(item: { b64_json?: string; url?: string }, timeoutMs: number) {
   if (item.b64_json) return Buffer.from(item.b64_json, 'base64')
   if (item.url) {
-    const response = await safeUpstreamFetch(item.url)
+    const response = await safeUpstreamFetch(item.url, { timeoutMs })
     if (!response.ok) throw new Error(await readUpstreamError(response))
     return readSafeImageBuffer(response)
   }
@@ -117,7 +117,7 @@ async function generateOpenAIReferenceImages(provider: ImageGenerationProviderCo
   const data = await response.json() as { data?: Array<{ b64_json?: string; url?: string }> }
   const first = data.data?.[0]
   if (!first) throw new Error('Provider 未返回图片')
-  return [{ buffer: await normalizeProviderImage(first) }]
+  return [{ buffer: await normalizeProviderImage(first, model.requestTimeoutMs) }]
 }
 
 export async function generateProviderImages(provider: ImageGenerationProviderConfig, model: ImageGenerationModelConfig, prompt: string, body: Record<string, unknown> & { referenceImages?: ProviderReferenceImage[] }): Promise<ProviderImageResult[]> {
@@ -160,7 +160,7 @@ export async function generateProviderImages(provider: ImageGenerationProviderCo
   const data = await response.json() as { data?: Array<{ b64_json?: string; url?: string }> }
   const first = data.data?.[0]
   if (!first) throw new Error('Provider 未返回图片')
-  return [{ buffer: await normalizeProviderImage(first) }]
+  return [{ buffer: await normalizeProviderImage(first, model.requestTimeoutMs) }]
 }
 
 export async function generateImageWithProvider(input: { provider: ImageGenerationProviderConfig; model: ImageGenerationModelConfig; prompt: string; options: Record<string, unknown> }) {

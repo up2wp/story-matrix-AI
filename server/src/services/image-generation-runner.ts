@@ -29,6 +29,7 @@ export type ImageGenerationStorageTarget = {
   readonly localAssetNamespace?: ImageAssetNamespace
   readonly publicAssetUrl: (assetId: string, variant?: ImageAssetVariant) => string
   readonly immichFilename: (mimeType: string) => string
+  readonly immichDeviceAssetId: (mimeType: string) => string
 }
 
 export type RunnableImageGenerationModelResult =
@@ -76,6 +77,7 @@ export type ImmichUploadRetryInput = {
   readonly buffer: Buffer
   readonly filename: string
   readonly mimeType: string
+  readonly deviceAssetId: string
   readonly albumId: string
 }
 
@@ -151,7 +153,7 @@ export async function uploadToImmichWithRetry(input: ImmichUploadRetryInput) {
   let lastError: Error | undefined
   for (let attempt = 0; attempt <= IMMICH_UPLOAD_RETRY_LIMIT; attempt += 1) {
     try {
-      return await input.client.uploadImage({ buffer: input.buffer, filename: input.filename, mimeType: input.mimeType, albumId: input.albumId })
+      return await input.client.uploadImage({ buffer: input.buffer, filename: input.filename, mimeType: input.mimeType, albumId: input.albumId, deviceAssetId: input.deviceAssetId })
     } catch (error) {
       if (!(error instanceof Error)) throw error
       lastError = error
@@ -208,8 +210,9 @@ export async function runImageGeneration(input: ImageGenerationRunnerInput): Pro
   const client = immichClient
   const albumId = await client.ensureProjectAlbum()
   const filename = storage.immichFilename(mimeType)
+  const deviceAssetId = storage.immichDeviceAssetId(mimeType)
   try {
-    const uploaded = await uploadToImmichWithRetry({ client, buffer, filename, mimeType, albumId })
+    const uploaded = await uploadToImmichWithRetry({ client, buffer, filename, mimeType, albumId, deviceAssetId })
     try {
       await waitForImmichThumbnail(client, uploaded.assetId)
     } catch (thumbnailError) {
