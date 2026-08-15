@@ -17,6 +17,7 @@ import { requireAuth } from './middleware/auth.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = parseInt(process.env.PORT || '3001', 10)
+const IMAGE_GENERATION_HTTP_TIMEOUT_MS = 1200000
 
 const app = express()
 
@@ -53,6 +54,10 @@ app.get('/{*path}', (_req, res) => {
 // 初始化数据库种子数据
 seed()
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`[server] Story Matrix AI 后端已启动: http://localhost:${PORT}`)
 })
+
+server.requestTimeout = IMAGE_GENERATION_HTTP_TIMEOUT_MS
+server.headersTimeout = IMAGE_GENERATION_HTTP_TIMEOUT_MS + 5000
+server.timeout = IMAGE_GENERATION_HTTP_TIMEOUT_MS
