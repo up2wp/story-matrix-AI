@@ -81,6 +81,14 @@ export type ImmichUploadRetryInput = {
   readonly albumId: string
 }
 
+export class ImageGenerationStorageError extends Error {
+  readonly name = 'ImageGenerationStorageError'
+
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
+  }
+}
+
 export function resolveRunnableImageGenerationModel(config: ImageGenerationConfig, modelId: string): RunnableImageGenerationModelResult {
   const resolved = resolveEnabledImageModel(config, modelId)
   if (!resolved) return { ok: false, statusCode: 400, error: '生图模型不可用' }
@@ -193,7 +201,14 @@ export async function runImageGeneration(input: ImageGenerationRunnerInput): Pro
   const { config, provider, model, providerPrompt, requestBody, referenceImages, promptSnapshot, storage } = input
   const storageMode = config.storageMode === 'immich' ? 'immich' : 'local'
   const immichClient = storageMode === 'immich' ? immichClientFromConfig(config) : undefined
-  if (immichClient) await immichClient.assertReadyForUpload()
+  if (immichClient) {
+    try {
+      await immichClient.assertReadyForUpload()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Immich 存储预检失败'
+      throw new ImageGenerationStorageError(message, { cause: error })
+    }
+  }
   const normalizedReferenceImages = Array.from(referenceImages)
   const generated = await generateProviderImages(provider, model, providerPrompt, { ...safeGenerationOptions(requestBody, model), referenceImages: normalizedReferenceImages })
   const firstImage = generated[0]
@@ -208,7 +223,13 @@ export async function runImageGeneration(input: ImageGenerationRunnerInput): Pro
 
   if (!immichClient) throw new Error('Immich 存储配置不完整')
   const client = immichClient
-  const albumId = await client.ensureProjectAlbum()
+  let albumId: string
+  try {
+    albumId = await client.ensureProjectAlbum()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Immich 项目相册准备失败'
+    throw new ImageGenerationStorageError(message, { cause: error })
+  }
   const filename = storage.immichFilename(mimeType)
   const deviceAssetId = storage.immichDeviceAssetId(mimeType)
   try {

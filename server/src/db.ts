@@ -164,12 +164,17 @@ db.exec(`
     storageStatus TEXT NOT NULL CHECK (storageStatus IN ('failed')),
     status TEXT NOT NULL CHECK (status IN ('failed')),
     error TEXT NOT NULL,
+    failureType TEXT,
+    countsTowardAutoDisable INTEGER,
+    autoDisableTriggeredAt INTEGER,
+    riskControlAudit TEXT,
     createdAt INTEGER NOT NULL,
     FOREIGN KEY (ownerId) REFERENCES users(id),
     FOREIGN KEY (workId) REFERENCES works(id)
   );
 
   CREATE INDEX IF NOT EXISTS idx_imageGenerationFailures_ownerCreatedAt ON imageGenerationFailures(ownerId, createdAt);
+  CREATE INDEX IF NOT EXISTS idx_imageGenerationFailures_ownerRiskWindow ON imageGenerationFailures(ownerId, countsTowardAutoDisable, createdAt);
   CREATE INDEX IF NOT EXISTS idx_imageGenerationFailures_surfaceCreatedAt ON imageGenerationFailures(surface, createdAt);
   CREATE INDEX IF NOT EXISTS idx_imageGenerationFailures_workCreatedAt ON imageGenerationFailures(workId, createdAt);
 
@@ -320,13 +325,34 @@ export function migrateDatabase(database: DatabaseInstance = db) {
       storageStatus TEXT NOT NULL CHECK (storageStatus IN ('failed')),
       status TEXT NOT NULL CHECK (status IN ('failed')),
       error TEXT NOT NULL,
+      failureType TEXT,
+      countsTowardAutoDisable INTEGER,
+      autoDisableTriggeredAt INTEGER,
+      riskControlAudit TEXT,
       createdAt INTEGER NOT NULL,
       FOREIGN KEY (ownerId) REFERENCES users(id),
       FOREIGN KEY (workId) REFERENCES works(id)
     )
   `)
 
+  if (!columnExists(database, 'imageGenerationFailures', 'failureType')) {
+    database.prepare('ALTER TABLE imageGenerationFailures ADD COLUMN failureType TEXT').run()
+  }
+
+  if (!columnExists(database, 'imageGenerationFailures', 'countsTowardAutoDisable')) {
+    database.prepare('ALTER TABLE imageGenerationFailures ADD COLUMN countsTowardAutoDisable INTEGER').run()
+  }
+
+  if (!columnExists(database, 'imageGenerationFailures', 'autoDisableTriggeredAt')) {
+    database.prepare('ALTER TABLE imageGenerationFailures ADD COLUMN autoDisableTriggeredAt INTEGER').run()
+  }
+
+  if (!columnExists(database, 'imageGenerationFailures', 'riskControlAudit')) {
+    database.prepare('ALTER TABLE imageGenerationFailures ADD COLUMN riskControlAudit TEXT').run()
+  }
+
   database.exec('CREATE INDEX IF NOT EXISTS idx_imageGenerationFailures_ownerCreatedAt ON imageGenerationFailures(ownerId, createdAt)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_imageGenerationFailures_ownerRiskWindow ON imageGenerationFailures(ownerId, countsTowardAutoDisable, createdAt)')
   database.exec('CREATE INDEX IF NOT EXISTS idx_imageGenerationFailures_surfaceCreatedAt ON imageGenerationFailures(surface, createdAt)')
   database.exec('CREATE INDEX IF NOT EXISTS idx_imageGenerationFailures_workCreatedAt ON imageGenerationFailures(workId, createdAt)')
 

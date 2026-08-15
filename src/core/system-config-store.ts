@@ -72,6 +72,14 @@ export const defaultImageGenerationConfig: ImageGenerationConfig = {
   },
 }
 
+type SystemConfigResponse = {
+  readonly novelImportConfig?: NovelImportConfig
+}
+
+function normalizeSavedNovelImportConfig(response: SystemConfigResponse | undefined, fallback: NovelImportConfig): NovelImportConfig {
+  return normalizeNovelImportConfig({ ...defaultNovelImportConfig, ...(response?.novelImportConfig || fallback) })
+}
+
 function normalizeImageRequestTimeoutMs(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : DEFAULT_IMAGE_REQUEST_TIMEOUT_MS
 }
@@ -148,14 +156,14 @@ export const useSystemConfigStore = create<SystemConfigState>((set, get) => ({
   toggleNovelImport: async () => {
     const newValue = !get().novelImportConfig.enabled
     const novelImportConfig = { ...get().novelImportConfig, enabled: newValue }
-    await db.systemConfig.update('singleton', { novelImportConfig })
-    set({ novelImportConfig })
+    const savedConfig = await db.systemConfig.update('singleton', { novelImportConfig })
+    set({ novelImportConfig: normalizeSavedNovelImportConfig(savedConfig, novelImportConfig) })
   },
 
   saveNovelImportConfig: async (config: NovelImportConfig) => {
     const novelImportConfig = normalizeNovelImportConfig(config)
-    await db.systemConfig.update('singleton', { novelImportConfig })
-    set({ novelImportConfig })
+    const savedConfig = await db.systemConfig.update('singleton', { novelImportConfig })
+    set({ novelImportConfig: normalizeSavedNovelImportConfig(savedConfig, novelImportConfig) })
   },
 
   saveImageGenerationConfig: async (config: ImageGenerationConfig) => {

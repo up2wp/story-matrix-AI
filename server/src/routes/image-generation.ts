@@ -9,7 +9,12 @@ import {
   type ImageGenerationConfig,
   type ImageGenerationProviderConfig,
 } from '../services/image-generation-config.js'
-import { createImageGenerationFailureRecord } from '../services/image-generation-failures.js'
+import {
+  canUseImageGeneration as sharedCanUseImageGeneration,
+  imageGenerationAutoDisabledPayload,
+  loadImageGenerationConfig,
+  recordImageGenerationFailureAndMaybeDisable,
+} from '../services/image-generation-access.js'
 import { listImagegenHistoryStorageLocators } from '../services/imagegen-history.js'
 import { listImagegenReferenceAssetStorageLocators } from '../services/imagegen-reference-assets.js'
 import {
@@ -137,27 +142,13 @@ const VIEW_DIRECTION_SUFFIX: Record<ImageViewDirection, string> = {
 
 const CHARACTER_FACE_GENERATION_SUFFIX = '最终生图限定：只生成纯白背景的脸部或头肩近景头像，脸部是唯一主体；不要生成完整服装展示、服饰单品、盔甲、披风、首饰特写、手持道具、武器、器物、场景背景或剧情动作。'
 
-function loadImageGenerationConfig(): ImageGenerationConfig {
-  const row = db.prepare('SELECT imageGenerationConfig FROM systemConfig WHERE id = ?').get('singleton') as { imageGenerationConfig?: string } | undefined
-  return normalizeImageGenerationConfig(row?.imageGenerationConfig ? JSON.parse(row.imageGenerationConfig) : defaultImageGenerationConfig())
-}
-
 function loadSystemAIConfig(): AIConfigPayload | null {
   const row = db.prepare('SELECT aiConfig FROM systemConfig WHERE id = ?').get('singleton') as { aiConfig?: string } | undefined
   return row?.aiConfig ? JSON.parse(row.aiConfig) : null
 }
 
-function loadFeaturePermissions() {
-  const row = db.prepare('SELECT novelImportConfig FROM systemConfig WHERE id = ?').get('singleton') as { novelImportConfig?: string } | undefined
-  const config = row?.novelImportConfig ? JSON.parse(row.novelImportConfig) : { enabled: false, featurePermissions: { userGrants: [] } }
-  return Array.isArray(config?.featurePermissions?.userGrants) ? config.featurePermissions.userGrants as Array<{ userId: string; features: string[] }> : []
-}
-
 function canUseImageGeneration(req: AuthenticatedRequest, config: ImageGenerationConfig) {
-  const user = req.currentUser
-  if (!user || !config.enabled) return false
-  if (user.role === 'owner' || user.role === 'admin') return true
-  return loadFeaturePermissions().some(grant => grant.userId === user.id && grant.features?.includes('imageGeneration'))
+  return sharedCanUseImageGeneration(req.currentUser, config)
 }
 
 async function readProviderError(response: Response) {
@@ -887,9 +878,30 @@ router.post('/generate', async (req, res) => {
         immichDeviceAssetId: mimeType => buildImmichDeviceAssetId(access.row, { ...body, immichProjectName: config.immich?.projectName }, mimeType),
       },
     })
+    if (result.image.storageStatus === 'storageUploadFailed') {
+      const failureResult = recordImageGenerationFailureAndMaybeDisable({
+        surface: 'work',
+        ownerId: request.currentUser.id,
+        workId,
+        prompt,
+        generationPromptSnapshot: generationPrompt,
+        referenceImageIds,
+        provider: model.provider,
+        providerLabel: provider.label,
+        modelId: model.id,
+        modelName: model.label,
+        storageMode: 'immich',
+        error: new Error(result.image.error || '图片存储失败'),
+        config,
+        user: request.currentUser,
+        countEligible: request.currentUser.role === 'user',
+        failureType: 'storage',
+      })
+      return res.status(result.httpStatus).json({ ...result.image, ...imageGenerationAutoDisabledPayload(failureResult) })
+    }
     return res.status(result.httpStatus).json(result.image)
   } catch (error) {
-    createImageGenerationFailureRecord({
+    const failureResult = recordImageGenerationFailureAndMaybeDisable({
       surface: 'work',
       ownerId: request.currentUser.id,
       workId,
@@ -903,9 +915,11 @@ router.post('/generate', async (req, res) => {
       storageMode: config.storageMode === 'immich' ? 'immich' : 'local',
       error,
       config,
+      user: request.currentUser,
+      countEligible: request.currentUser.role === 'user',
+      fallbackFailureType: 'provider',
     })
-    const message = error instanceof Error ? error.message : '生图请求失败'
-    res.status(502).json({ error: message })
+    res.status(502).json({ error: failureResult.record.error, ...imageGenerationAutoDisabledPayload(failureResult) })
   }
 })
 
