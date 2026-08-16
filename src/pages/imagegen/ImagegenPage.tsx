@@ -117,10 +117,10 @@ export default function ImagegenPage() {
 
   useEffect(() => {
     if (!canUseImagegen || !hasGeneratingHistory) return
-    const timeoutId = window.setTimeout(() => {
+    const intervalId = window.setInterval(() => {
       void refreshHistory({ silent: true })
     }, HISTORY_POLL_INTERVAL_MS)
-    return () => window.clearTimeout(timeoutId)
+    return () => window.clearInterval(intervalId)
   }, [canUseImagegen, hasGeneratingHistory, refreshHistory])
 
   useEffect(() => {
