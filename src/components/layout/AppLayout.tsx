@@ -113,7 +113,7 @@ ${context}
   }
 
   return (
-    <Layout style={{ height: '100dvh', minHeight: '100vh', overflow: 'hidden' }}>
+    <Layout style={{ height: '100dvh', minHeight: '100vh', overflow: 'hidden', background: 'var(--app-background)' }}>
       <TopBar />
       <Layout style={{ flex: 1, overflow: 'hidden' }}>
         <Sidebar />
@@ -123,6 +123,7 @@ ${context}
           WebkitOverflowScrolling: 'touch',
           display: isFixedHeightPage ? 'flex' : 'block',
           flexDirection: isFixedHeightPage ? 'column' : undefined,
+          background: 'var(--app-background)',
         }}>
           {showHeader && (
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -131,7 +132,7 @@ ${context}
                   {currentWork.title}
                   {!readOnly && (
                     <EditOutlined
-                      style={{ fontSize: 14, marginLeft: 8, cursor: 'pointer', color: '#999' }}
+                      style={{ fontSize: 14, marginLeft: 8, cursor: 'pointer', color: 'var(--app-text-tertiary)' }}
                       onClick={openTitleModal}
                     />
                   )}
@@ -180,11 +181,11 @@ ${context}
             </Button>
           </div>
           {aiTitles.length > 0 && (
-            <div style={{ border: '1px solid #d9d9d9', borderRadius: 6 }}>
+            <div style={{ border: '1px solid var(--app-border)', borderRadius: 6 }}>
               {aiTitles.map((title, i) => (
                 <div
                   key={i}
-                  style={{ cursor: 'pointer', padding: '8px 12px', borderBottom: i < aiTitles.length - 1 ? '1px solid #f0f0f0' : undefined }}
+                  style={{ cursor: 'pointer', padding: '8px 12px', borderBottom: i < aiTitles.length - 1 ? '1px solid var(--app-border)' : undefined }}
                   onClick={() => setTitleInput(title)}
                 >
                   {title}
