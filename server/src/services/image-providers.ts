@@ -1,6 +1,7 @@
 import type { ImageGenerationModelConfig, ImageGenerationProviderConfig } from './image-generation-config.js'
-import { normalizeSafeBaseUrl, readSafeImageBuffer, readUpstreamError, safeUpstreamFetch } from './safe-upstream-fetch.js'
-import type { SafeUpstreamFetchOptions } from './safe-upstream-fetch.js'
+import { openAIStreamingOptions, parseOpenAIImageStreamResponse, type OpenAIImageResponseItem } from './image-provider-streaming.js'
+import { fetchProvider, throwProviderResponseError } from './image-provider-transport.js'
+import { normalizeSafeBaseUrl, readSafeImageBuffer } from './safe-upstream-fetch.js'
 
 export interface ProviderImageResult {
   buffer: Buffer
@@ -22,57 +23,6 @@ export interface ProviderReferenceImage {
 
 const OPENAI_DEFAULT_SIZE = '1024x1024'
 const MINIMAX_ASPECT_RATIOS = ['1:1', '16:9', '4:3', '3:2', '2:3', '3:4', '9:16', '21:9']
-
-type ProviderFetchInput = {
-  readonly url: string
-  readonly operation: string
-  readonly provider: ImageGenerationProviderConfig
-  readonly model?: ImageGenerationModelConfig
-  readonly options?: SafeUpstreamFetchOptions
-}
-
-function upstreamHost(url: string) {
-  try {
-    return new URL(url).host
-  } catch (error) {
-    if (error instanceof TypeError) return 'invalid-url'
-    throw error
-  }
-}
-
-function providerLogFields(input: ProviderFetchInput, startedAt: number) {
-  return {
-    providerId: input.provider.id,
-    providerType: input.provider.type,
-    providerProtocol: input.provider.protocol,
-    modelId: input.model?.id,
-    providerModel: input.model?.providerModel || input.model?.model,
-    operation: input.operation,
-    method: input.options?.method || 'GET',
-    timeoutMs: input.options?.timeoutMs,
-    upstreamHost: upstreamHost(input.url),
-    durationMs: Date.now() - startedAt,
-  }
-}
-
-async function fetchProvider(input: ProviderFetchInput) {
-  const startedAt = Date.now()
-  console.info('[image-generation] provider request start', providerLogFields(input, startedAt))
-  try {
-    const response = await safeUpstreamFetch(input.url, input.options)
-    console.info('[image-generation] provider request complete', {
-      ...providerLogFields(input, startedAt),
-      status: response.status,
-    })
-    return response
-  } catch (error) {
-    console.error('[image-generation] provider request failed', {
-      ...providerLogFields(input, startedAt),
-      error: error instanceof Error ? error.message : 'Provider request failed',
-    })
-    throw error
-  }
-}
 
 function discoveredOpenAICapabilities(providerModel: string) {
   const supportsReferenceImages = /^gpt-image-[12]$/i.test(providerModel)
@@ -105,6 +55,33 @@ function openAIOptions(body: Record<string, unknown>, model: ImageGenerationMode
   return options
 }
 
+function shouldStreamOpenAIImages(provider: ImageGenerationProviderConfig) {
+  return provider.protocol === 'openai-images'
+}
+
+function providerStreamLogFields(provider: ImageGenerationProviderConfig, model: ImageGenerationModelConfig, operation: string, startedAt: number, traceId: string | undefined) {
+  return {
+    providerId: provider.id,
+    providerType: provider.type,
+    providerProtocol: provider.protocol,
+    modelId: model.id,
+    providerModel: model.providerModel || model.model,
+    operation,
+    traceId,
+    durationMs: Date.now() - startedAt,
+  }
+}
+
+function logOpenAIStreamParse(provider: ImageGenerationProviderConfig, model: ImageGenerationModelConfig, operation: string, startedAt: number, traceId: string | undefined, result: Awaited<ReturnType<typeof parseOpenAIImageStreamResponse>>) {
+  console.info('[image-generation] provider stream parsed', {
+    ...providerStreamLogFields(provider, model, operation, startedAt, traceId),
+    streaming: result.streaming,
+    partialImageEvents: result.partialImageEvents,
+    completedImageEvents: result.completedImageEvents,
+    imageCount: result.data.length,
+  })
+}
+
 function minimaxOptions(body: Record<string, unknown>, model: ImageGenerationModelConfig) {
   const capabilities = model.capabilities || { sizes: [], qualities: [], formats: [], aspectRatios: [] }
   const aspectRatios = capabilities.aspectRatios?.length ? capabilities.aspectRatios : MINIMAX_ASPECT_RATIOS
@@ -135,11 +112,11 @@ function minimaxErrorMessage(code?: number, message?: string) {
   return message ? `MiniMax 生图失败：${message}` : 'MiniMax 生图失败'
 }
 
-async function normalizeProviderImage(item: { b64_json?: string; url?: string }, provider: ImageGenerationProviderConfig, model: ImageGenerationModelConfig) {
+async function normalizeProviderImage(item: OpenAIImageResponseItem, provider: ImageGenerationProviderConfig, model: ImageGenerationModelConfig, traceId?: string) {
   if (item.b64_json) return Buffer.from(item.b64_json, 'base64')
   if (item.url) {
-    const response = await fetchProvider({ url: item.url, operation: 'provider.image-url', provider, model, options: { timeoutMs: model.requestTimeoutMs } })
-    if (!response.ok) throw new Error(await readUpstreamError(response))
+    const response = await fetchProvider({ url: item.url, operation: 'provider.image-url', provider, model, traceId, options: { timeoutMs: model.requestTimeoutMs } })
+    if (!response.ok) await throwProviderResponseError(response)
     return readSafeImageBuffer(response)
   }
   throw new Error('Provider 未返回可用图片')
@@ -152,10 +129,13 @@ function bufferBlob(image: ProviderReferenceImage) {
 
 async function generateOpenAIReferenceImages(provider: ImageGenerationProviderConfig, model: ImageGenerationModelConfig, prompt: string, body: Record<string, unknown>, referenceImages: ProviderReferenceImage[]) {
   const form = new FormData()
+  const stream = shouldStreamOpenAIImages(provider)
+  const traceId = typeof body.traceId === 'string' ? body.traceId : undefined
   form.append('model', model.providerModel || model.model)
   form.append('prompt', prompt)
   form.append('response_format', 'b64_json')
-  for (const [key, value] of Object.entries(openAIOptions(body, model))) form.append(key, String(value))
+  const options = stream ? openAIStreamingOptions(openAIOptions(body, model)) : openAIOptions(body, model)
+  for (const [key, value] of Object.entries(options)) form.append(key, String(value))
   for (const [index, image] of referenceImages.entries()) {
     form.append('image[]', bufferBlob(image), `reference-${index + 1}.${image.mimeType.split('/')[1] || 'png'}`)
   }
@@ -164,23 +144,28 @@ async function generateOpenAIReferenceImages(provider: ImageGenerationProviderCo
     operation: 'openai.images.edits',
     provider,
     model,
+    traceId,
     options: {
       method: 'POST',
       headers: multipartHeaders(provider.apiKey),
       body: form,
       timeoutMs: model.requestTimeoutMs,
     },
+    streaming: stream,
   })
-  if (!response.ok) throw new Error(await readUpstreamError(response))
-  const data = await response.json() as { data?: Array<{ b64_json?: string; url?: string }> }
-  const first = data.data?.[0]
+  if (!response.ok) await throwProviderResponseError(response)
+  const parseStartedAt = Date.now()
+  const data = await parseOpenAIImageStreamResponse(response)
+  logOpenAIStreamParse(provider, model, 'openai.images.edits', parseStartedAt, traceId, data)
+  const first = data.data[0]
   if (!first) throw new Error('Provider 未返回图片')
-  return [{ buffer: await normalizeProviderImage(first, provider, model) }]
+  return [{ buffer: await normalizeProviderImage(first, provider, model, traceId) }]
 }
 
-export async function generateProviderImages(provider: ImageGenerationProviderConfig, model: ImageGenerationModelConfig, prompt: string, body: Record<string, unknown> & { referenceImages?: ProviderReferenceImage[] }): Promise<ProviderImageResult[]> {
+export async function generateProviderImages(provider: ImageGenerationProviderConfig, model: ImageGenerationModelConfig, prompt: string, body: Record<string, unknown> & { referenceImages?: ProviderReferenceImage[]; traceId?: string }): Promise<ProviderImageResult[]> {
   if (!provider.apiKey) throw new Error('生图厂商未配置 API Key')
   const referenceImages = Array.isArray(body.referenceImages) ? body.referenceImages : []
+  const traceId = typeof body.traceId === 'string' ? body.traceId : undefined
   if (provider.protocol === 'minimax-image-generation' || provider.type === 'minimax') {
     if (prompt.length > 1500) throw new Error('MiniMax 提示词不能超过 1500 字')
     const minimaxReferenceLimit = model.capabilities.referenceImages ? (model.capabilities.maxReferenceImages || 1) : 0
@@ -191,6 +176,7 @@ export async function generateProviderImages(provider: ImageGenerationProviderCo
       operation: 'minimax.image_generation',
       provider,
       model,
+      traceId,
       options: {
         method: 'POST',
         headers: providerHeaders(provider.apiKey),
@@ -198,13 +184,13 @@ export async function generateProviderImages(provider: ImageGenerationProviderCo
         timeoutMs: model.requestTimeoutMs,
       },
     })
-    if (!response.ok) throw new Error(await readUpstreamError(response))
+    if (!response.ok) await throwProviderResponseError(response)
     const data = await response.json() as { base_resp?: { status_code?: number; status_msg?: string }; data?: { image_base64?: string[]; image_urls?: string[] }; metadata?: { success_count?: string | number; failed_count?: string | number } }
     if (data.base_resp?.status_code && data.base_resp.status_code !== 0) throw new Error(minimaxErrorMessage(data.base_resp.status_code, data.base_resp.status_msg))
     const buffers = (data.data?.image_base64 || []).map(decodeBase64Image)
     if (buffers.length === 0 && data.data?.image_urls?.length) {
-      const responseFromUrl = await fetchProvider({ url: data.data.image_urls[0], operation: 'minimax.image-url', provider, model, options: { timeoutMs: model.requestTimeoutMs } })
-      if (!responseFromUrl.ok) throw new Error(await readUpstreamError(responseFromUrl))
+      const responseFromUrl = await fetchProvider({ url: data.data.image_urls[0], operation: 'minimax.image-url', provider, model, traceId, options: { timeoutMs: model.requestTimeoutMs } })
+      if (!responseFromUrl.ok) await throwProviderResponseError(responseFromUrl)
       buffers.push(await readSafeImageBuffer(responseFromUrl))
     }
     if (buffers.length === 0) throw new Error('MiniMax 未返回可用图片')
@@ -214,23 +200,28 @@ export async function generateProviderImages(provider: ImageGenerationProviderCo
 
   if (referenceImages.length > 0) return generateOpenAIReferenceImages(provider, model, prompt, body, referenceImages)
 
+  const stream = shouldStreamOpenAIImages(provider)
   const response = await fetchProvider({
     url: `${normalizeSafeBaseUrl(provider.baseUrl)}/images/generations`,
     operation: 'openai.images.generations',
     provider,
     model,
+    traceId,
     options: {
       method: 'POST',
       headers: providerHeaders(provider.apiKey),
-      body: JSON.stringify({ model: model.providerModel || model.model, prompt, response_format: 'b64_json', ...openAIOptions(body, model) }),
+      body: JSON.stringify({ model: model.providerModel || model.model, prompt, response_format: 'b64_json', ...(stream ? openAIStreamingOptions(openAIOptions(body, model)) : openAIOptions(body, model)) }),
       timeoutMs: model.requestTimeoutMs,
     },
+    streaming: stream,
   })
-  if (!response.ok) throw new Error(await readUpstreamError(response))
-  const data = await response.json() as { data?: Array<{ b64_json?: string; url?: string }> }
-  const first = data.data?.[0]
+  if (!response.ok) await throwProviderResponseError(response)
+  const parseStartedAt = Date.now()
+  const data = await parseOpenAIImageStreamResponse(response)
+  logOpenAIStreamParse(provider, model, 'openai.images.generations', parseStartedAt, traceId, data)
+  const first = data.data[0]
   if (!first) throw new Error('Provider 未返回图片')
-  return [{ buffer: await normalizeProviderImage(first, provider, model) }]
+  return [{ buffer: await normalizeProviderImage(first, provider, model, traceId) }]
 }
 
 export async function generateImageWithProvider(input: { provider: ImageGenerationProviderConfig; model: ImageGenerationModelConfig; prompt: string; options: Record<string, unknown> }) {
@@ -249,7 +240,7 @@ export async function discoverProviderModels(provider: ImageGenerationProviderCo
     }))
   }
   const response = await fetchProvider({ url: `${normalizeSafeBaseUrl(provider.baseUrl)}/models`, operation: 'openai.models.list', provider, options: { headers: providerHeaders(provider.apiKey) } })
-  if (!response.ok) throw new Error(await readUpstreamError(response))
+  if (!response.ok) await throwProviderResponseError(response)
   const data = await response.json() as { data?: Array<{ id?: string }> }
   return (data.data || []).map(item => String(item.id || '').trim()).filter(Boolean).map(providerModel => ({
     providerModel,

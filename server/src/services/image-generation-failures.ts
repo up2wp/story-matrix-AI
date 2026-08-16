@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto'
 import type { Database as DatabaseInstance } from 'better-sqlite3'
 import db from '../db.js'
 import type { ImageGenerationConfig, ImageProviderType } from './image-generation-config.js'
+import { ProviderGatewayTimeoutError } from './image-provider-transport.js'
 
 export type ImageGenerationFailureSurface = 'work' | 'imagegen'
 
@@ -98,6 +99,7 @@ function errorCause(error: Error): unknown {
 function isTimeoutError(error: unknown): boolean {
   if (!(error instanceof Error)) return false
   if (error.name === 'SafeUpstreamTimeoutError' || error.name === 'ImmichRequestTimeoutError') return true
+  if (error instanceof ProviderGatewayTimeoutError || error.name === 'ProviderGatewayTimeoutError') return true
   const cause = errorCause(error)
   return cause instanceof Error ? isTimeoutError(cause) : false
 }

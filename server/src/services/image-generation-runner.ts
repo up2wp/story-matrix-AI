@@ -45,6 +45,7 @@ export type ImageGenerationRunnerInput = {
   readonly referenceImages: readonly ProviderReferenceImage[]
   readonly promptSnapshot: ImageGenerationPromptSnapshot
   readonly storage: ImageGenerationStorageTarget
+  readonly traceId?: string
 }
 
 export type ImageGenerationRunnerOutput = {
@@ -210,7 +211,7 @@ export async function runImageGeneration(input: ImageGenerationRunnerInput): Pro
     }
   }
   const normalizedReferenceImages = Array.from(referenceImages)
-  const generated = await generateProviderImages(provider, model, providerPrompt, { ...safeGenerationOptions(requestBody, model), referenceImages: normalizedReferenceImages })
+  const generated = await generateProviderImages(provider, model, providerPrompt, { ...safeGenerationOptions(requestBody, model), referenceImages: normalizedReferenceImages, traceId: input.traceId })
   const firstImage = generated[0]
   if (!firstImage) throw new Error('Provider 未返回图片')
   const buffer = firstImage.buffer

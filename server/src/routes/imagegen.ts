@@ -154,6 +154,20 @@ function createFailureHistoryRecord(input: ImagegenFailureRecordInput): UpdateIm
   }
 }
 
+function imagegenRunLogFields(recordId: string, input: ResolvedImagegenRun) {
+  return {
+    historyId: recordId,
+    ownerId: input.ownerId,
+    providerId: input.provider.id,
+    providerType: input.provider.type,
+    providerProtocol: input.provider.protocol,
+    modelId: input.model.id,
+    providerModel: input.model.providerModel || input.model.model,
+    storageMode: storageMode(input.config),
+    referenceImageCount: input.referenceImageIds.length,
+  }
+}
+
 function serializeReferenceImage(record: ImagegenReferenceAssetRecord) {
   return {
     id: record.id,
@@ -248,6 +262,7 @@ async function queueImagegenRun(request: AuthenticatedRequest, parsedRequest: Pa
 async function completeImagegenRun(queued: QueuedImagegenRun) {
   const { record, runContext, referenceSelection, requestBody } = queued
   const recordId = record.id
+  console.info('[image-generation] imagegen run start', imagegenRunLogFields(recordId, runContext))
   try {
     const result = await runImageGeneration({
       config: runContext.config,
@@ -257,6 +272,7 @@ async function completeImagegenRun(queued: QueuedImagegenRun) {
       requestBody,
       referenceImages: referenceSelection.images,
       promptSnapshot: { basePromptSnapshot: runContext.prompt, generationPromptSnapshot: runContext.prompt, referenceImageIds: referenceSelection.ids },
+      traceId: recordId,
       storage: {
         localScopeId: runContext.ownerId,
         localAssetNamespace: 'imagegen',
@@ -276,6 +292,12 @@ async function completeImagegenRun(queued: QueuedImagegenRun) {
       ? { ...result.image, error: safeErrorMessage(finalReferences.error, '参考图持久化失败', runContext.config) }
       : result.image
     const terminalRecord = createSuccessHistoryRecord({ ...runContext, referenceImageIds: finalReferences.ids, image })
+    console.info('[image-generation] imagegen run provider result persisted', {
+      ...imagegenRunLogFields(recordId, runContext),
+      storageStatus: image.storageStatus,
+      status: image.status,
+      referenceImageCount: finalReferences.ids.length,
+    })
     if (image.storageStatus === 'storageUploadFailed') {
       db.transaction(() => {
         recordImageGenerationFailureAndMaybeDisable({
@@ -298,9 +320,19 @@ async function completeImagegenRun(queued: QueuedImagegenRun) {
         }, db)
         updateImagegenHistoryRecord(runContext.ownerId, recordId, { ...terminalRecord }, db)
       })()
+      console.warn('[image-generation] imagegen history finalized with storage failure', {
+        ...imagegenRunLogFields(recordId, runContext),
+        storageStatus: image.storageStatus,
+        status: image.status,
+      })
       return
     }
     updateImagegenHistoryRecord(runContext.ownerId, recordId, { ...terminalRecord })
+    console.info('[image-generation] imagegen history finalized', {
+      ...imagegenRunLogFields(recordId, runContext),
+      storageStatus: image.storageStatus,
+      status: image.status,
+    })
   } catch (error) {
     const finalReferences: PersistedGenerateReferences = await persistGenerateReferenceImages(referenceSelection.slots, {
       ownerId: runContext.ownerId,
@@ -313,6 +345,11 @@ async function completeImagegenRun(queued: QueuedImagegenRun) {
       ? new Error(`${safeErrorMessage(error, '测试生图失败', runContext.config)}；参考图保存失败：${safeErrorMessage(finalReferences.error, '参考图持久化失败', runContext.config)}`, { cause: error })
       : error
     const terminalRecord = createFailureHistoryRecord({ ...runContext, referenceImageIds: finalReferences.ids, error: historyError })
+    console.error('[image-generation] imagegen run failed', {
+      ...imagegenRunLogFields(recordId, runContext),
+      error: safeErrorMessage(historyError, '测试生图失败', runContext.config),
+      referenceImageCount: finalReferences.ids.length,
+    })
     db.transaction(() => {
       recordImageGenerationFailureAndMaybeDisable({
         id: recordId,
