@@ -175,7 +175,6 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_imageGenerationFailures_ownerCreatedAt ON imageGenerationFailures(ownerId, createdAt);
-  CREATE INDEX IF NOT EXISTS idx_imageGenerationFailures_ownerRiskWindow ON imageGenerationFailures(ownerId, countsTowardAutoDisable, createdAt);
   CREATE INDEX IF NOT EXISTS idx_imageGenerationFailures_surfaceCreatedAt ON imageGenerationFailures(surface, createdAt);
   CREATE INDEX IF NOT EXISTS idx_imageGenerationFailures_workCreatedAt ON imageGenerationFailures(workId, createdAt);
 
