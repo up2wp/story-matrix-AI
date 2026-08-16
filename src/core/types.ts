@@ -576,6 +576,8 @@ export interface AIModelConfig {
 
 // --- 用户 ---
 
+export type ThemePreference = 'system' | 'light' | 'dark'
+
 export interface User {
   id: string
   username: string
@@ -584,6 +586,10 @@ export interface User {
   role: 'owner' | 'admin' | 'user'
   createdAt: number
   deletedAt?: number | null
+}
+
+export interface AuthenticatedUser extends User {
+  themePreference: ThemePreference
 }
 
 // --- 系统配置 ---

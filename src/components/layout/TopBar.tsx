@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Layout, Space, Button, Typography, Dropdown, Modal, Form, Input, message } from 'antd'
+import { useEffect, useRef, useState } from 'react'
+import { Layout, Space, Button, Typography, Dropdown, Modal, Form, Input, Tooltip, message } from 'antd'
 import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -8,10 +8,15 @@ import {
   LockOutlined,
   IdcardOutlined,
   DownOutlined,
+  DesktopOutlined,
+  SunOutlined,
+  MoonOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router'
 import { useStore } from '@/core/store'
 import { useAuthStore } from '@/core/auth-store'
+import { useThemeStore } from '@/core/theme-store'
+import type { ThemePreference } from '@/core/types'
 
 const { Header } = Layout
 const { Title } = Typography
@@ -23,7 +28,11 @@ export default function TopBar() {
   const logout = useAuthStore((s) => s.logout)
   const changePassword = useAuthStore((s) => s.changePassword)
   const updateProfile = useAuthStore((s) => s.updateProfile)
+  const saveCurrentUserThemePreference = useAuthStore((s) => s.saveCurrentUserThemePreference)
+  const themePreference = useThemeStore((s) => s.themePreference)
+  const syncUserThemePreference = useThemeStore((s) => s.syncUserThemePreference)
   const navigate = useNavigate()
+  const mountedRef = useRef(true)
 
   const [profileModalOpen, setProfileModalOpen] = useState(false)
   const [profileLoading, setProfileLoading] = useState(false)
@@ -31,6 +40,11 @@ export default function TopBar() {
   const [pwdModalOpen, setPwdModalOpen] = useState(false)
   const [pwdLoading, setPwdLoading] = useState(false)
   const [pwdForm] = Form.useForm()
+  const [themeSaving, setThemeSaving] = useState(false)
+
+  useEffect(() => {
+    return () => { mountedRef.current = false }
+  }, [])
 
   const openProfileModal = () => {
     profileForm.setFieldsValue({ displayName: user?.displayName })
@@ -72,6 +86,34 @@ export default function TopBar() {
     }
   }
 
+  const handleThemePreferenceChange = async (nextThemePreference: ThemePreference) => {
+    if (themeSaving || nextThemePreference === themePreference) return
+    const previousThemePreference = themePreference
+    syncUserThemePreference(nextThemePreference)
+    setThemeSaving(true)
+    try {
+      const result = await saveCurrentUserThemePreference(nextThemePreference)
+      if (!result.success && mountedRef.current) {
+        syncUserThemePreference(user?.themePreference ?? previousThemePreference)
+        message.error(result.error || '保存主题偏好失败')
+      }
+    } finally {
+      if (mountedRef.current) setThemeSaving(false)
+    }
+  }
+
+  const themeMenuItems = [
+    { key: 'system', icon: <DesktopOutlined />, label: '跟随系统', themePreference: 'system' as const, onClick: () => handleThemePreferenceChange('system') },
+    { key: 'light', icon: <SunOutlined />, label: '浅色', themePreference: 'light' as const, onClick: () => handleThemePreferenceChange('light') },
+    { key: 'dark', icon: <MoonOutlined />, label: '深色', themePreference: 'dark' as const, onClick: () => handleThemePreferenceChange('dark') },
+  ]
+
+  const themeIcon = themePreference === 'dark'
+    ? <MoonOutlined />
+    : themePreference === 'light'
+      ? <SunOutlined />
+      : <DesktopOutlined />
+
   const userMenuItems = [
     {
       key: 'profile',
@@ -91,7 +133,7 @@ export default function TopBar() {
       icon: <LogoutOutlined />,
       label: '退出登录',
       danger: true,
-      onClick: () => { logout(); navigate('/login') },
+      onClick: async () => { await logout(); navigate('/login') },
     },
   ]
 
@@ -102,8 +144,8 @@ export default function TopBar() {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          background: '#fff',
-          borderBottom: '1px solid #f0f0f0',
+          background: 'var(--app-surface)',
+          borderBottom: '1px solid var(--app-border)',
           padding: '0 16px',
           height: 48,
           lineHeight: '48px',
@@ -118,6 +160,17 @@ export default function TopBar() {
           <Title level={5} style={{ margin: 0 }}>Story Matrix AI</Title>
         </Space>
         <Space>
+          <Dropdown menu={{ items: themeMenuItems, selectable: true, selectedKeys: [themePreference] }} trigger={['click']}>
+            <Tooltip title="切换主题">
+              <Button
+                type="text"
+                icon={themeIcon}
+                aria-label={`当前主题：${themePreference === 'system' ? '跟随系统' : themePreference === 'light' ? '浅色' : '深色'}，切换主题`}
+                loading={themeSaving}
+                disabled={themeSaving}
+              />
+            </Tooltip>
+          </Dropdown>
           <Dropdown menu={{ items: userMenuItems }} trigger={['click']}>
             <Button type="text" icon={<UserOutlined />}>
               {user?.displayName} <DownOutlined style={{ fontSize: 10 }} />

@@ -4,15 +4,22 @@ import { readFile } from 'node:fs/promises'
 const dbSource = await readFile(new URL('../server/src/db.ts', import.meta.url), 'utf8')
 const seedSource = await readFile(new URL('../server/src/seed.ts', import.meta.url), 'utf8')
 const authRouteSource = await readFile(new URL('../server/src/routes/auth.ts', import.meta.url), 'utf8')
+const authMiddlewareSource = await readFile(new URL('../server/src/middleware/auth.ts', import.meta.url), 'utf8')
 const usersRouteSource = await readFile(new URL('../server/src/routes/users.ts', import.meta.url), 'utf8')
 const worksRouteSource = await readFile(new URL('../server/src/routes/works.ts', import.meta.url), 'utf8')
+const coreTypesSource = await readFile(new URL('../src/core/types.ts', import.meta.url), 'utf8')
 const authStoreSource = await readFile(new URL('../src/core/auth-store.ts', import.meta.url), 'utf8')
+const themeStoreSource = await readFile(new URL('../src/core/theme-store.ts', import.meta.url), 'utf8')
+const appSource = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8')
 const loginPageSource = await readFile(new URL('../src/pages/login/LoginPage.tsx', import.meta.url), 'utf8')
+const registerPageSource = await readFile(new URL('../src/pages/login/RegisterPage.tsx', import.meta.url), 'utf8')
 const worksPageSource = await readFile(new URL('../src/pages/works/WorksPage.tsx', import.meta.url), 'utf8')
 const adminPageSource = await readFile(new URL('../src/pages/admin/AdminPage.tsx', import.meta.url), 'utf8')
 const topBarSource = await readFile(new URL('../src/components/layout/TopBar.tsx', import.meta.url), 'utf8')
 const adminRouteSource = await readFile(new URL('../src/components/auth/AdminRoute.tsx', import.meta.url), 'utf8')
 const sidebarSource = await readFile(new URL('../src/components/layout/Sidebar.tsx', import.meta.url), 'utf8')
+const appLayoutSource = await readFile(new URL('../src/components/layout/AppLayout.tsx', import.meta.url), 'utf8')
+const indexCssSource = await readFile(new URL('../src/index.css', import.meta.url), 'utf8')
 const chaptersPageSource = await readFile(new URL('../src/pages/chapters/ChaptersPage.tsx', import.meta.url), 'utf8')
 const importBackfillPageSource = await readFile(new URL('../src/pages/backfill/ImportBackfillPage.tsx', import.meta.url), 'utf8')
 const featurePermissionsSource = await readFile(new URL('../src/core/feature-permissions.ts', import.meta.url), 'utf8')
@@ -25,6 +32,12 @@ assert.match(
   dbSource,
   /ALTER TABLE users ADD COLUMN deletedAt INTEGER/,
   'database migration should add deletedAt without rebuilding or dropping the users table',
+)
+
+assert.match(
+  dbSource,
+  /ALTER TABLE users ADD COLUMN themePreference TEXT NOT NULL DEFAULT 'system'/,
+  'database migration should add themePreference as a non-destructive users table column with system default',
 )
 
 assert.match(
@@ -61,6 +74,180 @@ assert.match(
   authRouteSource,
   /router\.post\('\/change-password', requireAuth/,
   'auth routes should expose a server-side password change endpoint',
+)
+
+assert.match(
+  coreTypesSource,
+  /export type ThemePreference = 'system' \| 'light' \| 'dark'/,
+  'frontend user types should define the supported theme preference enum values',
+)
+
+assert.match(
+  coreTypesSource,
+  /export interface AuthenticatedUser extends User[\s\S]*themePreference: ThemePreference/,
+  'frontend authenticated user type should include the user theme preference contract without expanding admin user DTOs',
+)
+
+assert.match(
+  authRouteSource,
+  /const SAFE_FIELDS = 'id, username, displayName, role, createdAt, deletedAt, themePreference'/,
+  'auth safe user field projection should include themePreference',
+)
+
+assert.match(
+  authRouteSource,
+  /function normalizeThemePreference[\s\S]*return 'system'/,
+  'auth serialization should normalize missing or invalid theme preferences to system',
+)
+
+assert.match(
+  authRouteSource,
+  /themePreference: normalizeThemePreference\(user\.themePreference\)/,
+  'serializeUser should return a normalized themePreference on safe user responses',
+)
+
+assert.match(
+  authRouteSource,
+  /router\.patch\('\/theme-preference', requireAuth/,
+  'auth routes should expose an authenticated self-service theme preference endpoint',
+)
+
+assert.match(
+  authRouteSource,
+  /if \(!isThemePreference\(themePreference\)\)[\s\S]*res\.status\(400\)\.json\(\{ error:/,
+  'theme preference endpoint should reject values outside system/light/dark',
+)
+
+assert.match(
+  authRouteSource,
+  /UPDATE users SET themePreference = \? WHERE id = \?/,
+  'theme preference endpoint should update only the current users own themePreference field',
+)
+
+assert.match(
+  authMiddlewareSource,
+  /themePreference: 'system' \| 'light' \| 'dark'/,
+  'auth middleware CurrentUser should carry the same themePreference values as safe user responses',
+)
+
+assert.match(
+  authMiddlewareSource,
+  /SELECT id, username, displayName, role, createdAt, deletedAt, themePreference FROM users WHERE id = \?/,
+  'auth middleware current-user query should load themePreference consistently',
+)
+
+assert.match(
+  authStoreSource,
+  /saveCurrentUserThemePreference: \(themePreference: ThemePreference\) => Promise<\{ success: boolean; error\?: string \}>/,
+  'auth store should expose a typed current-user theme preference save method',
+)
+
+assert.match(
+  authStoreSource,
+  /\/api\/auth\/theme-preference/,
+  'auth store theme preference saves should call the self-service auth endpoint',
+)
+
+assert.match(
+  authStoreSource,
+  /function enqueueThemePreferenceSave[\s\S]*themePreferenceSaveQueue[\s\S]*requestId === themePreferenceRequestId[\s\S]*set\(\(state\) => \(\{ user: state\.user \? \{ \.\.\.state\.user, themePreference: user\.themePreference \} : user \}\)\)/,
+  'auth store should serialize theme preference saves and ignore stale out-of-order responses before updating user state',
+)
+
+assert.match(
+  authStoreSource,
+  /function invalidateThemePreferenceRequests\(\)[\s\S]*themePreferenceRequestId \+= 1[\s\S]*logout: async \(\) => \{[\s\S]*invalidateThemePreferenceRequests\(\)/,
+  'auth store should invalidate pending theme preference saves across logout or account boundary changes',
+)
+
+assert.match(
+  themeStoreSource,
+  /export type ResolvedTheme = 'light' \| 'dark'/,
+  'theme store should distinguish two-state resolved rendering theme from the persisted preference',
+)
+
+assert.match(
+  themeStoreSource,
+  /syncSystemTheme: \(\) => \{[\s\S]*window\.matchMedia\('\(prefers-color-scheme: dark\)'\)[\s\S]*addEventListener\('change'[\s\S]*removeEventListener\('change'/,
+  'theme store should resolve the system preference through matchMedia and clean up OS theme listeners',
+)
+
+assert.match(
+  themeStoreSource,
+  /syncUserThemePreference: \(themePreference: ThemePreference\)[\s\S]*resetToSystem:/,
+  'theme store should expose explicit authenticated synchronization and unauthenticated reset actions',
+)
+
+assert.match(
+  authStoreSource,
+  /useThemeStore\.getState\(\)\.syncUserThemePreference\(user\.themePreference\)/,
+  'auth lifecycle should synchronize the confirmed server preference into the theme store',
+)
+
+assert.match(
+  authStoreSource,
+  /useThemeStore\.getState\(\)\.resetToSystem\(\)/,
+  'missing sessions and logout should reset the theme store to unauthenticated system preference',
+)
+
+assert.match(
+  appSource,
+  /const themeAlgorithm = resolvedTheme === 'dark' \? darkAlgorithm : defaultAlgorithm[\s\S]*ConfigProvider locale=\{zhCN\} theme=\{\{ algorithm: themeAlgorithm, cssVar: \{ prefix: 'ant' \} \}\}/,
+  'App should preserve zhCN while selecting the Ant Design algorithm from the resolved theme and enabling token CSS variables',
+)
+
+assert.match(
+  appSource,
+  /<div data-theme=\{resolvedTheme\} style=\{appThemeStyle\}>/,
+  'App should expose the resolved theme and app token variables through a root marker',
+)
+
+assert.match(
+  topBarSource,
+  /saveCurrentUserThemePreference[\s\S]*Tooltip title="切换主题"[\s\S]*Dropdown/,
+  'TopBar should expose a compact accessible theme selector beside the user menu',
+)
+
+assert.match(
+  topBarSource,
+  /themePreference: 'system'[\s\S]*themePreference: 'light'[\s\S]*themePreference: 'dark'/,
+  'TopBar theme selector should offer system, light, and dark choices',
+)
+
+assert.match(
+  topBarSource,
+  /aria-label=\{`当前主题：[\s\S]*切换主题`\}[\s\S]*loading=\{themeSaving\}/,
+  'TopBar theme trigger should convey an accessible action and saving state',
+)
+
+assert.match(
+  indexCssSource,
+  /\[data-theme='light'\][\s\S]*--app-background:[\s\S]*\[data-theme='dark'\][\s\S]*--app-background:/,
+  'global CSS should define explicit light and dark shell variables',
+)
+
+assert.match(
+  sidebarSource,
+  /background: 'var\(--app-sider-background\)'[\s\S]*borderRight: '1px solid var\(--app-border\)'/,
+  'Sidebar shell surfaces should use theme variables instead of hardcoded light colors',
+)
+
+assert.match(
+  appLayoutSource,
+  /background: 'var\(--app-background\)'[\s\S]*color: 'var\(--app-text-tertiary\)'/,
+  'AppLayout content and title edit affordance should use theme variables',
+)
+
+assert.match(
+  loginPageSource,
+  /background: 'var\(--app-background\)'/,
+  'login page should use the shared shell background variable',
+)
+
+assert.match(
+  registerPageSource,
+  /background: 'var\(--app-background\)'/,
+  'register page should use the shared shell background variable',
 )
 
 assert.match(

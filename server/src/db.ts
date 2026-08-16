@@ -82,7 +82,8 @@ db.exec(`
     displayName TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'user',
     createdAt INTEGER NOT NULL,
-    deletedAt INTEGER
+    deletedAt INTEGER,
+    themePreference TEXT NOT NULL DEFAULT 'system'
   );
 
   CREATE TABLE IF NOT EXISTS works (
@@ -229,6 +230,10 @@ function rebuildImagegenHistoryForGenerating(database: DatabaseInstance) {
 export function migrateDatabase(database: DatabaseInstance = db) {
   if (!columnExists(database, 'users', 'deletedAt')) {
     database.prepare('ALTER TABLE users ADD COLUMN deletedAt INTEGER').run()
+  }
+
+  if (!columnExists(database, 'users', 'themePreference')) {
+    database.prepare("ALTER TABLE users ADD COLUMN themePreference TEXT NOT NULL DEFAULT 'system'").run()
   }
 
   if (!columnExists(database, 'systemConfig', 'voiceboxConfig')) {
