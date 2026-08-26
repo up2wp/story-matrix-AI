@@ -43,6 +43,21 @@ export type CreateImagegenHistoryRecordInput = Omit<ImagegenHistoryRecord, 'id' 
 
 export type UpdateImagegenHistoryRecordInput = Omit<ImagegenHistoryRecord, 'id' | 'ownerId' | 'prompt' | 'generationPromptSnapshot' | 'provider' | 'providerLabel' | 'modelId' | 'modelName' | 'storageMode' | 'createdAt'>
 
+export type ListImagegenHistoryInput = {
+  readonly page: number
+  readonly pageSize: number
+  readonly prompt?: string
+  readonly createdFrom?: number
+  readonly createdTo?: number
+}
+
+export type ListImagegenHistoryResult = {
+  readonly items: ImagegenHistoryRecord[]
+  readonly total: number
+  readonly page: number
+  readonly pageSize: number
+}
+
 type ImagegenHistoryRow = {
   readonly id: string
   readonly ownerId: string
@@ -132,6 +147,32 @@ function referenceImageIdList(value: string | null): readonly string[] {
   if (!value) return []
   const parsed: unknown = JSON.parse(value)
   return Array.isArray(parsed) ? parsed.map(item => String(item || '').trim()).filter(Boolean) : []
+}
+
+function escapedLikePattern(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/%/g, '\\%')
+    .replace(/_/g, '\\_')
+}
+
+function imagegenHistoryFilterSql(input: ListImagegenHistoryInput): { readonly sql: string; readonly params: unknown[] } {
+  const conditions: string[] = ['ownerId = ?']
+  const params: unknown[] = []
+  if (input.prompt && input.prompt.trim()) {
+    const pattern = `%${escapedLikePattern(input.prompt.trim())}%`
+    conditions.push(`(prompt LIKE ? ESCAPE '\\' OR generationPromptSnapshot LIKE ? ESCAPE '\\')`)
+    params.push(pattern, pattern)
+  }
+  if (typeof input.createdFrom === 'number') {
+    conditions.push('createdAt >= ?')
+    params.push(input.createdFrom)
+  }
+  if (typeof input.createdTo === 'number') {
+    conditions.push('createdAt <= ?')
+    params.push(input.createdTo)
+  }
+  return { sql: conditions.join(' AND '), params }
 }
 
 function rowToRecord(row: ImagegenHistoryRow): ImagegenHistoryRecord {
@@ -225,9 +266,25 @@ export function updateImagegenHistoryRecord(ownerId: string, id: string, input: 
   return getImagegenHistoryRecord(ownerId, id, database)
 }
 
-export function listImagegenHistory(ownerId: string, database: DatabaseInstance = db): ImagegenHistoryRecord[] {
-  const rows = database.prepare<[string], ImagegenHistoryRow>(`${IMAGEGEN_HISTORY_SELECT} WHERE ownerId = ? ORDER BY createdAt DESC`).all(ownerId)
-  return rows.map(rowToRecord)
+export function listImagegenHistory(ownerId: string, input: ListImagegenHistoryInput, database: DatabaseInstance = db): ListImagegenHistoryResult {
+  const { sql: filterSql, params: filterParams } = imagegenHistoryFilterSql(input)
+  const totalRow = database.prepare<unknown[], { count: number }>(`
+    SELECT COUNT(*) AS count FROM imagegenHistory WHERE ${filterSql}
+  `).get(ownerId, ...filterParams)
+  const total = totalRow?.count ?? 0
+  const offset = (input.page - 1) * input.pageSize
+  const rows = database.prepare<unknown[], ImagegenHistoryRow>(`
+    ${IMAGEGEN_HISTORY_SELECT}
+    WHERE ${filterSql}
+    ORDER BY createdAt DESC, id DESC
+    LIMIT ? OFFSET ?
+  `).all(ownerId, ...filterParams, input.pageSize, offset)
+  return {
+    items: rows.map(rowToRecord),
+    total,
+    page: input.page,
+    pageSize: input.pageSize,
+  }
 }
 
 export function getImagegenHistoryRecord(ownerId: string, id: string, database: DatabaseInstance = db): ImagegenHistoryRecord | null {

@@ -1,6 +1,6 @@
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Button, Card, Empty, Input, Popconfirm, Select, Space, Spin, Tag, Typography, message } from 'antd'
+import { Alert, Button, Card, DatePicker, Empty, Input, Pagination, Popconfirm, Select, Space, Spin, Tag, Typography, message } from 'antd'
 import { useAuthStore } from '@/core/auth-store'
 import { useSystemConfigStore } from '@/core/system-config-store'
 import { canUseFeature } from '@/core/feature-permissions'
@@ -9,12 +9,15 @@ import ImageModelSelector from '@/features/image-generation/ImageModelSelector'
 import ImageResultGallery from '@/features/image-generation/ImageResultGallery'
 import type { GalleryImage } from '@/features/image-generation/ImageResultGallery'
 import { ImagegenClientError, imagegenClient } from '@/features/imagegen/imagegenClient'
-import type { ImagegenHistoryResponse, ImagegenReferenceInput } from '@/features/imagegen/imagegenClient'
+import type { ImagegenHistoryQuery, ImagegenHistoryResponse, ImagegenReferenceInput } from '@/features/imagegen/imagegenClient'
 
 const { Paragraph, Text, Title } = Typography
 const HISTORY_POLL_INTERVAL_MS = 3000
+const DEFAULT_HISTORY_PAGE_SIZE = 10
+const HISTORY_PAGE_SIZE_OPTIONS = [10, 20, 50]
 
 type ReferenceSlot = { readonly file: File; readonly previewUrl: string }
+type RefreshHistoryOptions = ImagegenHistoryQuery & { readonly silent?: boolean }
 
 export default function ImagegenPage() {
   const user = useAuthStore((state) => state.user)
@@ -28,6 +31,13 @@ export default function ImagegenPage() {
   const [format, setFormat] = useState<string>()
   const [aspectRatio, setAspectRatio] = useState<string>()
   const [history, setHistory] = useState<ImagegenHistoryResponse[]>([])
+  const [historyTotal, setHistoryTotal] = useState(0)
+  const [historyPromptInput, setHistoryPromptInput] = useState('')
+  const [historyPrompt, setHistoryPrompt] = useState('')
+  const [historyCreatedFrom, setHistoryCreatedFrom] = useState<number>()
+  const [historyCreatedTo, setHistoryCreatedTo] = useState<number>()
+  const [historyPage, setHistoryPage] = useState(1)
+  const [historyPageSize, setHistoryPageSize] = useState(DEFAULT_HISTORY_PAGE_SIZE)
   const [historyError, setHistoryError] = useState<string>()
   const [historyLoading, setHistoryLoading] = useState(false)
   const [selectedHistoryIds, setSelectedHistoryIds] = useState<readonly string[]>([])
@@ -38,6 +48,18 @@ export default function ImagegenPage() {
   const [submitting, setSubmitting] = useState(false)
   const referenceSlotsRef = useRef<readonly ReferenceSlot[]>([])
   const autoDisabledNotifiedRef = useRef(false)
+  const historyRequestIdRef = useRef(0)
+  const historyQueryRef = useRef<Required<Pick<ImagegenHistoryQuery, 'page' | 'pageSize'>> & Omit<ImagegenHistoryQuery, 'page' | 'pageSize'>>({
+    page: 1,
+    pageSize: DEFAULT_HISTORY_PAGE_SIZE,
+    prompt: '',
+    createdFrom: undefined,
+    createdTo: undefined,
+  })
+
+  useEffect(() => {
+    historyQueryRef.current = { page: historyPage, pageSize: historyPageSize, prompt: historyPrompt, createdFrom: historyCreatedFrom, createdTo: historyCreatedTo }
+  }, [historyCreatedFrom, historyCreatedTo, historyPage, historyPageSize, historyPrompt])
 
   const permissionSources: FeaturePermissionSources = {
     novelImportConfig,
@@ -89,17 +111,34 @@ export default function ImagegenPage() {
     message.warning('多次非超时生图失败后，当前账号的生图权限已自动关闭，请联系管理员恢复。')
   }, [loadConfig])
 
-  const refreshHistory = useCallback(async (options?: { readonly silent?: boolean }) => {
+  const refreshHistory = useCallback(async (options?: RefreshHistoryOptions) => {
+    const currentQuery = historyQueryRef.current
+    const page = options?.page ?? currentQuery.page
+    const pageSize = options?.pageSize ?? currentQuery.pageSize
+    const prompt = options && 'prompt' in options ? options.prompt : currentQuery.prompt
+    const createdFrom = options && 'createdFrom' in options ? options.createdFrom : currentQuery.createdFrom
+    const createdTo = options && 'createdTo' in options ? options.createdTo : currentQuery.createdTo
+    historyQueryRef.current = { page, pageSize, prompt, createdFrom, createdTo }
+    const requestId = historyRequestIdRef.current + 1
+    historyRequestIdRef.current = requestId
     if (!options?.silent) setHistoryLoading(true)
     setHistoryError(undefined)
     try {
-      const nextHistory = await imagegenClient.history()
-      setHistory(nextHistory)
-      if (nextHistory.some((record) => record.imageGenerationPermissionAutoDisabled)) await handleImageGenerationAutoDisabled()
+      const nextHistory = await imagegenClient.history({ page, pageSize, prompt, createdFrom, createdTo })
+      if (historyRequestIdRef.current !== requestId) return
+      const visibleIds = new Set(nextHistory.items.map((record) => record.id))
+      historyQueryRef.current = { ...historyQueryRef.current, page: nextHistory.page, pageSize: nextHistory.pageSize }
+      setHistory([...nextHistory.items])
+      setHistoryTotal(nextHistory.total)
+      setHistoryPage(nextHistory.page)
+      setHistoryPageSize(nextHistory.pageSize)
+      setSelectedHistoryIds((current) => current.filter((id) => visibleIds.has(id)))
+      if (nextHistory.items.some((record) => record.imageGenerationPermissionAutoDisabled)) await handleImageGenerationAutoDisabled()
     } catch (error) {
+      if (historyRequestIdRef.current !== requestId) return
       setHistoryError(error instanceof ImagegenClientError ? error.message : '测试历史加载失败，请稍后重试。')
     } finally {
-      if (!options?.silent) setHistoryLoading(false)
+      if (historyRequestIdRef.current === requestId) setHistoryLoading(false)
     }
   }, [handleImageGenerationAutoDisabled])
 
@@ -180,7 +219,7 @@ export default function ImagegenPage() {
 
     setSubmitting(true)
     try {
-      const queued = await imagegenClient.generate({
+      await imagegenClient.generate({
         prompt,
         modelId: selectedModel.id,
         ...(size ? { size } : {}),
@@ -190,7 +229,8 @@ export default function ImagegenPage() {
         referenceInputs,
         referenceFiles: selectedReferenceFiles,
       })
-      setHistory((current) => [queued, ...current.filter((record) => record.id !== queued.id)])
+      setHistoryPage(1)
+      void refreshHistory({ page: 1 })
       message.success('测试图片已开始生成')
     } catch (error) {
       if (error instanceof ImagegenClientError) {
@@ -211,12 +251,54 @@ export default function ImagegenPage() {
     setSelectedHistoryIds((current) => selected ? [...current, id] : current.filter((historyId) => historyId !== id))
   }
 
+  const handleHistoryPromptSearch = (value: string) => {
+    const nextPrompt = value.trim()
+    setHistoryPromptInput(nextPrompt)
+    setHistoryPrompt(nextPrompt)
+    setHistoryPage(1)
+    void refreshHistory({ page: 1, prompt: nextPrompt })
+  }
+
+  const handleHistoryPromptInputChange = (value: string) => {
+    setHistoryPromptInput(value)
+    if (value || !historyPrompt) return
+    setHistoryPrompt('')
+    setHistoryPage(1)
+    void refreshHistory({ page: 1, prompt: '' })
+  }
+
+  const handleHistoryRangeChange = (_dates: unknown, dateStrings: [string, string]) => {
+    if (!dateStrings[0] || !dateStrings[1]) {
+      setHistoryCreatedFrom(undefined)
+      setHistoryCreatedTo(undefined)
+      setHistoryPage(1)
+      void refreshHistory({ page: 1, createdFrom: undefined, createdTo: undefined })
+      return
+    }
+
+    const createdFrom = new Date(`${dateStrings[0]}T00:00:00.000`).getTime()
+    const createdTo = new Date(`${dateStrings[1]}T23:59:59.999`).getTime()
+    setHistoryCreatedFrom(createdFrom)
+    setHistoryCreatedTo(createdTo)
+    setHistoryPage(1)
+    void refreshHistory({ page: 1, createdFrom, createdTo })
+  }
+
+  const handleHistoryPageChange = (page: number, pageSize: number) => {
+    const nextPage = pageSize === historyPageSize ? page : 1
+    setHistoryPage(nextPage)
+    setHistoryPageSize(pageSize)
+    void refreshHistory({ page: nextPage, pageSize })
+  }
+
   const handleDeleteHistoryRecord = async (record: GalleryImage) => {
     setDeletingHistoryId(record.id)
     try {
       await imagegenClient.deleteHistory(record.id)
-      setHistory((current) => current.filter((historyRecord) => historyRecord.id !== record.id))
       setSelectedHistoryIds((current) => current.filter((historyId) => historyId !== record.id))
+      const nextPage = visibleHistory.length === 1 && historyPage > 1 ? historyPage - 1 : historyPage
+      setHistoryPage(nextPage)
+      await refreshHistory({ page: nextPage })
       message.success('测试历史已删除')
     } catch (error) {
       message.error(error instanceof ImagegenClientError ? error.message : '测试历史删除失败，请稍后重试。')
@@ -232,8 +314,11 @@ export default function ImagegenPage() {
     try {
       await imagegenClient.deleteHistoryBatch(selectedHistoryIds)
       const selectedIds = new Set(selectedHistoryIds)
-      setHistory((current) => current.filter((record) => !selectedIds.has(record.id)))
       setSelectedHistoryIds([])
+      const remainingVisibleCount = visibleHistory.filter((record) => !selectedIds.has(record.id)).length
+      const nextPage = remainingVisibleCount === 0 && historyPage > 1 ? historyPage - 1 : historyPage
+      setHistoryPage(nextPage)
+      await refreshHistory({ page: nextPage })
       message.success('已删除选中的测试历史')
     } catch (error) {
       message.error(error instanceof ImagegenClientError ? error.message : '批量删除测试历史失败，请稍后重试。')
@@ -245,8 +330,9 @@ export default function ImagegenPage() {
   const handleRerunHistoryRecord = async (record: GalleryImage) => {
     setRerunningHistoryId(record.id)
     try {
-      const rerun = await imagegenClient.rerunHistory(record.id)
-      setHistory((current) => [rerun, ...current.filter((record) => record.id !== rerun.id)])
+      await imagegenClient.rerunHistory(record.id)
+      setHistoryPage(1)
+      void refreshHistory({ page: 1 })
       message.success('已按历史记录再次生成')
     } catch (error) {
       if (error instanceof ImagegenClientError) {
@@ -438,18 +524,42 @@ export default function ImagegenPage() {
               </Space>
             }
           >
-            {visibleHistoryError ? (
-              <Alert type="warning" showIcon message={visibleHistoryError} />
-            ) : historyLoading && visibleHistory.length === 0 ? (
-              <Spin />
-            ) : visibleHistory.length ? (
-              <ImageResultGallery images={galleryImages} showFailedPlaceholders showGeneratingPlaceholders
-                historySelection={{ selectedIds: selectedHistoryIds, onChange: handleHistorySelection }}
-                historyActions={{ onDelete: handleDeleteHistoryRecord, onRerun: handleRerunHistoryRecord, deletingId: deletingHistoryId, rerunningId: rerunningHistoryId }}
-              />
-            ) : (
-              <Empty description="暂无测试历史" />
-            )}
+            <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+              <Space wrap size="small" style={{ width: '100%' }}>
+                <Input.Search
+                  value={historyPromptInput}
+                  onChange={(event) => handleHistoryPromptInputChange(event.target.value)}
+                  allowClear
+                  placeholder="按提示词搜索测试历史"
+                  onSearch={handleHistoryPromptSearch}
+                  disabled={!canUseImagegen}
+                />
+                <DatePicker.RangePicker allowClear onChange={handleHistoryRangeChange} disabled={!canUseImagegen} />
+              </Space>
+              {visibleHistoryError ? (
+                <Alert type="warning" showIcon message={visibleHistoryError} />
+              ) : historyLoading && visibleHistory.length === 0 ? (
+                <Spin />
+              ) : visibleHistory.length ? (
+                <ImageResultGallery images={galleryImages} showFailedPlaceholders showGeneratingPlaceholders
+                  historySelection={{ selectedIds: selectedHistoryIds, onChange: handleHistorySelection }}
+                  historyActions={{ onDelete: handleDeleteHistoryRecord, onRerun: handleRerunHistoryRecord, deletingId: deletingHistoryId, rerunningId: rerunningHistoryId }}
+                />
+              ) : (
+                <Empty description="暂无测试历史" />
+              )}
+              {historyTotal > 0 ? (
+                <Pagination
+                  current={historyPage}
+                  pageSize={historyPageSize}
+                  total={historyTotal}
+                  showSizeChanger
+                  pageSizeOptions={HISTORY_PAGE_SIZE_OPTIONS}
+                  onChange={handleHistoryPageChange}
+                  responsive
+                />
+              ) : null}
+            </Space>
           </Card>
         </div>
       </Space>

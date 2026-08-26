@@ -14,6 +14,8 @@ import { listImagegenReferenceAssetsByIds, type ImagegenReferenceAssetRecord } f
 const router = Router()
 const MAX_TEST_PROMPT_LENGTH = 8000
 const MAX_HISTORY_DELETE_BATCH = 100
+const DEFAULT_HISTORY_PAGE_SIZE = 10
+const MAX_HISTORY_PAGE_SIZE = 100
 const ALLOWED_GENERATE_FIELDS = new Set(['prompt', 'modelId', 'size', 'quality', 'format', 'aspectRatio', 'n', 'referenceInputs'])
 
 type ResolvedImagegenRun = {
@@ -224,6 +226,36 @@ function parseHistoryDeleteIds(body: unknown) {
   return { ok: true, ids: uniqueIds } as const
 }
 
+function positiveInteger(value: unknown): number {
+  const num = typeof value === 'string' ? Number(value) : typeof value === 'number' ? value : NaN
+  return Number.isInteger(num) && num > 0 ? num : 1
+}
+
+function historyPageSize(value: unknown): number {
+  const num = typeof value === 'string' ? Number(value) : typeof value === 'number' ? value : NaN
+  if (!Number.isInteger(num) || num <= 0) return DEFAULT_HISTORY_PAGE_SIZE
+  return Math.min(num, MAX_HISTORY_PAGE_SIZE)
+}
+
+function stringQuery(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function timestampQuery(value: unknown): number | undefined {
+  const num = typeof value === 'string' ? Number(value) : typeof value === 'number' ? value : NaN
+  return Number.isFinite(num) ? num : undefined
+}
+
+function parseHistoryQuery(query: { readonly [key: string]: unknown }) {
+  return {
+    page: positiveInteger(query.page),
+    pageSize: historyPageSize(query.pageSize),
+    prompt: stringQuery(query.prompt),
+    createdFrom: timestampQuery(query.createdFrom),
+    createdTo: timestampQuery(query.createdTo),
+  }
+}
+
 async function queueImagegenRun(request: AuthenticatedRequest, parsedRequest: ParsedGenerateRequest) {
   const body = parsedRequest.body
   const unsupportedFields = unsupportedGenerateFields(body)
@@ -378,9 +410,15 @@ router.use('/reference-assets', createImagegenReferenceAssetRouter({ loadImageGe
 
 router.get('/history', (req, res) => {
   const request = req as AuthenticatedRequest
-  const history = listImagegenHistory(request.currentUser.id)
-  const referenceImagesById = referenceImagesForHistory(request.currentUser.id, history)
-  res.json(history.map(record => serializeHistory(record, referenceImagesById)))
+  const query = parseHistoryQuery(req.query)
+  const result = listImagegenHistory(request.currentUser.id, query)
+  const referenceImagesById = referenceImagesForHistory(request.currentUser.id, result.items)
+  res.json({
+    items: result.items.map(record => serializeHistory(record, referenceImagesById)),
+    total: result.total,
+    page: result.page,
+    pageSize: result.pageSize,
+  })
 })
 
 router.delete('/history/:recordId', (req, res) => {
