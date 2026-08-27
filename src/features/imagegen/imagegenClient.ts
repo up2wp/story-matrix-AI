@@ -17,6 +17,21 @@ export type ImagegenReferenceInput =
   | { readonly kind: 'file'; readonly index: number }
 
 export type ImagegenHistoryResponse = Omit<ImagegenHistoryRecord, 'ownerId'>
+export type ImagegenHistoryQuery = {
+  readonly page?: number
+  readonly pageSize?: number
+  readonly prompt?: string
+  readonly createdFrom?: number
+  readonly createdTo?: number
+}
+
+export type ImagegenHistoryPageResponse = {
+  readonly items: readonly ImagegenHistoryResponse[]
+  readonly total: number
+  readonly page: number
+  readonly pageSize: number
+}
+
 export type ImagegenReferenceAssetResponse = Omit<ImagegenReferenceAssetRecord, 'ownerId'>
 export type ImagegenDeleteHistoryResponse = { readonly deletedCount: number }
 
@@ -98,7 +113,7 @@ export const imagegenClient = {
     const { init, json } = generateRequestInit(payload)
     return request<ImagegenHistoryResponse>('/generate', init, json)
   },
-  history: () => request<ImagegenHistoryResponse[]>('/history'),
+  history: (query?: ImagegenHistoryQuery) => request<ImagegenHistoryPageResponse>(historyUrl(query)),
   deleteHistory: (id: string) => requestEmpty(`/history/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   }),
@@ -113,4 +128,27 @@ export const imagegenClient = {
 
 export function getImagegenReferenceAssetUrl(asset: Pick<ImagegenReferenceAssetResponse, 'thumbnailUrl' | 'originalUrl'>, variant: 'thumbnail' | 'original' = 'thumbnail') {
   return variant === 'original' ? asset.originalUrl : asset.thumbnailUrl
+}
+
+function appendNumberParam(params: URLSearchParams, key: string, value: number | undefined) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    params.append(key, String(value))
+  }
+}
+
+function appendStringParam(params: URLSearchParams, key: string, value: string | undefined) {
+  if (typeof value === 'string' && value.trim()) {
+    params.append(key, value.trim())
+  }
+}
+
+function historyUrl(query: ImagegenHistoryQuery = {}): string {
+  const params = new URLSearchParams()
+  appendNumberParam(params, 'page', query.page)
+  appendNumberParam(params, 'pageSize', query.pageSize)
+  appendStringParam(params, 'prompt', query.prompt)
+  appendNumberParam(params, 'createdFrom', query.createdFrom)
+  appendNumberParam(params, 'createdTo', query.createdTo)
+  const queryString = params.toString()
+  return queryString ? `/history?${queryString}` : '/history'
 }
