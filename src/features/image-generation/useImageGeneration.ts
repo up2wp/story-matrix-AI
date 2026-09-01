@@ -215,6 +215,16 @@ export function useImageGeneration() {
     }
   }
 
+  const shareImage = async (image: ImageAssetRecord) => {
+    if (!currentWork) return undefined
+    try {
+      return await imageGenerationClient.shareAsset({ workId: currentWork.id, imageId: image.id })
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'Immich 分享链接创建失败')
+      return undefined
+    }
+  }
+
   const persistCandidateCache = async (chapterId: string, result: ChapterVisualCandidateResult, status: 'success' | 'error' = 'success') => {
     if (!currentWork) return undefined
     const metadata = candidateCacheMetadata(currentWork, chapterId)
@@ -253,5 +263,6 @@ export function useImageGeneration() {
     extractChapterCandidates,
     retryImmichUpload,
     deleteImage,
+    shareImage,
   }
 }

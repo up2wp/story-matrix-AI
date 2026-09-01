@@ -108,6 +108,16 @@ export interface ImageDeleteRequest {
   imageId: string
 }
 
+export interface ImageShareRequest {
+  workId: string
+  imageId: string
+}
+
+export interface ImageShareResponse {
+  publicUrl: string
+  expiresAt: string
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/image-generation${url}`, {
     ...init,
@@ -138,6 +148,9 @@ export const imageGenerationClient = {
   }),
   deleteAsset: (payload: ImageDeleteRequest) => request<{ visualAssets: WorkVisualAssetsConfig; updatedAt: number }>(`/assets/${encodeURIComponent(payload.workId)}/${encodeURIComponent(payload.imageId)}`, {
     method: 'DELETE',
+  }),
+  shareAsset: (payload: ImageShareRequest) => request<ImageShareResponse>(`/assets/${encodeURIComponent(payload.workId)}/${encodeURIComponent(payload.imageId)}/share`, {
+    method: 'POST',
   }),
   discoverProviderModels: (payload: ImageProviderDiscoveryRequest) => request<{ candidates: ImageProviderModelCandidate[] }>('/providers/discover-models', {
     method: 'POST',
