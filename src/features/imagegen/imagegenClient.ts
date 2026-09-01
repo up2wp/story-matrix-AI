@@ -34,6 +34,7 @@ export type ImagegenHistoryPageResponse = {
 
 export type ImagegenReferenceAssetResponse = Omit<ImagegenReferenceAssetRecord, 'ownerId'>
 export type ImagegenDeleteHistoryResponse = { readonly deletedCount: number }
+export type ImagegenShareResponse = { readonly publicUrl: string; readonly expiresAt: string }
 
 export class ImagegenClientError extends Error {
   readonly name = 'ImagegenClientError'
@@ -122,6 +123,9 @@ export const imagegenClient = {
     body: JSON.stringify({ ids }),
   }),
   rerunHistory: (id: string) => request<ImagegenHistoryResponse>(`/history/${encodeURIComponent(id)}/rerun`, {
+    method: 'POST',
+  }),
+  shareHistory: (id: string) => request<ImagegenShareResponse>(`/history/${encodeURIComponent(id)}/share`, {
     method: 'POST',
   }),
 }
