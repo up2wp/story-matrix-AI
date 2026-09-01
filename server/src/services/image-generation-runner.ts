@@ -155,7 +155,7 @@ function sleep(ms: number) {
 export function immichClientFromConfig(config: ImageGenerationConfig) {
   const immich = config.immich
   if (!immich?.serviceUrl || !immich.apiKey || !immich.projectName) throw new Error('Immich 存储配置不完整')
-  return new ImmichClient({ serviceUrl: immich.serviceUrl, apiKey: immich.apiKey, projectName: immich.projectName, allowPrivateNetwork: immich.allowPrivateNetwork })
+  return new ImmichClient({ serviceUrl: immich.serviceUrl, publicBaseUrl: immich.publicBaseUrl, apiKey: immich.apiKey, projectName: immich.projectName, allowPrivateNetwork: immich.allowPrivateNetwork })
 }
 
 export async function uploadToImmichWithRetry(input: ImmichUploadRetryInput) {
