@@ -66,6 +66,7 @@ export const defaultImageGenerationConfig: ImageGenerationConfig = {
   storageMode: 'local',
   immich: {
     serviceUrl: '',
+    publicBaseUrl: '',
     apiKey: '',
     projectName: '',
     allowPrivateNetwork: false,
