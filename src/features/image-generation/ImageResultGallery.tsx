@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { CopyOutlined, DeleteOutlined, LoadingOutlined, PictureOutlined, ReloadOutlined } from '@ant-design/icons'
-import { Button, Card, Checkbox, Empty, Image, Modal, message, Popconfirm, Space, Tag, Typography } from 'antd'
+import { CopyOutlined, DeleteOutlined, LinkOutlined, LoadingOutlined, PictureOutlined, ReloadOutlined, ShareAltOutlined } from '@ant-design/icons'
+import { Button, Card, Checkbox, Empty, Image, Input, Modal, message, Popconfirm, Space, Tag, Typography } from 'antd'
 import type { ImageAssetRecord, ImagegenHistoryStatus, ImagegenReferenceImageSummary } from '@/core/types'
 import { getImageAssetDisplayUrl } from './imageGenerationClient'
 
@@ -12,8 +12,17 @@ export type GalleryImage = Omit<ImageAssetRecord, 'status' | 'storageStatus'> & 
   readonly referenceImages?: readonly ImagegenReferenceImageSummary[]
 }
 
+export interface ImageShareResult {
+  readonly publicUrl: string
+  readonly expiresAt: string
+}
+
 function isImageAssetRecord(image: GalleryImage): image is ImageAssetRecord & GalleryImage {
   return image.status !== 'generating' && image.storageStatus !== 'generating'
+}
+
+function isShareableImmichImage(image: GalleryImage): image is ImageAssetRecord & GalleryImage {
+  return image.storageMode === 'immich' && image.status === 'succeeded' && image.storageStatus === 'succeeded'
 }
 
 interface Props {
@@ -21,6 +30,7 @@ interface Props {
   editable?: boolean
   onRetryUpload?: (image: ImageAssetRecord) => void
   onDelete?: (image: ImageAssetRecord) => void
+  onShare?: (image: ImageAssetRecord) => Promise<ImageShareResult | undefined>
   deletingImageId?: string | null
   showGeneratingPlaceholders?: boolean
   showFailedPlaceholders?: boolean
@@ -45,10 +55,44 @@ async function copyProviderPrompt(generationPromptSnapshot: string) {
   }
 }
 
-export default function ImageResultGallery({ images, editable, onRetryUpload, onDelete, deletingImageId, showGeneratingPlaceholders = false, showFailedPlaceholders = false, historySelection, historyActions }: Props) {
+async function copyPublicShareUrl(publicUrl: string) {
+  await navigator.clipboard.writeText(publicUrl)
+}
+
+export default function ImageResultGallery({ images, editable, onRetryUpload, onDelete, onShare, deletingImageId, showGeneratingPlaceholders = false, showFailedPlaceholders = false, historySelection, historyActions }: Props) {
   const [loadFailures, setLoadFailures] = useState<Record<string, boolean>>({})
   const [selectedImage, setSelectedImage] = useState<GalleryImage>()
+  const [sharingImageIds, setSharingImageIds] = useState<Record<string, boolean>>({})
+  const [sharedLink, setSharedLink] = useState<ImageShareResult>()
   const visibleImages = images.filter((image) => (showGeneratingPlaceholders && image.status === 'generating' && !getImageAssetDisplayUrl(image)) || (showFailedPlaceholders && image.status === 'failed' && !getImageAssetDisplayUrl(image)) || (getImageAssetDisplayUrl(image) && !loadFailures[image.id]))
+  const handleShareImage = async (image: ImageAssetRecord) => {
+    if (!onShare) return
+    setSharingImageIds((current) => ({ ...current, [image.id]: true }))
+    try {
+      const result = await onShare(image)
+      if (!result) return
+      setSharedLink(result)
+      try {
+        await copyPublicShareUrl(result.publicUrl)
+        message.success('公开链接已复制')
+      } catch (error) {
+        message.warning(error instanceof Error ? `无法自动复制：${error.message}` : '无法自动复制，请手动复制链接')
+      }
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '创建公开链接失败')
+    } finally {
+      setSharingImageIds((current) => ({ ...current, [image.id]: false }))
+    }
+  }
+  const handleCopySharedLink = async () => {
+    if (!sharedLink) return
+    try {
+      await copyPublicShareUrl(sharedLink.publicUrl)
+      message.success('公开链接已复制')
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '复制公开链接失败')
+    }
+  }
   if (!visibleImages.length) return <Empty description="暂无可展示的图片结果" />
   return (
     <>
@@ -95,6 +139,11 @@ export default function ImageResultGallery({ images, editable, onRetryUpload, on
                 <Button size="small" disabled={isGeneratingWithoutImage} onClick={() => setSelectedImage(image)}>
                   查看详情
                 </Button>
+                {onShare && isShareableImmichImage(image) && (
+                  <Button size="small" icon={<ShareAltOutlined />} loading={Boolean(sharingImageIds[image.id])} onClick={() => void handleShareImage(image)}>
+                    分享
+                  </Button>
+                )}
                 {!isGeneratingWithoutImage && !isFailedWithoutImage && image.status !== 'succeeded' && <Text type="danger">{image.error || '图片存储未完成，可稍后重试'}</Text>}
                 {!isGeneratingWithoutImage && !isFailedWithoutImage && image.generationPromptSnapshot && (
                   <div>
@@ -163,6 +212,17 @@ export default function ImageResultGallery({ images, editable, onRetryUpload, on
                 </div>
               </div>
             ) : null}
+          </Space>
+        ) : null}
+      </Modal>
+      <Modal title="公开分享链接" open={Boolean(sharedLink)} footer={null} width={480} onCancel={() => setSharedLink(undefined)}>
+        {sharedLink ? (
+          <Space direction="vertical" size="small" style={{ width: '100%' }}>
+            <Input readOnly size="small" value={sharedLink.publicUrl} prefix={<LinkOutlined />} aria-label="公开分享链接" />
+            <Text type="secondary">有效期至 {new Date(sharedLink.expiresAt).toLocaleString('zh-CN')}</Text>
+            <Button size="small" type="primary" icon={<CopyOutlined />} onClick={() => void handleCopySharedLink()}>
+              复制链接
+            </Button>
           </Space>
         ) : null}
       </Modal>

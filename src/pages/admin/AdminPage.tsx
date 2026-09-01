@@ -249,6 +249,7 @@ function normalizeImageConfigFromForm(values: ImageGenerationConfig): ImageGener
     storageMode: values.storageMode === 'immich' ? 'immich' : 'local',
     immich: {
       serviceUrl: values.immich?.serviceUrl?.trim() || '',
+      publicBaseUrl: values.immich?.publicBaseUrl?.trim() || '',
       apiKey: values.immich?.apiKey || '',
       projectName: values.immich?.projectName?.trim() || '',
       allowPrivateNetwork: Boolean(values.immich?.allowPrivateNetwork),
@@ -397,6 +398,9 @@ function ImageGenerationSettings() {
         <Card title="Immich 存储" style={{ marginBottom: 16 }}>
           <Form.Item name={['immich', 'serviceUrl']} label="Immich 服务地址" rules={[{ required: true, message: '请输入 Immich 服务地址' }]} extra="只保存在服务端；浏览器不会直连 Immich。默认拒绝本机、内网和 metadata 地址。">
             <Input placeholder="https://immich.example.com" />
+          </Form.Item>
+          <Form.Item name={['immich', 'publicBaseUrl']} label="Immich 公开访问地址" extra="用于生成外部可打开的 1 天公开分享链接；如服务地址本身已是公网地址可留空。">
+            <Input placeholder="https://photos.example.com" />
           </Form.Item>
           <Form.Item name={['immich', 'apiKey']} label="Immich API Key" rules={[{ required: true, message: '请输入 Immich API Key' }]} extra="保存后以掩码回显，普通用户响应不会包含该密钥。">
             <Input.Password placeholder="输入 Immich API Key" />
