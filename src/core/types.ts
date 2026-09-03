@@ -244,6 +244,12 @@ export interface ImagegenReferenceImageSummary {
   originalUrl: string
 }
 
+export interface ImmichSharedLinkMetadata {
+  id: string
+  assetId: string
+  expiresAt: string
+}
+
 export interface ImagegenHistoryRecord {
   id: string
   ownerId: string
@@ -264,6 +270,7 @@ export interface ImagegenHistoryRecord {
   originalUrl?: string
   referenceImageIds: string[]
   referenceImages?: ImagegenReferenceImageSummary[]
+  immichShare?: ImmichSharedLinkMetadata
   error?: string
   imageGenerationPermissionAutoDisabled?: true
   createdAt: number
@@ -284,6 +291,7 @@ export interface ImagegenReferenceAssetRecord {
 
 export interface ImmichImageStorageConfig {
   serviceUrl: string
+  publicBaseUrl?: string
   apiKey?: string
   projectName: string
   allowPrivateNetwork: boolean
@@ -515,6 +523,7 @@ export interface ImageAssetRecord {
   localAssetId?: string
   immichAssetId?: string
   immichFilename?: string
+  immichShare?: ImmichSharedLinkMetadata
   thumbnailUrl: string
   originalUrl: string
   createdAt: number

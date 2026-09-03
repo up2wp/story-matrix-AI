@@ -544,6 +544,7 @@ export default function ImagegenPage() {
                 <ImageResultGallery images={galleryImages} showFailedPlaceholders showGeneratingPlaceholders
                   historySelection={{ selectedIds: selectedHistoryIds, onChange: handleHistorySelection }}
                   historyActions={{ onDelete: handleDeleteHistoryRecord, onRerun: handleRerunHistoryRecord, deletingId: deletingHistoryId, rerunningId: rerunningHistoryId }}
+                  onShare={(record) => imagegenClient.shareHistory(record.id)}
                 />
               ) : (
                 <Empty description="暂无测试历史" />

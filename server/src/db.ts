@@ -33,6 +33,9 @@ const IMAGEGEN_HISTORY_TABLE_SQL = `
     localAssetId TEXT,
     immichAssetId TEXT,
     immichFilename TEXT,
+    immichSharedLinkId TEXT,
+    immichSharedLinkAssetId TEXT,
+    immichSharedLinkExpiresAt TEXT,
     thumbnailUrl TEXT,
     originalUrl TEXT,
     referenceImageIds TEXT,
@@ -58,6 +61,9 @@ const IMAGEGEN_HISTORY_COLUMNS = [
   'localAssetId',
   'immichAssetId',
   'immichFilename',
+  'immichSharedLinkId',
+  'immichSharedLinkAssetId',
+  'immichSharedLinkExpiresAt',
   'thumbnailUrl',
   'originalUrl',
   'referenceImageIds',
@@ -249,6 +255,18 @@ export function migrateDatabase(database: DatabaseInstance = db) {
 
   if (!columnExists(database, 'imagegenHistory', 'referenceImageIds')) {
     database.prepare('ALTER TABLE imagegenHistory ADD COLUMN referenceImageIds TEXT').run()
+  }
+
+  if (!columnExists(database, 'imagegenHistory', 'immichSharedLinkId')) {
+    database.prepare('ALTER TABLE imagegenHistory ADD COLUMN immichSharedLinkId TEXT').run()
+  }
+
+  if (!columnExists(database, 'imagegenHistory', 'immichSharedLinkAssetId')) {
+    database.prepare('ALTER TABLE imagegenHistory ADD COLUMN immichSharedLinkAssetId TEXT').run()
+  }
+
+  if (!columnExists(database, 'imagegenHistory', 'immichSharedLinkExpiresAt')) {
+    database.prepare('ALTER TABLE imagegenHistory ADD COLUMN immichSharedLinkExpiresAt TEXT').run()
   }
 
   if (!columnExists(database, 'imagegenReferenceAssets', 'contentHash')) {

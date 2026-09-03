@@ -27,6 +27,7 @@ import {
   waitForImmichThumbnail,
 } from '../services/image-generation-runner.js'
 import { discoverProviderModels, type ProviderReferenceImage } from '../services/image-providers.js'
+import type { ImmichClient, ImmichSharedLinkMetadata, ImmichSharedLinkResult } from '../services/immich-client.js'
 
 const router = Router()
 
@@ -54,6 +55,7 @@ interface ImageAssetRecord {
   localAssetId?: string
   immichAssetId?: string
   immichFilename?: string
+  immichShare?: ImmichSharedLinkMetadata
   assetUrl?: string
 }
 
@@ -130,6 +132,7 @@ type ImagePromptType = 'characterFace' | 'chapterObject' | 'chapterClothing' | '
 type VisualCandidateKind = 'character' | 'bystander' | 'clothing' | 'prop'
 
 const NO_DESCRIPTION_CLOTHING_ID = 'clothing:no-description'
+const shareLocks = new Map<string, Promise<unknown>>()
 
 const IMAGE_PROMPT_SYSTEM_PROMPT = `你是小说视觉设定提示词助手。你只输出适合图像生成模型的中文视觉提示词。
 不要生成剧情正文，不要补写章节，不要输出 JSON。`
@@ -149,6 +152,30 @@ function loadSystemAIConfig(): AIConfigPayload | null {
 
 function canUseImageGeneration(req: AuthenticatedRequest, config: ImageGenerationConfig) {
   return sharedCanUseImageGeneration(req.currentUser, config)
+}
+
+async function withShareLock<T>(key: string, work: () => Promise<T>): Promise<T> {
+  const previous = shareLocks.get(key) || Promise.resolve()
+  const next = previous.catch(() => undefined).then(work)
+  shareLocks.set(key, next)
+  try {
+    return await next
+  } finally {
+    if (shareLocks.get(key) === next) shareLocks.delete(key)
+  }
+}
+
+async function resolveImmichShare(client: ImmichClient, assetId: string, metadata: ImmichSharedLinkMetadata | undefined): Promise<ImmichSharedLinkResult> {
+  const existing = metadata && metadata.assetId === assetId ? await client.validateSharedLink(metadata) : undefined
+  return existing || client.createSharedLink(assetId)
+}
+
+function metadataFromShare(result: ImmichSharedLinkResult): ImmichSharedLinkMetadata {
+  return { id: result.id, assetId: result.assetId, expiresAt: result.expiresAt }
+}
+
+function sameShareMetadata(left: ImmichSharedLinkMetadata | undefined, right: ImmichSharedLinkMetadata) {
+  return Boolean(left && left.id === right.id && left.assetId === right.assetId && left.expiresAt === right.expiresAt)
 }
 
 async function readProviderError(response: Response) {
@@ -216,6 +243,17 @@ function workAccess(req: AuthenticatedRequest, workId: string, requireOwner: boo
   if (!canAccess) return { status: 403, error: '无权查看该作品' } as const
   if (requireOwner && row.ownerId !== user.id) return { status: 403, error: '无权修改该作品' } as const
   return { status: 200, row } as const
+}
+
+function sensitiveValues(config: ImageGenerationConfig) {
+  const providerValues = config.providers.flatMap(provider => [provider.apiKey, provider.baseUrl])
+  return Array.from(new Set([...providerValues, config.immich.apiKey, config.immich.serviceUrl, config.immich.publicBaseUrl].filter((value): value is string => Boolean(value))))
+}
+
+function safeErrorMessage(error: unknown, fallback: string, config: ImageGenerationConfig) {
+  const raw = error instanceof Error ? error.message : fallback
+  const sanitized = sensitiveValues(config).reduce((message, value) => message.replaceAll(value, '[redacted]'), raw).trim()
+  return (sanitized || fallback).slice(0, 500)
 }
 
 function compact(value: string | undefined) {
@@ -535,6 +573,19 @@ function findImageAssetRecord(images: Record<string, ImageAssetRecord>, assetId:
   const direct = images[assetId]
   if (direct) return direct
   return Object.values(images).find(image => image.id === assetId)
+}
+
+function findImageAssetEntry(images: Record<string, ImageAssetRecord>, assetId: string): readonly [string, ImageAssetRecord] | undefined {
+  const direct = images[assetId]
+  if (direct) return [assetId, direct]
+  return Object.entries(images).find(([, image]) => image.id === assetId)
+}
+
+function assertShareableImmichImage(image: ImageAssetRecord | undefined): asserts image is ImageAssetRecord & { immichAssetId: string } {
+  if (!image) throw new Error('图片记录不存在')
+  if (image.storageMode !== 'immich') throw new Error('只有 Immich 存储图片可以创建分享链接')
+  if (image.status !== 'succeeded' || image.storageStatus !== 'succeeded') throw new Error('只有已成功存储的图片可以创建分享链接')
+  if (!image.immichAssetId) throw new Error('图片缺少 Immich asset id，无法创建分享链接')
 }
 
 function removeMatchingImageAssetRecords(images: Record<string, ImageAssetRecord>, deleted: ImageAssetRecord) {
@@ -1005,6 +1056,39 @@ router.post('/assets/:workId/:assetId/retry-immich', async (req, res) => {
     })
   } catch (error) {
     res.status(502).json({ error: error instanceof Error ? error.message : 'Immich 重传失败' })
+  }
+})
+
+router.post('/assets/:workId/:assetId/share', async (req, res) => {
+  const request = req as unknown as AuthenticatedRequest
+  const config = loadImageGenerationConfig()
+  if (!canUseImageGeneration(request, config)) return res.status(403).json({ error: '未授权使用生图功能' })
+  if (config.storageMode !== 'immich') return res.status(400).json({ error: '当前未启用 Immich 存储' })
+  const initialAccess = workAccess(request, req.params.workId, true)
+  if (initialAccess.status !== 200) return res.status(initialAccess.status).json({ error: initialAccess.error })
+
+  try {
+    const result = await withShareLock(`work:${req.params.workId}:${req.params.assetId}`, async () => {
+      const access = workAccess(request, req.params.workId, true)
+      if (access.status !== 200) throw new Error(access.error)
+      const data = JSON.parse(access.row.data) as WorkData
+      const visualAssets = data.visualAssets
+      if (!visualAssets?.images) throw new Error('图片记录不存在')
+      const entry = findImageAssetEntry(visualAssets.images, req.params.assetId)
+      assertShareableImmichImage(entry?.[1])
+      const [imageKey, image] = entry
+      const shared = await resolveImmichShare(immichClientFromConfig(config), image.immichAssetId, image.immichShare)
+      const metadata = metadataFromShare(shared)
+      if (!sameShareMetadata(image.immichShare, metadata)) {
+        const images = { ...visualAssets.images, [imageKey]: { ...image, immichShare: metadata } }
+        const nextVisualAssets = { ...visualAssets, images, updatedAt: Date.now() }
+        db.prepare('UPDATE works SET updatedAt = ?, data = ? WHERE id = ?').run(Date.now(), JSON.stringify({ ...data, visualAssets: nextVisualAssets }), req.params.workId)
+      }
+      return { publicUrl: shared.publicUrl, expiresAt: shared.expiresAt }
+    })
+    return res.json(result)
+  } catch (error) {
+    return res.status(400).json({ error: safeErrorMessage(error, 'Immich 分享链接创建失败', config) })
   }
 })
 

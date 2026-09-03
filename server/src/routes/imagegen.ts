@@ -4,11 +4,12 @@ import db from '../db.js'
 import type { AuthenticatedRequest, CurrentUser } from '../middleware/auth.js'
 import { createImagegenReferenceAssetRouter } from './imagegen-reference-assets.js'
 import type { ImageGenerationConfig, ImageGenerationModelConfig, ImageGenerationProviderConfig } from '../services/image-generation-config.js'
+import type { ImmichClient, ImmichSharedLinkMetadata, ImmichSharedLinkResult } from '../services/immich-client.js'
 import { imagegenHistoryRecordTriggeredAutoDisable } from '../services/image-generation-failures.js'
 import { canUseImageGeneration as sharedCanUseImageGeneration, isImageGenerationAutoDisabled, loadImageGenerationConfig, recordImageGenerationFailureAndMaybeDisable } from '../services/image-generation-access.js'
 import { extensionForMime, immichClientFromConfig, readLocalImageAsset, resolveRunnableImageGenerationModel, runImageGeneration, type ImageAssetVariant, type ImageGenerationRunnerOutput } from '../services/image-generation-runner.js'
 import { parseGenerateRequest, persistGenerateReferenceImages, resolveGenerateReferenceInputs, type ParsedGenerateRequest, type ResolvedGenerateReferenceResult } from '../services/imagegen-generate-references.js'
-import { createImagegenHistoryRecord, deleteImagegenHistoryRecord, deleteImagegenHistoryRecords, getImagegenHistoryRecord, listImagegenHistory, updateImagegenHistoryRecord, type ImagegenHistoryRecord, type ImagegenStorageMode, type UpdateImagegenHistoryRecordInput } from '../services/imagegen-history.js'
+import { createImagegenHistoryRecord, deleteImagegenHistoryRecord, deleteImagegenHistoryRecords, getImagegenHistoryRecord, listImagegenHistory, updateImagegenHistoryRecord, updateImagegenHistoryShare, type ImagegenHistoryRecord, type ImagegenStorageMode, type UpdateImagegenHistoryRecordInput } from '../services/imagegen-history.js'
 import { listImagegenReferenceAssetsByIds, type ImagegenReferenceAssetRecord } from '../services/imagegen-reference-assets.js'
 
 const router = Router()
@@ -17,6 +18,7 @@ const MAX_HISTORY_DELETE_BATCH = 100
 const DEFAULT_HISTORY_PAGE_SIZE = 10
 const MAX_HISTORY_PAGE_SIZE = 100
 const ALLOWED_GENERATE_FIELDS = new Set(['prompt', 'modelId', 'size', 'quality', 'format', 'aspectRatio', 'n', 'referenceInputs'])
+const shareLocks = new Map<string, Promise<unknown>>()
 
 type ResolvedImagegenRun = {
   readonly ownerId: string
@@ -45,6 +47,37 @@ type QueuedImagegenRun = {
 
 function canUseImageGeneration(request: AuthenticatedRequest, config: ImageGenerationConfig) {
   return sharedCanUseImageGeneration(request.currentUser, config)
+}
+
+async function withShareLock<T>(key: string, work: () => Promise<T>): Promise<T> {
+  const previous = shareLocks.get(key) || Promise.resolve()
+  const next = previous.catch(() => undefined).then(work)
+  shareLocks.set(key, next)
+  try {
+    return await next
+  } finally {
+    if (shareLocks.get(key) === next) shareLocks.delete(key)
+  }
+}
+
+async function resolveImmichShare(client: ImmichClient, assetId: string, metadata: ImmichSharedLinkMetadata | undefined): Promise<ImmichSharedLinkResult> {
+  const existing = metadata && metadata.assetId === assetId ? await client.validateSharedLink(metadata) : undefined
+  return existing || client.createSharedLink(assetId)
+}
+
+function metadataFromShare(result: ImmichSharedLinkResult): ImmichSharedLinkMetadata {
+  return { id: result.id, assetId: result.assetId, expiresAt: result.expiresAt }
+}
+
+function sameShareMetadata(left: ImmichSharedLinkMetadata | undefined, right: ImmichSharedLinkMetadata) {
+  return Boolean(left && left.id === right.id && left.assetId === right.assetId && left.expiresAt === right.expiresAt)
+}
+
+function assertShareableHistory(record: ImagegenHistoryRecord | null): asserts record is ImagegenHistoryRecord & { readonly immichAssetId: string } {
+  if (!record) throw new Error('测试历史不存在')
+  if (record.storageMode !== 'immich') throw new Error('只有 Immich 存储图片可以创建分享链接')
+  if (record.status !== 'succeeded' || record.storageStatus !== 'succeeded') throw new Error('只有已成功存储的图片可以创建分享链接')
+  if (!record.immichAssetId) throw new Error('图片缺少 Immich asset id，无法创建分享链接')
 }
 
 function unsupportedGenerateFields(body: Record<string, unknown>) {
@@ -122,7 +155,7 @@ function storageMode(config: ImageGenerationConfig): ImagegenStorageMode { retur
 
 function sensitiveValues(config: ImageGenerationConfig) {
   const providerValues = config.providers.flatMap(provider => [provider.apiKey, provider.baseUrl])
-  return Array.from(new Set([...providerValues, config.immich.apiKey, config.immich.serviceUrl].filter((value): value is string => Boolean(value))))
+  return Array.from(new Set([...providerValues, config.immich.apiKey, config.immich.serviceUrl, config.immich.publicBaseUrl].filter((value): value is string => Boolean(value))))
 }
 
 function safeErrorMessage(error: unknown, fallback: string, config: ImageGenerationConfig) {
@@ -453,6 +486,27 @@ router.post('/history/:recordId/rerun', async (req, res) => {
   if (!result.ok) return res.status(result.statusCode).json({ error: result.error })
   const referenceImagesById = referenceImagesForHistory(request.currentUser.id, [result.record])
   return res.status(result.statusCode).json(serializeHistory(result.record, referenceImagesById))
+})
+
+router.post('/history/:recordId/share', async (req, res) => {
+  const request = req as unknown as AuthenticatedRequest
+  const config = loadImageGenerationConfig()
+  if (!canUseImageGeneration(request, config)) return res.status(403).json({ error: '未授权使用生图功能' })
+  if (config.storageMode !== 'immich') return res.status(400).json({ error: '当前未启用 Immich 存储' })
+
+  try {
+    const result = await withShareLock(`imagegen:${request.currentUser.id}:${req.params.recordId}`, async () => {
+      const record = getImagegenHistoryRecord(request.currentUser.id, req.params.recordId)
+      assertShareableHistory(record)
+      const shared = await resolveImmichShare(immichClientFromConfig(config), record.immichAssetId, record.immichShare)
+      const metadata = metadataFromShare(shared)
+      if (!sameShareMetadata(record.immichShare, metadata)) updateImagegenHistoryShare(request.currentUser.id, req.params.recordId, metadata)
+      return { publicUrl: shared.publicUrl, expiresAt: shared.expiresAt }
+    })
+    return res.json(result)
+  } catch (error) {
+    return res.status(400).json({ error: safeErrorMessage(error, 'Immich 分享链接创建失败', config) })
+  }
 })
 
 router.post('/generate', async (req, res) => {

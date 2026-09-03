@@ -46,6 +46,7 @@ export interface ImageGenerationConfig {
   storageMode: 'local' | 'immich'
   immich: {
     serviceUrl: string
+    publicBaseUrl?: string
     apiKey?: string
     projectName: string
     allowPrivateNetwork: boolean
@@ -67,7 +68,7 @@ export function defaultImageGenerationConfig(): ImageGenerationConfig {
     providers: [],
     models: [],
     storageMode: 'local',
-    immich: { serviceUrl: '', apiKey: '', projectName: '', allowPrivateNetwork: false },
+    immich: { serviceUrl: '', publicBaseUrl: '', apiKey: '', projectName: '', allowPrivateNetwork: false },
   }
 }
 
@@ -236,6 +237,7 @@ export function normalizeImageGenerationConfig(inputValue: unknown): ImageGenera
     storageMode: input.storageMode === 'immich' ? 'immich' : 'local',
     immich: {
       serviceUrl: String(objectValue(input.immich).serviceUrl || '').trim(),
+      publicBaseUrl: String(objectValue(input.immich).publicBaseUrl || '').trim(),
       apiKey: String(objectValue(input.immich).apiKey || ''),
       projectName: String(objectValue(input.immich).projectName || '').trim(),
       allowPrivateNetwork: Boolean(objectValue(input.immich).allowPrivateNetwork),

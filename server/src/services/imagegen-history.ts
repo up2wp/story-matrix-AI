@@ -26,8 +26,15 @@ export type ImagegenHistoryRecord = {
   readonly thumbnailUrl?: string
   readonly originalUrl?: string
   readonly referenceImageIds: readonly string[]
+  readonly immichShare?: ImmichSharedLinkMetadata
   readonly error?: string
   readonly createdAt: number
+}
+
+export type ImmichSharedLinkMetadata = {
+  readonly id: string
+  readonly assetId: string
+  readonly expiresAt: string
 }
 
 export type ImagegenHistoryStorageLocator = {
@@ -41,7 +48,7 @@ export type CreateImagegenHistoryRecordInput = Omit<ImagegenHistoryRecord, 'id' 
   readonly createdAt?: number
 }
 
-export type UpdateImagegenHistoryRecordInput = Omit<ImagegenHistoryRecord, 'id' | 'ownerId' | 'prompt' | 'generationPromptSnapshot' | 'provider' | 'providerLabel' | 'modelId' | 'modelName' | 'storageMode' | 'createdAt'>
+export type UpdateImagegenHistoryRecordInput = Omit<ImagegenHistoryRecord, 'id' | 'ownerId' | 'prompt' | 'generationPromptSnapshot' | 'provider' | 'providerLabel' | 'modelId' | 'modelName' | 'storageMode' | 'immichShare' | 'createdAt'>
 
 export type ListImagegenHistoryInput = {
   readonly page: number
@@ -74,6 +81,9 @@ type ImagegenHistoryRow = {
   readonly localAssetId: string | null
   readonly immichAssetId: string | null
   readonly immichFilename: string | null
+  readonly immichSharedLinkId: string | null
+  readonly immichSharedLinkAssetId: string | null
+  readonly immichSharedLinkExpiresAt: string | null
   readonly thumbnailUrl: string | null
   readonly originalUrl: string | null
   readonly referenceImageIds: string | null
@@ -101,6 +111,9 @@ type ImagegenHistoryInsertParameters = [
   string | null,
   string | null,
   string | null,
+  string | null,
+  string | null,
+  string | null,
   number,
 ]
 
@@ -119,9 +132,12 @@ type ImagegenHistoryUpdateParameters = [
   string,
 ]
 
+type ImagegenHistoryShareUpdateParameters = [string | null, string | null, string | null, string, string]
+
 const IMAGEGEN_HISTORY_SELECT = `
   SELECT id, ownerId, prompt, generationPromptSnapshot, provider, providerLabel, modelId, modelName,
     mimeType, storageMode, storageStatus, status, localAssetId, immichAssetId, immichFilename,
+    immichSharedLinkId, immichSharedLinkAssetId, immichSharedLinkExpiresAt,
     thumbnailUrl, originalUrl, referenceImageIds, error, createdAt
   FROM imagegenHistory
 `
@@ -147,6 +163,15 @@ function referenceImageIdList(value: string | null): readonly string[] {
   if (!value) return []
   const parsed: unknown = JSON.parse(value)
   return Array.isArray(parsed) ? parsed.map(item => String(item || '').trim()).filter(Boolean) : []
+}
+
+function immichShareMetadata(row: ImagegenHistoryRow): ImmichSharedLinkMetadata | undefined {
+  if (!row.immichSharedLinkId || !row.immichSharedLinkAssetId || !row.immichSharedLinkExpiresAt) return undefined
+  return {
+    id: row.immichSharedLinkId,
+    assetId: row.immichSharedLinkAssetId,
+    expiresAt: row.immichSharedLinkExpiresAt,
+  }
 }
 
 function escapedLikePattern(value: string): string {
@@ -195,6 +220,7 @@ function rowToRecord(row: ImagegenHistoryRow): ImagegenHistoryRecord {
     thumbnailUrl: row.thumbnailUrl || undefined,
     originalUrl: row.originalUrl || undefined,
     referenceImageIds: referenceImageIdList(row.referenceImageIds),
+    immichShare: immichShareMetadata(row),
     error: row.error || undefined,
     createdAt: row.createdAt,
   }
@@ -213,9 +239,10 @@ export function createImagegenHistoryRecord(input: CreateImagegenHistoryRecordIn
     INSERT INTO imagegenHistory (
       id, ownerId, prompt, generationPromptSnapshot, provider, providerLabel, modelId, modelName,
       mimeType, storageMode, storageStatus, status, localAssetId, immichAssetId, immichFilename,
+      immichSharedLinkId, immichSharedLinkAssetId, immichSharedLinkExpiresAt,
       thumbnailUrl, originalUrl, referenceImageIds, error, createdAt
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     record.id,
     record.ownerId,
@@ -232,6 +259,9 @@ export function createImagegenHistoryRecord(input: CreateImagegenHistoryRecordIn
     nullable(record.localAssetId),
     nullable(record.immichAssetId),
     nullable(record.immichFilename),
+    nullable(record.immichShare?.id),
+    nullable(record.immichShare?.assetId),
+    nullable(record.immichShare?.expiresAt),
     nullable(record.thumbnailUrl),
     nullable(record.originalUrl),
     record.referenceImageIds.length > 0 ? JSON.stringify(record.referenceImageIds) : null,
@@ -260,6 +290,21 @@ export function updateImagegenHistoryRecord(ownerId: string, id: string, input: 
     nullable(originalUrl),
     input.referenceImageIds.length > 0 ? JSON.stringify(input.referenceImageIds) : null,
     nullable(input.error),
+    id,
+    ownerId,
+  )
+  return getImagegenHistoryRecord(ownerId, id, database)
+}
+
+export function updateImagegenHistoryShare(ownerId: string, id: string, metadata: ImmichSharedLinkMetadata | undefined, database: DatabaseInstance = db): ImagegenHistoryRecord | null {
+  database.prepare<ImagegenHistoryShareUpdateParameters>(`
+    UPDATE imagegenHistory
+    SET immichSharedLinkId = ?, immichSharedLinkAssetId = ?, immichSharedLinkExpiresAt = ?
+    WHERE id = ? AND ownerId = ?
+  `).run(
+    nullable(metadata?.id),
+    nullable(metadata?.assetId),
+    nullable(metadata?.expiresAt),
     id,
     ownerId,
   )

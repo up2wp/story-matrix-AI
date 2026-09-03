@@ -205,6 +205,18 @@ assert.match(
 
 assert.match(
   imageConfigService,
+  /publicBaseUrl: String\(objectValue\(input\.immich\)\.publicBaseUrl \|\| ''\)\.trim\(\)/,
+  'image generation config should normalize a separate Immich public base URL for externally reachable share links',
+)
+
+assert.doesNotMatch(
+  imageConfigService.match(/export function maskImageGenerationConfigForUser[\s\S]*?\n}\n/)?.[0] || '',
+  /publicBaseUrl/,
+  'ordinary image generation config responses should not expose the Immich public base URL by default',
+)
+
+assert.match(
+  imageConfigService,
   /normalizeImageGenerationConfig[\s\S]*Array\.isArray\(input\.providers\)[\s\S]*modelInput\.baseUrl[\s\S]*providerByKey/,
   'image generation config should normalize provider-level config while keeping old flat models[] compatible',
 )
