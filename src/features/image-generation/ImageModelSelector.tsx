@@ -28,7 +28,7 @@ export default function ImageModelSelector({ models, value, onChange, disabled }
           {selectedModel?.capabilities.sizes.map(size => <Tag key={size}>{size}</Tag>)}
           {selectedModel?.capabilities.qualities.map(quality => <Tag key={quality}>{quality}</Tag>)}
           {selectedModel?.capabilities.formats.map(format => <Tag key={format}>{format}</Tag>)}
-          {selectedModel?.capabilities.referenceImages ? <Tag color="blue">参考图 x{Math.min(3, selectedModel.capabilities.maxReferenceImages || 0)}</Tag> : <Tag>不支持参考图</Tag>}
+          {selectedModel?.capabilities.referenceImages ? <Tag color="blue">参考图 x{selectedModel.capabilities.maxReferenceImages || 0}</Tag> : <Tag>不支持参考图</Tag>}
         </Space>
       ) : (
         <Text type="secondary">请联系管理员启用生图模型。</Text>

@@ -97,7 +97,7 @@ function promptTitle(type: ImagePromptType) {
 }
 
 function modelReferenceLimit(model?: ImageGenerationModelConfig) {
-  return Math.min(3, model?.capabilities.maxReferenceImages || 0)
+  return model?.capabilities.maxReferenceImages || 0
 }
 
 function subjectKind(type: ImagePromptType): VisualCandidateKind | undefined {
