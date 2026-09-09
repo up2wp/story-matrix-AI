@@ -426,7 +426,7 @@ function ImageGenerationSettings() {
                     title={provider?.label || `厂商 ${field.name + 1}`}
                     extra={<Button danger type="link" onClick={() => remove(field.name)}>移除</Button>}
                   >
-                    <Space direction="vertical" style={{ width: '100%' }}>
+                    <div style={{ width: '100%' }}>
                       <Space wrap style={{ width: '100%' }}>
                         <Form.Item {...field} name={[field.name, 'enabled']} valuePropName="checked" style={{ marginBottom: 0 }}>
                           <Switch checkedChildren="启用" unCheckedChildren="停用" />
@@ -451,7 +451,7 @@ function ImageGenerationSettings() {
                       <Form.Item {...field} name={[field.name, 'id']} hidden><Input /></Form.Item>
                       <Form.Item {...field} name={[field.name, 'type']} hidden><Input /></Form.Item>
                       <Form.Item {...field} name={[field.name, 'protocol']} hidden><Input /></Form.Item>
-                    </Space>
+                    </div>
                   </Card>
                 )
               })}
