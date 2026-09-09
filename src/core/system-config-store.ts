@@ -105,7 +105,7 @@ function normalizeImageGenerationConfig(config: ImageGenerationConfig): ImageGen
           formats: model.capabilities?.formats || [],
           aspectRatios: model.capabilities?.aspectRatios || [],
           referenceImages: model.capabilities?.referenceImages === true,
-          maxReferenceImages: model.capabilities?.referenceImages === true ? Math.min(Math.max(Math.floor(model.capabilities?.maxReferenceImages || 0), 0), 3) : 0,
+          maxReferenceImages: model.capabilities?.referenceImages === true ? Math.max(Math.floor(model.capabilities?.maxReferenceImages || 0), 0) : 0,
         },
         requestTimeoutMs: normalizeImageRequestTimeoutMs(model.requestTimeoutMs),
       }

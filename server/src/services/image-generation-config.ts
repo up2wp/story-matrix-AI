@@ -78,24 +78,13 @@ export function normalizeStringList(value: unknown) {
   return Array.from(new Set(value.map(item => String(item || '').trim()).filter(Boolean)))
 }
 
-function defaultReferenceImageCapability(provider: ImageGenerationProviderConfig, providerModel: string) {
-  const model = providerModel.trim().toLowerCase()
-  if (provider.protocol === 'minimax-image-generation' || provider.type === 'minimax') return true
-  if ((provider.protocol === 'openai-images' || provider.protocol === 'openai-compatible-images') && /^gpt-image-[12]$/.test(model)) return true
-  return false
-}
-
-function defaultMaxReferenceImages(provider: ImageGenerationProviderConfig) {
-  return provider.protocol === 'minimax-image-generation' || provider.type === 'minimax' ? 1 : 3
-}
-
-function normalizeReferenceImageCapability(value: unknown, provider: ImageGenerationProviderConfig, providerModel: string) {
-  return value === true || defaultReferenceImageCapability(provider, providerModel)
+function normalizeReferenceImageCapability(value: unknown) {
+  return value === true
 }
 
 function normalizeMaxReferenceImages(value: unknown, referenceImages: boolean) {
-  if (!referenceImages || typeof value !== 'number' || value <= 0) return 0
-  return Math.min(Math.floor(value), 3)
+  if (!referenceImages || typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return 0
+  return Math.floor(value)
 }
 
 function normalizeRequestTimeoutMs(value: unknown): number {
@@ -203,8 +192,8 @@ export function normalizeImageGenerationConfig(inputValue: unknown): ImageGenera
     const providerModel = String(modelInput.providerModel || modelInput.model || '').trim()
     const id = uniqueId(String(modelInput.id || `${provider.id}-${providerModel || 'model'}`), modelIds)
     const rawCapabilities = objectValue(modelInput.capabilities)
-    const referenceImages = normalizeReferenceImageCapability(rawCapabilities.referenceImages, provider, providerModel)
-    const maxReferenceImages = normalizeMaxReferenceImages(rawCapabilities.maxReferenceImages, referenceImages) || (referenceImages ? defaultMaxReferenceImages(provider) : 0)
+    const referenceImages = normalizeReferenceImageCapability(rawCapabilities.referenceImages)
+    const maxReferenceImages = normalizeMaxReferenceImages(rawCapabilities.maxReferenceImages, referenceImages)
     normalizedModels.push({
       id,
       label: String(modelInput.label || providerModel || id).trim(),
