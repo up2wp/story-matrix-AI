@@ -302,7 +302,7 @@ function ImageGenerationSettings() {
     })
   }
 
-  const providerDiscoveryKey = (provider: Partial<ImageGenerationProviderConfig>) => [provider.id, provider.type, provider.baseUrl].join('|')
+  const providerDiscoveryKey = (provider: Partial<ImageGenerationProviderConfig>) => [provider.id, provider.type, provider.protocol, provider.baseUrl, provider.apiKey || ''].join('|')
 
   const loadProviderCandidates = useCallback(async (provider: Partial<ImageGenerationProviderConfig> | undefined) => {
     if (!provider?.id) return

@@ -285,6 +285,7 @@ assert.match(adminPageSource, /label="支持参考图"[\s\S]*label="最多参考
 assert.match(imageProviderSource, /referenceImages[\s\S]*images\/edits|images\/edits[\s\S]*referenceImages/, 'OpenAI-like adapters should use the image edit path when reference images are present')
 assert.match(imageProviderSource, /discoveredOpenAICapabilities[\s\S]*gpt-image-\[12\][\s\S]*referenceImages: supportsReferenceImages[\s\S]*MiniMax image-01-live[\s\S]*referenceImages: true, maxReferenceImages: 1/, 'provider discovery should mark GPT Image and MiniMax image models as reference-image capable')
 assert.match(imageProviderSource, /minimaxReferenceLimit[\s\S]*model\.capabilities\.referenceImages[\s\S]*referenceImages\.length > minimaxReferenceLimit[\s\S]*subject_reference/, 'MiniMax reference-image support should follow configured model capabilities instead of a hard-coded model id')
+assert.match(imageProviderSource, /minimaxReferenceLimit = model\.capabilities\.referenceImages \? Math\.min\(model\.capabilities\.maxReferenceImages \|\| 0, 1\)/, 'MiniMax reference-image requests should reject unsupported multi-image configuration instead of silently dropping references')
 assert.match(imageProviderSource, /subject_reference[\s\S]*type: 'character'[\s\S]*image_file/, 'MiniMax reference-image payload should use the documented character subject_reference image_file shape')
 assert.match(
   imageProviderSource,

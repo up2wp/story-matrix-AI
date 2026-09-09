@@ -168,7 +168,7 @@ export async function generateProviderImages(provider: ImageGenerationProviderCo
   const traceId = typeof body.traceId === 'string' ? body.traceId : undefined
   if (provider.protocol === 'minimax-image-generation' || provider.type === 'minimax') {
     if (prompt.length > 1500) throw new Error('MiniMax 提示词不能超过 1500 字')
-    const minimaxReferenceLimit = model.capabilities.referenceImages ? (model.capabilities.maxReferenceImages || 1) : 0
+    const minimaxReferenceLimit = model.capabilities.referenceImages ? Math.min(model.capabilities.maxReferenceImages || 0, 1) : 0
     if (referenceImages.length > minimaxReferenceLimit) throw new Error(`MiniMax 当前模型最多支持 ${minimaxReferenceLimit} 张参考图`)
     const subjectReference = referenceImages.length === 1 ? { subject_reference: [{ type: 'character', image_file: `data:${referenceImages[0].mimeType};base64,${referenceImages[0].buffer.toString('base64')}` }] } : {}
     const response = await fetchProvider({
