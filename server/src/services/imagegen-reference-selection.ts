@@ -2,8 +2,6 @@ import type { ImageGenerationConfig, ImageGenerationModelConfig } from './image-
 import { readImagegenReferenceAsset } from './imagegen-reference-assets.js'
 import type { ProviderReferenceImage } from './image-providers.js'
 
-const MAX_TEST_REFERENCE_IMAGES = 3
-
 export type ResolveImagegenReferenceSelectionInput = {
   readonly value: unknown
   readonly ownerId: string
@@ -25,7 +23,7 @@ function referenceImageIds(value: unknown) {
 
 function effectiveReferenceImageLimit(model: ImageGenerationModelConfig) {
   if (!model.capabilities.referenceImages) return 0
-  return Math.min(MAX_TEST_REFERENCE_IMAGES, model.capabilities.maxReferenceImages || 0)
+  return model.capabilities.maxReferenceImages || 0
 }
 
 function validateReferenceSelection(model: ImageGenerationModelConfig, ids: readonly string[]) {

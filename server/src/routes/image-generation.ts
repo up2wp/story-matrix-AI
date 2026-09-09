@@ -907,7 +907,7 @@ router.post('/generate', async (req, res) => {
 
   try {
     const work = JSON.parse(access.row.data) as WorkData
-    const maxReferenceImages = Math.min(3, model.capabilities.maxReferenceImages || 0)
+    const maxReferenceImages = model.capabilities.referenceImages ? (model.capabilities.maxReferenceImages || 0) : 0
     if (referenceImageIds.length > 0 && !model.capabilities.referenceImages) return res.status(400).json({ error: '该模型不支持参考图' })
     if (referenceImageIds.length > maxReferenceImages) return res.status(400).json({ error: `参考图最多选择 ${maxReferenceImages} 张` })
     const referenceImages: ProviderReferenceImage[] = []
