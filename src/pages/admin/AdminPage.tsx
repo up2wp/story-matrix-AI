@@ -91,9 +91,9 @@ function providerFingerprint(provider: Pick<ImageGenerationProviderConfig, 'type
 
 function defaultCapabilitiesForProvider(type: ImageProviderType) {
   if (type === 'minimax') {
-    return { sizes: '1024x1024, 1792x1024, 1024x1792', qualities: 'standard', formats: 'png', aspectRatios: '1:1, 16:9, 4:3, 3:2, 2:3, 3:4, 9:16, 21:9', referenceImages: false, maxReferenceImages: 0 }
+    return { sizes: '1024x1024, 1792x1024, 1024x1792', qualities: 'standard', formats: 'png', aspectRatios: '1:1, 16:9, 4:3, 3:2, 2:3, 3:4, 9:16, 21:9', maxReferenceImages: 0 }
   }
-  return { sizes: '1024x1024', qualities: 'standard', formats: 'png', referenceImages: false, maxReferenceImages: 0 }
+  return { sizes: '1024x1024', qualities: 'standard', formats: 'png', maxReferenceImages: 0 }
 }
 
 function candidateProviderModel(candidate: ImageProviderModelCandidate & { model?: string }) {
@@ -163,7 +163,6 @@ function serializeCapabilitiesForForm(capabilities: ImageGenerationModelConfig['
     qualities: (capabilities?.qualities || []).join(', '),
     formats: (capabilities?.formats || []).join(', '),
     aspectRatios: (capabilities?.aspectRatios || []).join(', '),
-    referenceImages: capabilities?.referenceImages,
     maxReferenceImages: capabilities?.maxReferenceImages,
   }
 }
@@ -212,7 +211,6 @@ function normalizeImageConfigFromForm(values: ImageGenerationConfig): ImageGener
         qualities: normalizeCapabilityInput(model.capabilities?.qualities),
         formats: normalizeCapabilityInput(model.capabilities?.formats),
         aspectRatios: normalizeCapabilityInput(model.capabilities?.aspectRatios),
-        referenceImages: model.capabilities?.referenceImages,
         maxReferenceImages: model.capabilities?.maxReferenceImages,
       },
     })
@@ -520,10 +518,7 @@ function ImageGenerationSettings() {
                         <Form.Item {...field} name={[field.name, 'requestTimeoutMs']} label="请求超时（毫秒）" rules={[{ required: true, message: '请输入请求超时' }]} style={{ minWidth: 180, flex: 1, marginBottom: 0 }}>
                           <InputNumber min={1} step={30000} precision={0} style={{ width: '100%' }} />
                         </Form.Item>
-                         <Form.Item {...field} name={[field.name, 'capabilities', 'referenceImages']} label="支持参考图" valuePropName="checked" style={{ minWidth: 150, marginBottom: 0 }}>
-                           <Switch checkedChildren="支持" unCheckedChildren="不支持" />
-                         </Form.Item>
-                         <Form.Item {...field} name={[field.name, 'capabilities', 'maxReferenceImages']} label="最多参考图数量" rules={[{ required: true, message: '请输入参考图数量' }]} style={{ minWidth: 180, marginBottom: 0 }}>
+                          <Form.Item {...field} name={[field.name, 'capabilities', 'maxReferenceImages']} label="最多参考图数量（0 表示不支持）" rules={[{ required: true, message: '请输入参考图数量' }]} style={{ minWidth: 220, marginBottom: 0 }}>
                            <InputNumber min={0} step={1} precision={0} style={{ width: '100%' }} />
                          </Form.Item>
                         <Form.Item {...field} name={[field.name, 'id']} hidden><Input /></Form.Item>

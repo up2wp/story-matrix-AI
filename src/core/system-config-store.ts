@@ -104,8 +104,9 @@ function normalizeImageGenerationConfig(config: ImageGenerationConfig): ImageGen
           qualities: model.capabilities?.qualities || [],
           formats: model.capabilities?.formats || [],
           aspectRatios: model.capabilities?.aspectRatios || [],
-          referenceImages: model.capabilities?.referenceImages === true,
-          maxReferenceImages: model.capabilities?.referenceImages === true ? Math.max(Math.floor(model.capabilities?.maxReferenceImages || 0), 0) : 0,
+          maxReferenceImages: typeof model.capabilities?.maxReferenceImages === 'number' && Number.isFinite(model.capabilities.maxReferenceImages)
+            ? Math.max(Math.floor(model.capabilities.maxReferenceImages), 0)
+            : 0,
         },
         requestTimeoutMs: normalizeImageRequestTimeoutMs(model.requestTimeoutMs),
       }
