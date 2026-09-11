@@ -211,7 +211,7 @@ export default function ImageGenerationPage() {
   const effectiveModelId = modelId || imageGenerationConfig.defaultModelId
   const selectedModel = useMemo(() => imageGenerationConfig.models.find(model => model.id === effectiveModelId), [imageGenerationConfig.models, effectiveModelId])
   const maxReferenceImages = modelReferenceLimit(selectedModel)
-  const modelSupportsReferenceImages = Boolean(selectedModel?.capabilities.referenceImages && maxReferenceImages > 0)
+  const modelSupportsReferenceImages = maxReferenceImages > 0
   const characterNameById = useMemo(() => new Map(currentWork?.characters.map(character => [character.id, character.name]) || []), [currentWork?.characters])
   const eligibleReferenceImages = useMemo<EligibleReferenceImage[]>(() => Object.values(visualAssets.images)
     .filter(image => image.status === 'succeeded' && image.storageStatus === 'succeeded')
