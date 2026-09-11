@@ -22,7 +22,6 @@ function referenceImageIds(value: unknown) {
 }
 
 function effectiveReferenceImageLimit(model: ImageGenerationModelConfig) {
-  if (!model.capabilities.referenceImages) return 0
   return model.capabilities.maxReferenceImages || 0
 }
 
