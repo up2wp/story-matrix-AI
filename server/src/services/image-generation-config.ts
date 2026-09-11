@@ -6,7 +6,6 @@ export interface ImageGenerationModelCapability {
   qualities: string[]
   formats: string[]
   aspectRatios?: string[]
-  referenceImages?: boolean
   maxReferenceImages?: number
 }
 
@@ -78,12 +77,8 @@ export function normalizeStringList(value: unknown) {
   return Array.from(new Set(value.map(item => String(item || '').trim()).filter(Boolean)))
 }
 
-function normalizeReferenceImageCapability(value: unknown) {
-  return value === true
-}
-
-function normalizeMaxReferenceImages(value: unknown, referenceImages: boolean) {
-  if (!referenceImages || typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return 0
+function normalizeMaxReferenceImages(value: unknown) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return 0
   return Math.floor(value)
 }
 
@@ -192,8 +187,7 @@ export function normalizeImageGenerationConfig(inputValue: unknown): ImageGenera
     const providerModel = String(modelInput.providerModel || modelInput.model || '').trim()
     const id = uniqueId(String(modelInput.id || `${provider.id}-${providerModel || 'model'}`), modelIds)
     const rawCapabilities = objectValue(modelInput.capabilities)
-    const referenceImages = normalizeReferenceImageCapability(rawCapabilities.referenceImages)
-    const maxReferenceImages = normalizeMaxReferenceImages(rawCapabilities.maxReferenceImages, referenceImages)
+    const maxReferenceImages = normalizeMaxReferenceImages(rawCapabilities.maxReferenceImages)
     normalizedModels.push({
       id,
       label: String(modelInput.label || providerModel || id).trim(),
@@ -209,7 +203,6 @@ export function normalizeImageGenerationConfig(inputValue: unknown): ImageGenera
         qualities: normalizeStringList(rawCapabilities.qualities),
         formats: normalizeStringList(rawCapabilities.formats),
         aspectRatios: normalizeStringList(rawCapabilities.aspectRatios),
-        referenceImages,
         maxReferenceImages,
       },
       requestTimeoutMs: normalizeRequestTimeoutMs(modelInput.requestTimeoutMs),
