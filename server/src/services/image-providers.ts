@@ -11,7 +11,7 @@ export interface ProviderImageResult {
 export interface ImageModelCandidate {
   providerModel: string
   label: string
-  capabilities: { sizes: string[]; qualities: string[]; formats: string[]; aspectRatios?: string[]; referenceImages?: boolean; maxReferenceImages?: number }
+  capabilities: { sizes: string[]; qualities: string[]; formats: string[]; aspectRatios?: string[]; maxReferenceImages?: number }
   source: 'provider' | 'preset' | 'manual'
   requiresConfirmation: boolean
 }
@@ -26,7 +26,7 @@ const MINIMAX_ASPECT_RATIOS = ['1:1', '16:9', '4:3', '3:2', '2:3', '3:4', '9:16'
 
 function discoveredOpenAICapabilities(providerModel: string) {
   const supportsReferenceImages = /^gpt-image-[12]$/i.test(providerModel)
-  return { sizes: [], qualities: [], formats: [], referenceImages: supportsReferenceImages, maxReferenceImages: supportsReferenceImages ? 3 : 0 }
+  return { sizes: [], qualities: [], formats: [], maxReferenceImages: supportsReferenceImages ? 3 : 0 }
 }
 
 function providerHeaders(apiKey?: string) {
@@ -168,8 +168,8 @@ export async function generateProviderImages(provider: ImageGenerationProviderCo
   const traceId = typeof body.traceId === 'string' ? body.traceId : undefined
   if (provider.protocol === 'minimax-image-generation' || provider.type === 'minimax') {
     if (prompt.length > 1500) throw new Error('MiniMax 提示词不能超过 1500 字')
-    const minimaxReferenceLimit = model.capabilities.referenceImages ? (model.capabilities.maxReferenceImages || 1) : 0
-    if (referenceImages.length > minimaxReferenceLimit) throw new Error('MiniMax 当前模型最多支持 1 张参考图')
+    const minimaxReferenceLimit = Math.min(model.capabilities.maxReferenceImages || 0, 1)
+    if (referenceImages.length > minimaxReferenceLimit) throw new Error(`MiniMax 当前模型最多支持 ${minimaxReferenceLimit} 张参考图`)
     const subjectReference = referenceImages.length === 1 ? { subject_reference: [{ type: 'character', image_file: `data:${referenceImages[0].mimeType};base64,${referenceImages[0].buffer.toString('base64')}` }] } : {}
     const response = await fetchProvider({
       url: `${normalizeSafeBaseUrl(provider.baseUrl)}/v1/image_generation`,
@@ -234,7 +234,7 @@ export async function discoverProviderModels(provider: ImageGenerationProviderCo
     return ['image-01', 'image-01-live'].map(providerModel => ({
       providerModel,
       label: providerModel === 'image-01-live' ? 'MiniMax image-01-live' : 'MiniMax image-01',
-      capabilities: { sizes: ['1024x1024', '1792x1024', '1024x1792'], qualities: ['standard'], formats: ['png'], aspectRatios: MINIMAX_ASPECT_RATIOS, referenceImages: true, maxReferenceImages: 1 },
+      capabilities: { sizes: ['1024x1024', '1792x1024', '1024x1792'], qualities: ['standard'], formats: ['png'], aspectRatios: MINIMAX_ASPECT_RATIOS, maxReferenceImages: 1 },
       source: 'preset',
       requiresConfirmation: false,
     }))

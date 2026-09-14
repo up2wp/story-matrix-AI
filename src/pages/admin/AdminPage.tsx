@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
-import { Table, Button, Modal, Form, Input, InputNumber, Select, Popconfirm, Space, Switch, Typography, Tag, message, Tabs, Card } from 'antd'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { Table, Button, Modal, Form, Input, InputNumber, Select, AutoComplete, Popconfirm, Space, Switch, Typography, Tag, message, Tabs, Card } from 'antd'
 import { PlusOutlined, DeleteOutlined, EditOutlined, UserOutlined, SettingOutlined, RobotOutlined, CustomerServiceOutlined, PictureOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { db } from '@/core/db'
@@ -91,37 +91,13 @@ function providerFingerprint(provider: Pick<ImageGenerationProviderConfig, 'type
 
 function defaultCapabilitiesForProvider(type: ImageProviderType) {
   if (type === 'minimax') {
-    return { sizes: '1024x1024, 1792x1024, 1024x1792', qualities: 'standard', formats: 'png', aspectRatios: '1:1, 16:9, 4:3, 3:2, 2:3, 3:4, 9:16, 21:9' }
+    return { sizes: '1024x1024, 1792x1024, 1024x1792', qualities: 'standard', formats: 'png', aspectRatios: '1:1, 16:9, 4:3, 3:2, 2:3, 3:4, 9:16, 21:9', maxReferenceImages: 0 }
   }
-  return { sizes: '1024x1024', qualities: 'standard', formats: 'png' }
+  return { sizes: '1024x1024', qualities: 'standard', formats: 'png', maxReferenceImages: 0 }
 }
 
 function candidateProviderModel(candidate: ImageProviderModelCandidate & { model?: string }) {
   return String(candidate.providerModel || candidate.model || '').trim()
-}
-
-function createModelFromCandidate(provider: ImageGenerationProviderConfig, candidate: ImageProviderModelCandidate & { model?: string }, seen: Set<string>): ImageGenerationModelConfig {
-  const providerModel = candidateProviderModel(candidate)
-  return {
-    id: uniqueImageConfigId(`${provider.id}-${providerModel || 'model'}`, seen),
-    label: candidate.label || providerModel,
-    provider: provider.type,
-    providerId: provider.id,
-    baseUrl: provider.baseUrl,
-    apiKey: provider.apiKey,
-    model: providerModel,
-    providerModel,
-    enabled: true,
-    capabilities: {
-      sizes: candidate.capabilities?.sizes || [],
-      qualities: candidate.capabilities?.qualities || [],
-      formats: candidate.capabilities?.formats || [],
-      aspectRatios: candidate.capabilities?.aspectRatios || [],
-      referenceImages: candidate.capabilities?.referenceImages,
-      maxReferenceImages: candidate.capabilities?.maxReferenceImages,
-    },
-    requestTimeoutMs: DEFAULT_IMAGE_REQUEST_TIMEOUT_MS,
-  }
 }
 
 function createProviderFromPreset(presetKey: keyof typeof IMAGE_PROVIDER_PRESETS, seen: Set<string>): ImageGenerationProviderConfig {
@@ -187,7 +163,6 @@ function serializeCapabilitiesForForm(capabilities: ImageGenerationModelConfig['
     qualities: (capabilities?.qualities || []).join(', '),
     formats: (capabilities?.formats || []).join(', '),
     aspectRatios: (capabilities?.aspectRatios || []).join(', '),
-    referenceImages: capabilities?.referenceImages,
     maxReferenceImages: capabilities?.maxReferenceImages,
   }
 }
@@ -236,7 +211,6 @@ function normalizeImageConfigFromForm(values: ImageGenerationConfig): ImageGener
         qualities: normalizeCapabilityInput(model.capabilities?.qualities),
         formats: normalizeCapabilityInput(model.capabilities?.formats),
         aspectRatios: normalizeCapabilityInput(model.capabilities?.aspectRatios),
-        referenceImages: model.capabilities?.referenceImages,
         maxReferenceImages: model.capabilities?.maxReferenceImages,
       },
     })
@@ -264,7 +238,10 @@ function ImageGenerationSettings() {
   const [form] = Form.useForm()
   const [saving, setSaving] = useState(false)
   const [testingImmich, setTestingImmich] = useState(false)
-  const [discoveringProviderId, setDiscoveringProviderId] = useState<string | null>(null)
+  const [discoveredCandidates, setDiscoveredCandidates] = useState<Record<string, ImageProviderModelCandidate[]>>({})
+  const [discoveringProviderKey, setDiscoveringProviderKey] = useState<string | null>(null)
+  const discoveryCache = useRef(new Map<string, ImageProviderModelCandidate[]>())
+  const discoveryInFlight = useRef(new Set<string>())
   const storageMode = Form.useWatch('storageMode', form) || 'local'
   const watchedModels = Form.useWatch('models', form) || []
   const watchedProviders = Form.useWatch('providers', form) || []
@@ -323,41 +300,59 @@ function ImageGenerationSettings() {
     })
   }
 
-  const handleDiscoverProviderModels = async (fieldName: number) => {
-    const provider = form.getFieldValue(['providers', fieldName]) as Partial<ImageGenerationProviderConfig> | undefined
-    if (!provider?.id && !provider?.label) {
-      message.warning('请先添加并填写生图厂商')
-      return
-    }
+  const providerDiscoveryKey = (provider: Partial<ImageGenerationProviderConfig>) => [provider.id, provider.type, provider.protocol, provider.baseUrl, provider.apiKey || ''].join('|')
+
+  const loadProviderCandidates = useCallback(async (provider: Partial<ImageGenerationProviderConfig> | undefined) => {
+    if (!provider?.id) return
     const normalizedProvider = normalizeProviderDraft(provider, new Set<string>())
-    setDiscoveringProviderId(normalizedProvider.id)
+    const key = providerDiscoveryKey(normalizedProvider)
+    if (discoveryCache.current.has(key) || discoveryInFlight.current.has(key)) return
+    discoveryInFlight.current.add(key)
+    setDiscoveringProviderKey(key)
     try {
       const data = await imageGenerationClient.discoverProviderModels({ providerId: normalizedProvider.id, provider: { ...normalizedProvider } })
       const candidates = (data.candidates || []).map(candidate => ({ ...candidate, providerModel: candidateProviderModel(candidate) })).filter(candidate => candidate.providerModel)
-      if (!candidates.length) {
-        message.info('未发现可直接添加的厂商模型')
-        return
-      }
-      const currentModels = (form.getFieldValue('models') || []) as ImageGenerationModelConfig[]
-      const seen = new Set(currentModels.map(model => model.id).filter(Boolean))
-      const existing = new Set(currentModels.map(model => [model.providerId, model.providerModel || model.model].join('|')))
-      const additions = candidates
-        .filter(candidate => !existing.has([normalizedProvider.id, candidate.providerModel].join('|')))
-        .map(candidate => ({
-          ...createModelFromCandidate(normalizedProvider, candidate, seen),
-          capabilities: serializeCapabilitiesForForm(candidate.capabilities),
-        }))
-      if (!additions.length) {
-        message.info('发现的厂商模型已在启用列表中')
-        return
-      }
-      form.setFieldValue('models', [...currentModels, ...additions])
-      message.success(`已添加 ${additions.length} 个厂商模型`)
+      discoveryCache.current.set(key, candidates)
+      setDiscoveredCandidates(current => ({ ...current, [key]: candidates }))
     } catch (error) {
-      message.error(error instanceof Error ? error.message : '模型发现失败')
+      message.error(error instanceof Error ? error.message : '读取厂商模型失败')
     } finally {
-      setDiscoveringProviderId(null)
+      discoveryInFlight.current.delete(key)
+      setDiscoveringProviderKey(current => current === key ? null : current)
     }
+  }, [])
+
+  const handleModelProviderChange = (fieldName: number, providerId: string) => {
+    const provider = watchedProviders.find((item: Partial<ImageGenerationProviderConfig>) => item?.id === providerId) as ImageGenerationProviderConfig | undefined
+    const currentModel = form.getFieldValue(['models', fieldName]) as Partial<ImageGenerationModelConfig> | undefined
+    if (!provider || !currentModel) return
+    form.setFieldValue(['models', fieldName], {
+      ...currentModel,
+      provider: provider.type,
+      providerId: provider.id,
+      baseUrl: provider.baseUrl,
+      apiKey: provider.apiKey,
+      model: '',
+      providerModel: '',
+      label: '',
+      capabilities: defaultCapabilitiesForProvider(provider.type),
+    })
+    void loadProviderCandidates(provider)
+  }
+
+  const handleCandidateSelect = (fieldName: number, provider: Partial<ImageGenerationProviderConfig>, providerModel: string) => {
+    const key = providerDiscoveryKey(provider)
+    const candidate = discoveredCandidates[key]?.find(item => candidateProviderModel(item) === providerModel)
+    if (!candidate) return
+    const currentModel = form.getFieldValue(['models', fieldName]) as Partial<ImageGenerationModelConfig> | undefined
+    if (!currentModel) return
+    form.setFieldValue(['models', fieldName], {
+      ...currentModel,
+      model: providerModel,
+      providerModel,
+      label: candidate.label || providerModel,
+      capabilities: serializeCapabilitiesForForm(candidate.capabilities),
+    })
   }
 
   const handleTestImmich = async () => {
@@ -429,7 +424,7 @@ function ImageGenerationSettings() {
                     title={provider?.label || `厂商 ${field.name + 1}`}
                     extra={<Button danger type="link" onClick={() => remove(field.name)}>移除</Button>}
                   >
-                    <Space direction="vertical" style={{ width: '100%' }}>
+                    <div style={{ width: '100%' }}>
                       <Space wrap style={{ width: '100%' }}>
                         <Form.Item {...field} name={[field.name, 'enabled']} valuePropName="checked" style={{ marginBottom: 0 }}>
                           <Switch checkedChildren="启用" unCheckedChildren="停用" />
@@ -454,11 +449,7 @@ function ImageGenerationSettings() {
                       <Form.Item {...field} name={[field.name, 'id']} hidden><Input /></Form.Item>
                       <Form.Item {...field} name={[field.name, 'type']} hidden><Input /></Form.Item>
                       <Form.Item {...field} name={[field.name, 'protocol']} hidden><Input /></Form.Item>
-                      <Space wrap>
-                        <Button htmlType="button" onClick={() => handleDiscoverProviderModels(field.name)} loading={discoveringProviderId === provider?.id}>发现厂商模型</Button>
-                        <Text type="secondary">发现结果会添加到下方启用模型，可继续改显示名称和能力。</Text>
-                      </Space>
-                    </Space>
+                    </div>
                   </Card>
                 )
               })}
@@ -494,10 +485,16 @@ function ImageGenerationSettings() {
                           <Switch checkedChildren="启用" unCheckedChildren="停用" />
                         </Form.Item>
                         <Form.Item {...field} name={[field.name, 'providerId']} label="生图厂商" rules={[{ required: true, message: '请选择生图厂商' }]} style={{ minWidth: 200, flex: 1, marginBottom: 0 }}>
-                          <Select options={providerOptions} placeholder="选择已配置厂商" />
+                           <Select options={providerOptions} placeholder="选择已配置厂商" onChange={(value) => handleModelProviderChange(field.name, value)} />
                         </Form.Item>
                         <Form.Item {...field} name={[field.name, 'providerModel']} label="厂商模型" rules={[{ required: true, message: '请输入厂商模型' }]} style={{ minWidth: 220, flex: 1, marginBottom: 0 }}>
-                          <Input placeholder={provider?.type === 'minimax' ? 'image-01' : 'gpt-image-1'} />
+                           <AutoComplete
+                             options={(discoveredCandidates[provider ? providerDiscoveryKey(provider) : ''] || []).map(candidate => ({ value: candidateProviderModel(candidate), label: candidate.label || candidateProviderModel(candidate) }))}
+                             placeholder={provider?.type === 'minimax' ? 'image-01' : 'gpt-image-1'}
+                             onFocus={() => void loadProviderCandidates(provider)}
+                             onSelect={(value) => handleCandidateSelect(field.name, provider || {}, value)}
+                             notFoundContent={discoveringProviderKey === (provider ? providerDiscoveryKey(provider) : '') ? '正在读取厂商模型...' : '可手动输入模型'}
+                           />
                         </Form.Item>
                         <Form.Item {...field} name={[field.name, 'label']} label="显示给作者的名称" rules={[{ required: true, message: '请输入显示给作者的名称' }]} style={{ minWidth: 220, flex: 1, marginBottom: 0 }}>
                           <Input placeholder="GPT Image" />
@@ -521,8 +518,9 @@ function ImageGenerationSettings() {
                         <Form.Item {...field} name={[field.name, 'requestTimeoutMs']} label="请求超时（毫秒）" rules={[{ required: true, message: '请输入请求超时' }]} style={{ minWidth: 180, flex: 1, marginBottom: 0 }}>
                           <InputNumber min={1} step={30000} precision={0} style={{ width: '100%' }} />
                         </Form.Item>
-                        <Form.Item {...field} name={[field.name, 'capabilities', 'referenceImages']} valuePropName="checked" hidden><Switch /></Form.Item>
-                        <Form.Item {...field} name={[field.name, 'capabilities', 'maxReferenceImages']} hidden><InputNumber /></Form.Item>
+                          <Form.Item {...field} name={[field.name, 'capabilities', 'maxReferenceImages']} label="最多参考图数量（0 表示不支持）" rules={[{ required: true, message: '请输入参考图数量' }]} style={{ minWidth: 220, marginBottom: 0 }}>
+                           <InputNumber min={0} step={1} precision={0} style={{ width: '100%' }} />
+                         </Form.Item>
                         <Form.Item {...field} name={[field.name, 'id']} hidden><Input /></Form.Item>
                       </Space>
                     </Space>
@@ -551,7 +549,7 @@ function ImageGenerationSettings() {
                   })
                 }}
               >
-                添加启用模型
+                 添加生图模型
               </Button>
             </Space>
           )}

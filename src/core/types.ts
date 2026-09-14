@@ -183,7 +183,6 @@ export interface ImageGenerationModelCapability {
   qualities: string[]
   formats: string[]
   aspectRatios?: string[]
-  referenceImages?: boolean
   maxReferenceImages?: number
 }
 

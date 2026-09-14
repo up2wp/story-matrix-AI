@@ -5,8 +5,6 @@ import { MAX_IMAGE_BYTES, type ImageAssetVariant } from './image-generation-runn
 import { createImagegenReferenceAsset, readImagegenReferenceAsset, validateUploadedReferenceImage } from './imagegen-reference-assets.js'
 import type { ProviderReferenceImage } from './image-providers.js'
 
-const MAX_TEST_REFERENCE_IMAGES = 3
-
 export type GenerateReferenceInput =
   | { readonly kind: 'asset'; readonly id: string }
   | { readonly kind: 'file'; readonly index: number }
@@ -59,7 +57,7 @@ function parseJsonObject(value: string, fallbackError: string): Record<string, u
 
 function parseGenerateMultipartRequest(request: AuthenticatedRequest): Promise<ParsedGenerateRequest> {
   return new Promise((resolve, reject) => {
-    const parser = busboy({ headers: request.headers, limits: { files: MAX_TEST_REFERENCE_IMAGES, fields: 1, parts: MAX_TEST_REFERENCE_IMAGES + 1, fileSize: MAX_IMAGE_BYTES } })
+    const parser = busboy({ headers: request.headers, limits: { fields: 1, fileSize: MAX_IMAGE_BYTES } })
     const files: UploadedGenerateReferenceFile[] = []
     let payload = ''
     let payloadCount = 0
@@ -90,14 +88,8 @@ function parseGenerateMultipartRequest(request: AuthenticatedRequest): Promise<P
       payloadCount += 1
       payload = value
     })
-    parser.on('filesLimit', () => {
-      invalidError = new Error(`当前测试台最多支持 ${MAX_TEST_REFERENCE_IMAGES} 张参考图`)
-    })
     parser.on('fieldsLimit', () => {
       invalidError = new Error('生成请求只接受一个 payload 字段')
-    })
-    parser.on('partsLimit', () => {
-      invalidError = new Error(`生成请求最多接受 ${MAX_TEST_REFERENCE_IMAGES} 张参考图`)
     })
     parser.on('error', reject)
     parser.on('close', () => {
@@ -151,8 +143,7 @@ function parseGenerateReferenceInputs(value: unknown, files: readonly UploadedGe
 }
 
 function effectiveReferenceImageLimit(model: ImageGenerationModelConfig) {
-  if (!model.capabilities.referenceImages) return 0
-  return Math.min(MAX_TEST_REFERENCE_IMAGES, model.capabilities.maxReferenceImages || 0)
+  return model.capabilities.maxReferenceImages || 0
 }
 
 function validateGenerateReferenceInputs(model: ImageGenerationModelConfig, inputs: readonly GenerateReferenceInput[]) {

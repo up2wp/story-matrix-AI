@@ -70,7 +70,7 @@ export default function ImagegenPage() {
   const enabledModels = useMemo(() => imageGenerationConfig.models.filter((model) => model.enabled), [imageGenerationConfig.models])
   const selectedModelId = modelId || imageGenerationConfig.defaultModelId
   const selectedModel = useMemo(() => enabledModels.find((model) => model.id === selectedModelId), [enabledModels, selectedModelId])
-  const maxReferenceImages = selectedModel?.capabilities.referenceImages ? Math.min(3, selectedModel.capabilities.maxReferenceImages || 0) : 0
+  const maxReferenceImages = selectedModel?.capabilities.maxReferenceImages || 0
   const supportsReferenceImages = maxReferenceImages > 0
   const canGenerate = canUseImagegen && Boolean(selectedModel) && Boolean(prompt.trim()) && !submitting
   const visibleHistory = history

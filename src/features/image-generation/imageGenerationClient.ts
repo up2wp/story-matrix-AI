@@ -83,7 +83,7 @@ export interface ImageProviderDiscoveryRequest {
 export interface ImageProviderModelCandidate {
   providerModel: string
   label: string
-  capabilities: { sizes: string[]; qualities: string[]; formats: string[]; aspectRatios?: string[]; referenceImages?: boolean; maxReferenceImages?: number }
+  capabilities: { sizes: string[]; qualities: string[]; formats: string[]; aspectRatios?: string[]; maxReferenceImages?: number }
   source: 'provider' | 'preset' | 'manual'
   requiresConfirmation: boolean
 }

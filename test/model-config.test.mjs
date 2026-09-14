@@ -157,8 +157,14 @@ assert.match(
 
 assert.match(
   imageConfigService,
-  /referenceImages[\s\S]*maxReferenceImages/,
-  'image generation model capabilities should include reference-image availability and max count metadata',
+  /maxReferenceImages/,
+  'image generation model capabilities should include the maximum reference-image count metadata',
+)
+
+assert.doesNotMatch(
+  imageConfigService.match(/export interface ImageGenerationModelCapability[\s\S]*?\n}/)?.[0] || '',
+  /referenceImages\?: boolean/,
+  'image generation model capabilities should not expose a redundant reference-image switch',
 )
 
 assert.match(
